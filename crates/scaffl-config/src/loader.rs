@@ -29,23 +29,76 @@ pub fn load_from_path(path: &Path) -> Result<Config, ConfigError> {
     })
 }
 
-/// Load the full project configuration: `scaffl.toml` (if present) plus any
-/// scripts discovered under `.scaffl/commands/`.
+/// Load the full project configuration.
 ///
-/// Missing `scaffl.toml` is fine — a default Config is returned and the
-/// commands directory still scanned. This is the loader the CLI uses.
+/// Layered on top of each other (later wins):
+///
+/// 1. `scaffl.toml` at the project root.
+/// 2. `.scaffl/local.toml` (per-developer overrides; gitignored).
+///
+/// Missing `scaffl.toml` is fine — a default config is used as the base.
+/// Plus: scripts under `.scaffl/commands/` are discovered after merging.
+///
+/// Merging is done at the `toml::Value` level so any TOML structure
+/// works: tables merge recursively, scalars and arrays replace.
 pub fn load_project(project_root: &Path) -> Result<Config, ConfigError> {
     let toml_path = project_root.join("scaffl.toml");
-    let mut config = if toml_path.exists() {
-        load_from_path(&toml_path)?
+    let local_path = project_root.join(".scaffl").join("local.toml");
+
+    let mut value = if toml_path.exists() {
+        read_toml_value(&toml_path)?
     } else {
-        Config::default()
+        toml::Value::Table(Default::default())
     };
+
+    if local_path.exists() {
+        let local = read_toml_value(&local_path)?;
+        deep_merge(&mut value, local);
+    }
+
+    let mut config: Config =
+        value
+            .try_into()
+            .map_err(|source: toml::de::Error| ConfigError::Parse {
+                path: toml_path.clone(),
+                source,
+            })?;
+
     let scripts_dir = project_root.join(".scaffl").join("commands");
     if scripts_dir.is_dir() {
         config.scripts = discover_scripts(&scripts_dir)?;
     }
     Ok(config)
+}
+
+fn read_toml_value(path: &Path) -> Result<toml::Value, ConfigError> {
+    let raw = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    toml::from_str(&raw).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Recursive merge: overlay tables onto base tables key-by-key; replace
+/// for everything else (scalars, arrays). Public for tests; the loader
+/// is the only intended caller.
+pub(crate) fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(b), toml::Value::Table(o)) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(existing) => deep_merge(existing, v),
+                    None => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (slot, overlay) => *slot = overlay,
+    }
 }
 
 /// Scan a directory for script files and parse their frontmatter.
@@ -159,6 +212,77 @@ mod tests {
 
         let cfg = load_project(root.path()).unwrap();
         assert!(cfg.scripts.contains_key("seed"));
+    }
+
+    #[test]
+    fn load_project_merges_local_overlay() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(
+            root.path().join("scaffl.toml"),
+            r#"
+                [project]
+                name = "base"
+
+                [command.test]
+                run = "composer test"
+
+                [env]
+                APP_PORT = { default = "80" }
+            "#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.path().join(".scaffl")).unwrap();
+        std::fs::write(
+            root.path().join(".scaffl").join("local.toml"),
+            r#"
+                [project]
+                name = "overridden"
+
+                [command.test]
+                forward_args = true
+
+                [command.local-only]
+                run = "echo from-local"
+
+                [env]
+                APP_PORT = { default = "8080" }
+                LOCAL_VAR = { value = "yes" }
+            "#,
+        )
+        .unwrap();
+
+        let cfg = load_project(root.path()).unwrap();
+        assert_eq!(cfg.project.name.as_deref(), Some("overridden"));
+        // Existing recipe got an additional field; original `run` survives.
+        let test_recipe = &cfg.commands["test"];
+        assert!(test_recipe.forward_args);
+        // New recipe added.
+        assert!(cfg.commands.contains_key("local-only"));
+        // Env: existing key updated, new key appended.
+        assert_eq!(
+            cfg.env.get("APP_PORT").unwrap().default.as_deref(),
+            Some("8080")
+        );
+        assert_eq!(
+            cfg.env.get("LOCAL_VAR").unwrap().value.as_deref(),
+            Some("yes")
+        );
+    }
+
+    #[test]
+    fn load_project_works_with_only_local() {
+        let root = TempDir::new().unwrap();
+        std::fs::create_dir_all(root.path().join(".scaffl")).unwrap();
+        std::fs::write(
+            root.path().join(".scaffl").join("local.toml"),
+            r#"
+                [command.greet]
+                run = "echo hi"
+            "#,
+        )
+        .unwrap();
+        let cfg = load_project(root.path()).unwrap();
+        assert!(cfg.commands.contains_key("greet"));
     }
 
     #[test]
