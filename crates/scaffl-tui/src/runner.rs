@@ -13,6 +13,8 @@ use scaffl_runtime::{Executor, OutputLine, OutputStream, RuntimeError};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Child;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
 
@@ -49,6 +51,74 @@ pub struct RunState {
 }
 
 impl RunState {
+    /// Wrap an arbitrary tokio [`Child`] (with piped stdio) as a
+    /// [`RunState`]. Used for service-action runs (`compose up`, etc.)
+    /// where there's no recipe to dispatch — the TUI gets a Child
+    /// straight from [`scaffl_container::Backend::service_action`] and
+    /// hands it off here for output capture and lifecycle tracking.
+    ///
+    /// The child must already have stdout / stderr piped (the spawning
+    /// backend method takes care of that). `kill_on_drop` should also
+    /// be set on the spawning Command so abort() actually kills the
+    /// process.
+    pub fn spawn_child(label: impl Into<String>, mut child: Child) -> Self {
+        let (tx, output_rx) = tokio::sync::mpsc::unbounded_channel::<OutputLine>();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let tx_out = tx.clone();
+        if let Some(s) = stdout {
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(s).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx_out
+                        .send(OutputLine {
+                            stream: OutputStream::Stdout,
+                            line,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        if let Some(s) = stderr {
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(s).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if tx
+                        .send(OutputLine {
+                            stream: OutputStream::Stderr,
+                            line,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+
+        let completion = tokio::spawn(async move {
+            child
+                .wait()
+                .await
+                .map(|s| s.code().unwrap_or(-1))
+                .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))
+        });
+
+        Self {
+            name: label.into(),
+            started_at: Instant::now(),
+            completion: Some(completion),
+            output_rx,
+            buffer: VecDeque::with_capacity(OUTPUT_BUFFER_CAP),
+            exit_code: None,
+            error: None,
+        }
+    }
+
     /// Spawn `name` through `executor` with a channel-backed sink.
     pub fn spawn(executor: &Executor, name: impl Into<String>, args: Vec<String>) -> Self {
         let (sink, output_rx) = scaffl_runtime::ChannelSink::new_pair();

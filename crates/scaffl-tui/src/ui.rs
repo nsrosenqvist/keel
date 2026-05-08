@@ -275,17 +275,27 @@ fn item_indicator_style(app: &App, item: &Item) -> Style {
 // ─────────────────────── right pane ───────────────────────
 
 fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
+    let has_run = app.current_run().is_some();
+    if has_run {
+        // Always split when a run is in progress / completed, no matter
+        // what's selected, so action output (compose up / down /
+        // recipe runs) is visible alongside the focused item's pane.
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        render_focused_item(app, frame, split[0]);
+        render_output(app, frame, split[1]);
+    } else {
+        render_focused_item(app, frame, area);
+    }
+}
+
+fn render_focused_item(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(service) = app.selected_service() {
         render_service_logs(service, frame, area);
     } else if let Some(watcher) = app.selected_watcher() {
         render_watcher(watcher, frame, area);
-    } else if app.current_run().is_some() {
-        let split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(area);
-        render_detail(app, frame, split[0]);
-        render_output(app, frame, split[1]);
     } else {
         render_detail(app, frame, area);
     }
@@ -838,13 +848,23 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 
     let running = app.current_run().is_some_and(|r| !r.is_done());
     let mode_palette = app.mode() == Mode::Palette;
+    let on_service = app.selected_service().is_some();
 
-    let mut hints: Vec<(&str, &str)> = vec![("↑↓", "nav"), ("g/G", "first/last")];
+    let mut hints: Vec<(&str, &str)> = vec![("↑↓", "nav")];
     if !mode_palette {
-        hints.push(("enter", "run"));
+        if on_service {
+            hints.push(("enter", "up"));
+            hints.push(("r", "restart"));
+        } else {
+            hints.push(("enter", "run"));
+        }
     }
+    hints.push(("u", "up"));
+    hints.push(("d", "down"));
     if running {
-        hints.push(("s", "stop"));
+        hints.push(("s", "stop run"));
+    } else if on_service {
+        hints.push(("s", "stop svc"));
     }
     hints.push(("/  :", "palette"));
     hints.push(("q", "quit"));

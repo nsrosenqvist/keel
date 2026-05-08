@@ -316,6 +316,40 @@ impl App {
         }
     }
 
+    /// Run a backend lifecycle action (up / down / stop / restart)
+    /// against the given services. An empty slice means "all services".
+    /// The Child is wrapped as a [`RunState`] so output streams into
+    /// the right pane like a recipe run.
+    ///
+    /// Returns `Err` describing the rejection when no backend is
+    /// configured or a run is already in flight.
+    pub async fn run_service_action(
+        &mut self,
+        action: &'static str,
+        services: &[&str],
+    ) -> Result<(), LaunchRejection> {
+        if self.current_run.as_ref().is_some_and(|r| !r.is_done()) {
+            return Err(LaunchRejection::AlreadyRunning);
+        }
+        let backend = self
+            .backend
+            .as_ref()
+            .ok_or(LaunchRejection::NoExecutor)?
+            .clone();
+        match backend.service_action(action, services).await {
+            Ok(child) => {
+                let label = if services.is_empty() {
+                    format!("compose {action}")
+                } else {
+                    format!("compose {action} {}", services.join(" "))
+                };
+                self.current_run = Some(RunState::spawn_child(label, child));
+                Ok(())
+            }
+            Err(e) => Err(LaunchRejection::NotRunnable(format!("{e}"))),
+        }
+    }
+
     pub async fn poll_run(&mut self) {
         if let Some(run) = self.current_run.as_mut() {
             run.poll_completion().await;

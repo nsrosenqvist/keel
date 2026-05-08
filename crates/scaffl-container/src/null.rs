@@ -44,5 +44,15 @@ impl Backend for NullBackend {
         ))
     }
 
+    async fn service_action(
+        &self,
+        _action: &str,
+        _services: &[&str],
+    ) -> Result<tokio::process::Child, BackendError> {
+        Err(BackendError::Reported(
+            "backend = \"none\"; set runtime.backend = \"compose\" to start / stop services".into(),
+        ))
+    }
+
     // list_services inherits the default empty Vec — Null has nothing to enumerate.
 }

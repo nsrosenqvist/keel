@@ -92,4 +92,30 @@ pub trait Backend: Send + Sync {
     async fn list_services(&self) -> Result<Vec<String>, BackendError> {
         Ok(Vec::new())
     }
+
+    /// Run a lifecycle action against zero or more services.
+    ///
+    /// Conventional actions: `"up"`, `"down"`, `"stop"`, `"restart"`.
+    /// An empty `services` slice means "all services" (the natural
+    /// docker compose default for these verbs). The returned [`Child`]
+    /// has piped stdio so the TUI can stream its progress into a
+    /// run-state buffer.
+    async fn service_action(
+        &self,
+        _action: &str,
+        _services: &[&str],
+    ) -> Result<Child, BackendError> {
+        Err(BackendError::Reported(
+            "no container backend configured (set runtime.backend = \"compose\")".into(),
+        ))
+    }
+}
+
+/// Conventional service-action verbs. Backends should accept these and
+/// may accept additional verbs at their discretion.
+pub mod service_action {
+    pub const UP: &str = "up";
+    pub const DOWN: &str = "down";
+    pub const STOP: &str = "stop";
+    pub const RESTART: &str = "restart";
 }

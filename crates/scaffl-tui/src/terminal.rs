@@ -70,7 +70,7 @@ async fn drive(
             biased;
             ev = events.recv() => {
                 let Some(ev) = ev else { return Ok(()) };
-                handle_event(app, ev);
+                handle_event(app, ev).await;
             }
             _ = tokio::time::sleep(Duration::from_millis(TICK_INTERVAL_MS)) => {
                 // Tick — re-drain output, re-poll status, redraw timers.
@@ -79,7 +79,7 @@ async fn drive(
     }
 }
 
-fn handle_event(app: &mut App, event: Event) {
+async fn handle_event(app: &mut App, event: Event) {
     match event {
         Event::Key(KeyEvent {
             kind: KeyEventKind::Press,
@@ -91,8 +91,8 @@ fn handle_event(app: &mut App, event: Event) {
             // may re-arm a fresh one for this event.
             app.flash = None;
             match app.mode() {
-                crate::app::Mode::Normal => handle_key_normal(app, code, modifiers),
-                crate::app::Mode::Palette => handle_key_palette(app, code, modifiers),
+                crate::app::Mode::Normal => handle_key_normal(app, code, modifiers).await,
+                crate::app::Mode::Palette => handle_key_palette(app, code, modifiers).await,
             }
         }
         Event::Resize(_, _) => {
@@ -102,7 +102,7 @@ fn handle_event(app: &mut App, event: Event) {
     }
 }
 
-fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             // Quit
@@ -122,11 +122,65 @@ fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
         // Palette: `:` (vim-style), `/` (fuzzy-search-style).
         KeyCode::Char(':') | KeyCode::Char('/') => app.open_palette(),
-        KeyCode::Char('s') if app.abort_current_run() => {
-            app.flash = Some("aborted current run".into());
+        // `s` is overloaded:
+        //   1. abort the current run if one is in flight
+        //   2. else stop the selected service (compose stop <name>)
+        KeyCode::Char('s') => {
+            if app.abort_current_run() {
+                app.flash = Some("aborted current run".into());
+            } else if let Some(service) = app.selected_service().map(|s| s.name.clone())
+                && let Err(rej) = app
+                    .run_service_action(scaffl_container::service_action::STOP, &[service.as_str()])
+                    .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        // `u`: up — selected service if highlighted, else all services.
+        KeyCode::Char('u') => {
+            let target = app.selected_service().map(|s| s.name.clone());
+            let services: Vec<&str> = target.as_deref().into_iter().collect();
+            if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::UP, &services)
+                .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        // `d`: compose down (always all services — `down` doesn't make
+        // sense per-service in compose's model).
+        KeyCode::Char('d') => {
+            if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::DOWN, &[])
+                .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        // `r`: restart selected service (no-op when not on a service).
+        KeyCode::Char('r') => {
+            if let Some(service) = app.selected_service().map(|s| s.name.clone())
+                && let Err(rej) = app
+                    .run_service_action(
+                        scaffl_container::service_action::RESTART,
+                        &[service.as_str()],
+                    )
+                    .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
         }
         KeyCode::Enter => {
-            if let Err(rejection) = app.try_launch_selected() {
+            // Enter on a service: bring it up. Enter on a recipe /
+            // script: launch it (existing).
+            if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
+                if let Err(rej) = app
+                    .run_service_action(scaffl_container::service_action::UP, &[service.as_str()])
+                    .await
+                {
+                    app.flash = Some(launch_message(rej));
+                }
+            } else if let Err(rejection) = app.try_launch_selected() {
                 app.flash = Some(launch_message(rejection));
             }
         }
@@ -134,7 +188,7 @@ fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
-fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // Ctrl-c always quits.
     if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
         app.quit();
@@ -265,33 +319,33 @@ mod tests {
         App::new(Arc::new(scaffl_config::parse_str(toml).unwrap()))
     }
 
-    #[test]
-    fn q_quits() {
+    #[tokio::test]
+    async fn q_quits() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        handle_key_normal(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
+        handle_key_normal(&mut app, KeyCode::Char('q'), KeyModifiers::NONE).await;
         assert!(app.should_quit());
     }
 
-    #[test]
-    fn ctrl_c_quits() {
+    #[tokio::test]
+    async fn ctrl_c_quits() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        handle_event(&mut app, ctrl(KeyCode::Char('c')));
+        handle_event(&mut app, ctrl(KeyCode::Char('c'))).await;
         assert!(app.should_quit());
     }
 
-    #[test]
-    fn navigation_moves_selection() {
+    #[tokio::test]
+    async fn navigation_moves_selection() {
         let mut app = app_with(
             "[command.a]\nrun = \"true\"\n[command.b]\nrun = \"true\"\n[command.c]\nrun = \"true\"\n",
         );
         assert_eq!(app.selected_index(), 0);
-        handle_event(&mut app, press(KeyCode::Char('j')));
+        handle_event(&mut app, press(KeyCode::Char('j'))).await;
         assert_eq!(app.selected_index(), 1);
-        handle_event(&mut app, press(KeyCode::Down));
+        handle_event(&mut app, press(KeyCode::Down)).await;
         assert_eq!(app.selected_index(), 2);
-        handle_event(&mut app, press(KeyCode::Char('G')));
+        handle_event(&mut app, press(KeyCode::Char('G'))).await;
         assert_eq!(app.selected_index(), 2);
-        handle_event(&mut app, press(KeyCode::Char('g')));
+        handle_event(&mut app, press(KeyCode::Char('g'))).await;
         assert_eq!(app.selected_index(), 0);
     }
 
@@ -302,62 +356,60 @@ mod tests {
         // spawning the event reader.
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         app.quit();
-        // Just ensure the function compiles and exits the same path —
-        // a full event-driven test would need a virtual stdin.
         assert!(app.should_quit());
     }
 
-    #[test]
-    fn unrelated_keys_do_nothing() {
+    #[tokio::test]
+    async fn unrelated_keys_do_nothing() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         let before = app.selected_index();
-        handle_event(&mut app, press(KeyCode::Char('z')));
+        handle_event(&mut app, press(KeyCode::Char('z'))).await;
         assert_eq!(app.selected_index(), before);
         assert!(!app.should_quit());
     }
 
-    #[test]
-    fn colon_opens_palette() {
+    #[tokio::test]
+    async fn colon_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
-        handle_event(&mut app, press(KeyCode::Char(':')));
+        handle_event(&mut app, press(KeyCode::Char(':'))).await;
         assert_eq!(app.mode(), crate::app::Mode::Palette);
     }
 
-    #[test]
-    fn slash_opens_palette() {
+    #[tokio::test]
+    async fn slash_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
-        handle_event(&mut app, press(KeyCode::Char('/')));
+        handle_event(&mut app, press(KeyCode::Char('/'))).await;
         assert_eq!(app.mode(), crate::app::Mode::Palette);
     }
 
-    #[test]
-    fn ctrl_k_opens_palette() {
+    #[tokio::test]
+    async fn ctrl_k_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
-        handle_event(&mut app, ctrl(KeyCode::Char('k')));
+        handle_event(&mut app, ctrl(KeyCode::Char('k'))).await;
         assert_eq!(app.mode(), crate::app::Mode::Palette);
     }
 
-    #[test]
-    fn ctrl_p_opens_palette() {
+    #[tokio::test]
+    async fn ctrl_p_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
-        handle_event(&mut app, ctrl(KeyCode::Char('p')));
+        handle_event(&mut app, ctrl(KeyCode::Char('p'))).await;
         assert_eq!(app.mode(), crate::app::Mode::Palette);
     }
 
-    #[test]
-    fn esc_in_palette_closes_it() {
+    #[tokio::test]
+    async fn esc_in_palette_closes_it() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         app.open_palette();
-        handle_event(&mut app, press(KeyCode::Esc));
+        handle_event(&mut app, press(KeyCode::Esc)).await;
         assert_eq!(app.mode(), crate::app::Mode::Normal);
     }
 
-    #[test]
-    fn typing_in_palette_filters() {
+    #[tokio::test]
+    async fn typing_in_palette_filters() {
         let mut app =
             app_with("[command.test]\nrun = \"true\"\n[command.migrate]\nrun = \"true\"\n");
         app.open_palette();
-        handle_event(&mut app, press(KeyCode::Char('m')));
+        handle_event(&mut app, press(KeyCode::Char('m'))).await;
         let palette = app.palette().unwrap();
         let names: Vec<_> = palette
             .matches()
@@ -367,14 +419,14 @@ mod tests {
         assert!(names.contains(&"migrate".to_string()));
     }
 
-    #[test]
-    fn enter_in_palette_moves_selection() {
+    #[tokio::test]
+    async fn enter_in_palette_moves_selection() {
         let mut app =
             app_with("[command.test]\nrun = \"true\"\n[command.migrate]\nrun = \"true\"\n");
         app.open_palette();
         // Empty input: matches are in original (alphabetical) order:
         // migrate then test. Move selection to migrate.
-        handle_event(&mut app, press(KeyCode::Enter));
+        handle_event(&mut app, press(KeyCode::Enter)).await;
         // Confirm closes the palette and moves the sidebar selection.
         assert_eq!(app.mode(), crate::app::Mode::Normal);
         assert_eq!(app.items()[app.selected_index()].name, "migrate");

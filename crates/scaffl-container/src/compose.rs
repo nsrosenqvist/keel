@@ -152,6 +152,51 @@ impl Backend for ComposeBackend {
             .collect())
     }
 
+    async fn service_action(
+        &self,
+        action: &str,
+        services: &[&str],
+    ) -> Result<tokio::process::Child, BackendError> {
+        let prefix = self.prefix();
+        let (head, tail) = prefix.split_first().expect("non-empty prefix");
+        let mut cmd = Command::new(head);
+        cmd.args(tail);
+        match action {
+            "up" => {
+                // -d so the action returns and the long-running services
+                // detach. The TUI's separate compose-logs tail then
+                // streams what's actually running.
+                cmd.args(["up", "-d"]);
+                cmd.args(services);
+            }
+            "down" => {
+                cmd.arg("down");
+                // `down` doesn't accept service args in older compose
+                // versions; pass them anyway — the modern plugin
+                // interprets them as "remove just these services".
+                cmd.args(services);
+            }
+            "stop" => {
+                cmd.arg("stop");
+                cmd.args(services);
+            }
+            "restart" => {
+                cmd.arg("restart");
+                cmd.args(services);
+            }
+            other => {
+                return Err(BackendError::Reported(format!(
+                    "unsupported service action `{other}` (expected up / down / stop / restart)"
+                )));
+            }
+        }
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
+    }
+
     async fn tail_logs(&self, service: &str) -> Result<tokio::process::Child, BackendError> {
         let prefix = self.prefix();
         let (head, tail) = prefix.split_first().expect("non-empty prefix");
