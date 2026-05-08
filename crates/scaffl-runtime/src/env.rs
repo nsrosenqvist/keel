@@ -16,6 +16,7 @@
 //! invocation.
 
 use crate::error::RuntimeError;
+use crate::worktree::Identity;
 use scaffl_config::{Config, EnvSpec};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -40,8 +41,23 @@ impl Env {
         }
     }
 
-    /// Resolve the project base env: process + dotenv + `[env]` section.
+    /// Resolve the project base env: process + dotenv + worktree
+    /// injection + `[env]` section.
+    ///
+    /// Auto-detects the worktree identity by shelling out to `git`. For
+    /// callers that already have an [`Identity`] (CLI, TUI), prefer
+    /// [`Self::resolve_with_identity`] to avoid duplicate detection.
     pub async fn resolve(config: &Config, project_root: &Path) -> Result<Self, RuntimeError> {
+        let identity = Identity::detect(project_root, config).await;
+        Self::resolve_with_identity(config, project_root, &identity).await
+    }
+
+    /// Resolve the project base env using a previously-detected identity.
+    pub async fn resolve_with_identity(
+        config: &Config,
+        project_root: &Path,
+        identity: &Identity,
+    ) -> Result<Self, RuntimeError> {
         let mut vars: BTreeMap<String, String> = std::env::vars().collect();
 
         for raw_path in &config.env_files.files {
@@ -67,6 +83,10 @@ impl Env {
                 vars.insert(k, v);
             }
         }
+
+        // Inject worktree-derived env *before* [env] resolution so user
+        // entries can reference SCAFFL_WORKTREE_OFFSET via `offset`.
+        inject_worktree_env(&mut vars, config, identity);
 
         for (name, spec) in &config.env {
             if let Some(value) = resolve_spec(name, spec, &vars).await? {
@@ -112,6 +132,58 @@ impl Env {
     }
 }
 
+/// Inject `SCAFFL_WORKTREE_*` and (when isolation is on)
+/// `COMPOSE_PROJECT_NAME` into `vars`. Won't clobber values the user
+/// has already set in `.env` or process env — those take priority.
+fn inject_worktree_env(vars: &mut BTreeMap<String, String>, config: &Config, identity: &Identity) {
+    // Always inject the slug + offset so the user can reference them
+    // unconditionally in `[env]` specs. Empty slug → empty string and
+    // offset 0.
+    vars.entry("SCAFFL_WORKTREE_SLUG".into())
+        .or_insert_with(|| identity.slug.clone());
+    vars.entry("SCAFFL_WORKTREE_OFFSET".into())
+        .or_insert_with(|| identity.offset.to_string());
+
+    // Compose project name: only when isolation is on, slug is
+    // non-empty, and the user hasn't already set it.
+    if config.worktrees.isolate_compose
+        && identity.is_isolated()
+        && !vars.contains_key("COMPOSE_PROJECT_NAME")
+    {
+        let project = config.project.name.as_deref().unwrap_or("scaffl");
+        vars.insert(
+            "COMPOSE_PROJECT_NAME".into(),
+            format!("{project}-{slug}", slug = identity.slug),
+        );
+    }
+}
+
+/// Resolve `base + offset` arithmetic. Returns `None` if `base` is
+/// absent. Errors only when `base` is set but doesn't parse as an
+/// integer; missing offset env defaults to 0.
+fn resolve_base_offset(
+    name: &str,
+    spec: &EnvSpec,
+    existing: &BTreeMap<String, String>,
+) -> Result<Option<String>, RuntimeError> {
+    let Some(base) = spec.base.as_ref() else {
+        return Ok(None);
+    };
+    let base_n: i64 = base.parse().map_err(|_| RuntimeError::ArgvParse {
+        input: base.clone(),
+        message: format!("env `{name}`: `base` must be an integer (got `{base}`)"),
+    })?;
+    let offset_n: i64 = if let Some(offset_var) = spec.offset.as_ref() {
+        existing
+            .get(offset_var)
+            .map(|s| s.parse::<i64>().unwrap_or(0))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    Ok(Some((base_n + offset_n).to_string()))
+}
+
 async fn resolve_spec(
     name: &str,
     spec: &EnvSpec,
@@ -119,6 +191,9 @@ async fn resolve_spec(
 ) -> Result<Option<String>, RuntimeError> {
     if let Some(value) = &spec.value {
         return Ok(Some(value.clone()));
+    }
+    if let Some(value) = resolve_base_offset(name, spec, existing)? {
+        return Ok(Some(value));
     }
     if let Some(found) = existing.get(name) {
         return Ok(Some(found.clone()));
@@ -285,6 +360,7 @@ mod tests {
                 default: None,
                 from_command: Some("printf 1234".into()),
                 required: false,
+                ..Default::default()
             },
         )]);
         let env = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
@@ -302,6 +378,7 @@ mod tests {
                 default: None,
                 from_command: Some("false".into()),
                 required: false,
+                ..Default::default()
             },
         )]);
         let err = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
@@ -322,6 +399,7 @@ mod tests {
                 default: None,
                 from_command: None,
                 required: true,
+                ..Default::default()
             },
         )]);
         unsafe {
@@ -350,6 +428,7 @@ mod tests {
                 default: None,
                 from_command: None,
                 required: false,
+                ..Default::default()
             },
         )]);
         let env = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
@@ -370,6 +449,7 @@ mod tests {
                 default: None,
                 from_command: None,
                 required: false,
+                ..Default::default()
             },
         )]);
         let env = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
@@ -402,5 +482,154 @@ mod tests {
     fn expand_vars_handles_unterminated() {
         let vars = BTreeMap::new();
         assert_eq!(expand_vars("${UNCLOSED", &vars), "${UNCLOSED");
+    }
+
+    #[test]
+    fn inject_worktree_env_sets_slug_and_offset() {
+        use crate::worktree::{BaseRef, Identity};
+
+        let mut cfg = scaffl_config::Config::default();
+        cfg.project.name = Some("myapp".into());
+        let identity = Identity {
+            slug: "feature-x".into(),
+            base_ref: BaseRef::Branch("feature/x".into()),
+            offset: 42,
+        };
+        let mut vars = BTreeMap::new();
+        inject_worktree_env(&mut vars, &cfg, &identity);
+        assert_eq!(
+            vars.get("SCAFFL_WORKTREE_SLUG").map(String::as_str),
+            Some("feature-x")
+        );
+        assert_eq!(
+            vars.get("SCAFFL_WORKTREE_OFFSET").map(String::as_str),
+            Some("42")
+        );
+        assert_eq!(
+            vars.get("COMPOSE_PROJECT_NAME").map(String::as_str),
+            Some("myapp-feature-x")
+        );
+    }
+
+    #[test]
+    fn inject_worktree_env_keeps_existing_compose_name() {
+        use crate::worktree::{BaseRef, Identity};
+
+        let mut cfg = scaffl_config::Config::default();
+        cfg.project.name = Some("myapp".into());
+        let identity = Identity {
+            slug: "feature-x".into(),
+            base_ref: BaseRef::Branch("feature/x".into()),
+            offset: 42,
+        };
+        let mut vars = BTreeMap::new();
+        vars.insert("COMPOSE_PROJECT_NAME".into(), "user-chose-this".into());
+        inject_worktree_env(&mut vars, &cfg, &identity);
+        assert_eq!(
+            vars.get("COMPOSE_PROJECT_NAME").map(String::as_str),
+            Some("user-chose-this")
+        );
+    }
+
+    #[test]
+    fn inject_worktree_env_skips_compose_when_unisolated() {
+        use crate::worktree::Identity;
+
+        let mut cfg = scaffl_config::Config::default();
+        cfg.project.name = Some("myapp".into());
+        let mut vars = BTreeMap::new();
+        inject_worktree_env(&mut vars, &cfg, &Identity::none());
+        assert_eq!(
+            vars.get("SCAFFL_WORKTREE_SLUG").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            vars.get("SCAFFL_WORKTREE_OFFSET").map(String::as_str),
+            Some("0")
+        );
+        assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
+    }
+
+    #[test]
+    fn inject_worktree_env_respects_isolate_compose_false() {
+        use crate::worktree::{BaseRef, Identity};
+
+        let mut cfg = scaffl_config::Config::default();
+        cfg.project.name = Some("myapp".into());
+        cfg.worktrees.isolate_compose = false;
+        let identity = Identity {
+            slug: "feature-x".into(),
+            base_ref: BaseRef::Branch("feature/x".into()),
+            offset: 1,
+        };
+        let mut vars = BTreeMap::new();
+        inject_worktree_env(&mut vars, &cfg, &identity);
+        assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
+        // slug + offset still injected.
+        assert_eq!(
+            vars.get("SCAFFL_WORKTREE_SLUG").map(String::as_str),
+            Some("feature-x")
+        );
+    }
+
+    #[tokio::test]
+    async fn base_offset_arithmetic_resolves() {
+        use crate::worktree::{BaseRef, Identity};
+
+        let cfg: scaffl_config::Config = scaffl_config::parse_str(
+            r#"
+            [env]
+            APP_PORT = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
+        "#,
+        )
+        .unwrap();
+        let identity = Identity {
+            slug: "pinned".into(),
+            base_ref: BaseRef::Branch("pinned".into()),
+            offset: 7,
+        };
+        let env =
+            Env::resolve_with_identity(&cfg, std::env::current_dir().unwrap().as_path(), &identity)
+                .await
+                .unwrap();
+        assert_eq!(env.get("APP_PORT"), Some("8087"));
+    }
+
+    #[tokio::test]
+    async fn base_offset_falls_back_to_base_when_offset_var_missing() {
+        let cfg: scaffl_config::Config = scaffl_config::parse_str(
+            r#"
+            [env]
+            DB_PORT = { base = "5432", offset = "DOES_NOT_EXIST" }
+        "#,
+        )
+        .unwrap();
+        let env = Env::resolve_with_identity(
+            &cfg,
+            std::env::current_dir().unwrap().as_path(),
+            &crate::worktree::Identity::none(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(env.get("DB_PORT"), Some("5432"));
+    }
+
+    #[tokio::test]
+    async fn base_offset_errors_on_non_integer_base() {
+        let cfg: scaffl_config::Config = scaffl_config::parse_str(
+            r#"
+            [env]
+            BAD = { base = "not-a-number" }
+        "#,
+        )
+        .unwrap();
+        let err = Env::resolve_with_identity(
+            &cfg,
+            std::env::current_dir().unwrap().as_path(),
+            &crate::worktree::Identity::none(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RuntimeError::ArgvParse { .. }));
     }
 }

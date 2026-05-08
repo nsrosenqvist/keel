@@ -39,10 +39,81 @@ pub struct Config {
     #[serde(default)]
     pub hooks: HooksConfig,
 
+    /// Per-worktree isolation settings. Drives `SCAFFL_WORKTREE_*` env
+    /// var injection and the `COMPOSE_PROJECT_NAME` prefix.
+    #[serde(default)]
+    pub worktrees: WorktreesConfig,
+
     /// Scripts discovered under `.scaffl/commands/`. Populated by
     /// [`crate::loader::load_project`]; never serialized.
     #[serde(skip)]
     pub scripts: BTreeMap<String, ScriptCommand>,
+}
+
+/// Worktree isolation configuration.
+///
+/// scaffl gives each git worktree a deterministic identity (slug +
+/// integer offset). Recipes reference these via the
+/// `SCAFFL_WORKTREE_OFFSET` env var (typically through the
+/// [`EnvSpec::base`] / [`EnvSpec::offset`] arithmetic shorthand) so two
+/// worktrees of the same project can run side-by-side without port
+/// collisions.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreesConfig {
+    /// Range cap for hash-based offsets: `offset = hash(seed + slug) %
+    /// modulus`. Default 1000 — keeps offset additions to ports inside
+    /// a sane range while making collisions rare even with 10+
+    /// worktrees (~5%).
+    #[serde(default = "default_modulus")]
+    pub modulus: u32,
+
+    /// Extra hash seed appended to the slug before hashing. Defaults to
+    /// the project name (set in [`Config::resolved_seed`]). Letting
+    /// users override it gives them a way to bump every worktree's
+    /// offset at once if they need to dodge a port range.
+    #[serde(default)]
+    pub seed: String,
+
+    /// When true (default) and a worktree slug is non-empty, scaffl
+    /// sets `COMPOSE_PROJECT_NAME = <project>-<slug>` so each
+    /// worktree's docker compose stack is independent. Skipped when the
+    /// user already declared `COMPOSE_PROJECT_NAME` themselves.
+    #[serde(default = "true_default")]
+    pub isolate_compose: bool,
+
+    /// Explicit slug → offset pins. Wins over the hash. Use for slugs
+    /// that should always have a known offset (e.g. `main = 0`,
+    /// `production = 0`).
+    #[serde(default)]
+    pub assign: BTreeMap<String, u32>,
+}
+
+impl Default for WorktreesConfig {
+    fn default() -> Self {
+        Self {
+            modulus: default_modulus(),
+            seed: String::new(),
+            isolate_compose: true,
+            assign: BTreeMap::new(),
+        }
+    }
+}
+
+const fn default_modulus() -> u32 {
+    1000
+}
+
+impl Config {
+    /// Resolved hash seed for worktree offset computation: the
+    /// `[worktrees].seed` value if set, otherwise the project name (so
+    /// two projects with `feature-x` get different offsets).
+    pub fn resolved_seed(&self) -> &str {
+        if !self.worktrees.seed.is_empty() {
+            return &self.worktrees.seed;
+        }
+        self.project.name.as_deref().unwrap_or("")
+    }
 }
 
 /// Native scaffl hook configuration. Keyed by stage name.
@@ -121,11 +192,21 @@ const fn true_default() -> bool {
 
 /// Specification for a single environment variable.
 ///
-/// Values resolve in order: explicit `value` → `from_command` output →
-/// existing env → `default`. Required-but-missing values produce a
-/// `ConfigError::Invalid` at runtime, not at parse time, so missing
-/// secrets don't break `scaffl list` or `scaffl which`.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+/// Resolution order (first match wins):
+///
+/// 1. Explicit `value`.
+/// 2. `base` + `offset`: integer-typed shorthand for
+///    `value = base.parse::<i64>() + existing[offset].parse::<i64>()`.
+///    The `offset` lookup is on the env-so-far, so referencing
+///    `SCAFFL_WORKTREE_OFFSET` makes ports automatically vary per
+///    worktree. Missing offset var → falls back to `base`.
+/// 3. Pre-existing process / dotenv value for the same name.
+/// 4. `from_command` stdout (trimmed).
+/// 5. `default`.
+///
+/// `required = true` with no resolved value produces
+/// `RuntimeError::RequiredEnvMissing`.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvSpec {
     #[serde(default)]
@@ -136,6 +217,17 @@ pub struct EnvSpec {
     pub from_command: Option<String>,
     #[serde(default)]
     pub required: bool,
+
+    /// Integer base for `base + offset` arithmetic. Stored as a string
+    /// so users can write `"8080"` consistently with the rest of the
+    /// schema; parsed as `i64` at resolution time.
+    #[serde(default)]
+    pub base: Option<String>,
+
+    /// Name of the env var whose value is parsed as an integer offset
+    /// added to `base`. Typically `"SCAFFL_WORKTREE_OFFSET"`.
+    #[serde(default)]
+    pub offset: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -338,6 +430,76 @@ mod tests {
             cfg.commands["up"].run,
             Run::Single("docker compose up -d".into())
         );
+    }
+
+    #[test]
+    fn worktrees_defaults_when_section_absent() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.worktrees.modulus, 1000);
+        assert!(cfg.worktrees.seed.is_empty());
+        assert!(cfg.worktrees.isolate_compose);
+        assert!(cfg.worktrees.assign.is_empty());
+    }
+
+    #[test]
+    fn worktrees_parses_full_section() {
+        let src = r#"
+            [worktrees]
+            modulus = 100
+            seed = "myseed"
+            isolate_compose = false
+
+            [worktrees.assign]
+            main = 0
+            production = 0
+            "feature/x" = 7
+        "#;
+        let cfg: Config = toml::from_str(src).unwrap();
+        assert_eq!(cfg.worktrees.modulus, 100);
+        assert_eq!(cfg.worktrees.seed, "myseed");
+        assert!(!cfg.worktrees.isolate_compose);
+        assert_eq!(cfg.worktrees.assign.get("main"), Some(&0));
+        assert_eq!(cfg.worktrees.assign.get("feature/x"), Some(&7));
+    }
+
+    #[test]
+    fn resolved_seed_falls_back_to_project_name() {
+        let cfg: Config = toml::from_str(
+            r#"[project]
+            name = "myapp"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.resolved_seed(), "myapp");
+    }
+
+    #[test]
+    fn resolved_seed_prefers_explicit_seed() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [project]
+            name = "myapp"
+
+            [worktrees]
+            seed = "custom"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.resolved_seed(), "custom");
+    }
+
+    #[test]
+    fn env_spec_parses_base_offset() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [env]
+            APP_PORT = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
+        "#,
+        )
+        .unwrap();
+        let spec = &cfg.env["APP_PORT"];
+        assert_eq!(spec.base.as_deref(), Some("8080"));
+        assert_eq!(spec.offset.as_deref(), Some("SCAFFL_WORKTREE_OFFSET"));
     }
 
     #[test]

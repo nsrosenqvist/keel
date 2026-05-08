@@ -10,9 +10,11 @@ pub mod error;
 pub mod executor;
 pub mod resolver;
 pub mod sink;
+pub mod worktree;
 
 pub use env::Env;
 pub use error::RuntimeError;
 pub use executor::Executor;
 pub use resolver::{Resolution, Resolver, ResolverContext};
 pub use sink::{ChannelSink, InheritSink, OutputLine, OutputSink, OutputStream};
+pub use worktree::{BaseRef, Identity};
