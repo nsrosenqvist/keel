@@ -5,16 +5,20 @@
 use crate::palette::Palette;
 use crate::runner::RunState;
 use crate::services::ServicePane;
+use crate::watchers::WatcherPane;
 use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
 use scaffl_container::Backend;
 use scaffl_runtime::Executor;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     Service,
+    Watcher,
     Recipe,
     Script,
 }
@@ -53,6 +57,10 @@ pub struct App {
     /// Service pane state, keyed by service name. Populated for every
     /// `[[ui.pane]] type = "service"` declaration in the config.
     services: BTreeMap<String, ServicePane>,
+    /// Watcher pane state, keyed by synthesised name (`watch:<recipe>`
+    /// suffixed with an index when collisions occur). Populated lazily
+    /// in `spawn_watcher_panes`.
+    watchers: BTreeMap<String, WatcherPane>,
     /// Last rejection / status banner (decays after a few seconds — kept
     /// simple by just clearing on the next successful action).
     pub flash: Option<String>,
@@ -73,6 +81,7 @@ impl App {
             backend: None,
             current_run: None,
             services,
+            watchers: BTreeMap::new(),
             flash: None,
             mode: Mode::Normal,
             palette: None,
@@ -107,6 +116,18 @@ impl App {
             return None;
         }
         self.services.get(&item.name)
+    }
+
+    pub fn watchers(&self) -> &BTreeMap<String, WatcherPane> {
+        &self.watchers
+    }
+
+    pub fn selected_watcher(&self) -> Option<&WatcherPane> {
+        let item = self.selected_item()?;
+        if item.kind != ItemKind::Watcher {
+            return None;
+        }
+        self.watchers.get(&item.name)
     }
 
     pub fn items(&self) -> &[Item] {
@@ -200,6 +221,11 @@ impl App {
             ItemKind::Service => {
                 return Err(LaunchRejection::NotRunnable(
                     "service panes show logs; press q to quit or navigate to a recipe".into(),
+                ));
+            }
+            ItemKind::Watcher => {
+                return Err(LaunchRejection::NotRunnable(
+                    "watcher panes auto-run on file change".into(),
                 ));
             }
             ItemKind::Recipe => {
@@ -313,6 +339,60 @@ impl App {
             pane.refresh_status(&backend).await;
         }
     }
+
+    /// Spawn watcher panes from `[[ui.pane]] type = "watcher"`. Spawn
+    /// failures (bad globs, notify init failures) are logged and the
+    /// pane is omitted; the rest of the dashboard still works.
+    pub fn spawn_watcher_panes(&mut self, project_root: &Path) {
+        for (idx, pane) in self.config.ui.panes.iter().enumerate() {
+            if let UiPane::Watcher {
+                glob,
+                on_change,
+                debounce_ms,
+                ..
+            } = pane
+            {
+                let name = unique_watcher_name(on_change, idx, &self.watchers);
+                match WatcherPane::spawn(
+                    name.clone(),
+                    on_change.clone(),
+                    glob.clone(),
+                    Duration::from_millis(*debounce_ms),
+                    project_root,
+                ) {
+                    Ok(p) => {
+                        self.items.push(Item {
+                            name: name.clone(),
+                            kind: ItemKind::Watcher,
+                        });
+                        self.watchers.insert(name, p);
+                    }
+                    Err(e) => {
+                        tracing::warn!("watcher pane `{on_change}` failed to start: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Advance every watcher's state machine. Spawn / drain / complete is
+    /// internal to the pane.
+    pub async fn tick_watchers(&mut self) {
+        let Some(executor) = self.executor.clone() else {
+            return;
+        };
+        for pane in self.watchers.values_mut() {
+            pane.tick(&executor).await;
+        }
+    }
+}
+
+fn unique_watcher_name(base: &str, idx: usize, existing: &BTreeMap<String, WatcherPane>) -> String {
+    let primary = format!("watch:{base}");
+    if !existing.contains_key(&primary) {
+        return primary;
+    }
+    format!("watch:{base}:{idx}")
 }
 
 fn build_items(config: &Config) -> Vec<Item> {

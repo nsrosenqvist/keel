@@ -18,6 +18,7 @@
 use scaffl_config::Config;
 use scaffl_container::Backend;
 use scaffl_runtime::Executor;
+use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -26,12 +27,14 @@ pub mod palette;
 pub mod runner;
 pub mod services;
 pub mod ui;
+pub mod watchers;
 
 mod terminal;
 
 pub use app::{App, Item, ItemKind};
 pub use runner::{CapturedLine, RunState};
 pub use services::ServicePane;
+pub use watchers::{WatcherPane, WatcherState};
 
 #[derive(Debug, Error)]
 pub enum TuiError {
@@ -44,9 +47,11 @@ pub async fn run(
     config: Arc<Config>,
     executor: Executor,
     backend: Arc<dyn Backend>,
+    project_root: &Path,
 ) -> Result<(), TuiError> {
     let mut app = App::new(config)
         .with_executor(executor)
         .with_backend(backend);
+    app.spawn_watcher_panes(project_root);
     terminal::run_event_loop(&mut app).await
 }

@@ -4,6 +4,7 @@ use crate::app::{App, ItemKind, Mode};
 use crate::palette::Palette;
 use crate::runner::CapturedLine;
 use crate::services::ServicePane;
+use crate::watchers::{WatcherPane, WatcherState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -41,6 +42,8 @@ pub fn render(app: &App, frame: &mut Frame) {
     //   - otherwise just detail
     if let Some(service) = app.selected_service() {
         render_service_logs(service, frame, body[1]);
+    } else if let Some(watcher) = app.selected_watcher() {
+        render_watcher(watcher, frame, body[1]);
     } else if app.current_run().is_some() {
         let right = Layout::default()
             .direction(Direction::Vertical)
@@ -108,6 +111,7 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
                 ItemKind::Recipe => "recipe",
                 ItemKind::Script => "script",
                 ItemKind::Service => "service",
+                ItemKind::Watcher => "watcher",
             };
             let style = if idx == selected {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -174,11 +178,13 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         .map(|item| {
             let glyph = match item.kind {
                 ItemKind::Service => "●",
+                ItemKind::Watcher => "◇",
                 ItemKind::Recipe => "▸",
                 ItemKind::Script => "▪",
             };
             let glyph_style = match item.kind {
                 ItemKind::Service => service_indicator_style(app, &item.name),
+                ItemKind::Watcher => watcher_indicator_style(app, &item.name),
                 _ => Style::default().fg(Color::DarkGray),
             };
             ListItem::new(Line::from(vec![
@@ -230,6 +236,7 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
         Span::styled(
             match item.kind {
                 ItemKind::Service => "service",
+                ItemKind::Watcher => "watcher",
                 ItemKind::Recipe => "recipe",
                 ItemKind::Script => "script",
             },
@@ -260,6 +267,9 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
         }
         lines.push(Line::from(""));
         lines.extend(render_run(&recipe.run));
+    } else if app.selected_watcher().is_some() {
+        // Watcher detail is rendered by render_watcher in the right-pane
+        // chooser. This branch is unreachable in practice.
     } else if let Some(script) = app.selected_script() {
         if let Some(desc) = &script.desc {
             lines.push(kv("desc", desc));
@@ -368,6 +378,77 @@ fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
 
     let paragraph = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
+    let title = format!(" {} ", watcher.status_label());
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(1)])
+        .split(inner);
+
+    // Header: recipe + globs + debounce.
+    let mut header_lines: Vec<Line<'static>> = Vec::new();
+    header_lines.push(kv("recipe", &watcher.recipe));
+    header_lines.push(kv("globs", &watcher.globs.join(", ")));
+    header_lines.push(kv(
+        "debounce",
+        &format!("{} ms", watcher.debounce.as_millis()),
+    ));
+    if let Some(c) = watcher.last_exit_code {
+        header_lines.push(kv("last_exit", &c.to_string()));
+    }
+    frame.render_widget(Paragraph::new(header_lines), layout[0]);
+
+    // Output buffer.
+    let max_lines = layout[1].height.saturating_sub(0) as usize;
+    let total = watcher.buffer.len();
+    let start = total.saturating_sub(max_lines);
+    let lines: Vec<Line<'static>> = watcher
+        .buffer
+        .iter()
+        .skip(start)
+        .map(render_captured_line)
+        .collect();
+
+    let body = if lines.is_empty() {
+        let placeholder = match watcher.state {
+            WatcherState::Idle if watcher.last_exit_code.is_none() => {
+                "(no run yet — edit a watched file)".to_string()
+            }
+            WatcherState::Idle => "(idle — buffer cleared on next run)".into(),
+            WatcherState::Debouncing => "(cooldown...)".into(),
+            WatcherState::Running => "(starting...)".into(),
+        };
+        vec![Line::from(Span::styled(
+            placeholder,
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        lines
+    };
+
+    let paragraph = Paragraph::new(body).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, layout[1]);
+}
+
+fn watcher_indicator_style(app: &App, name: &str) -> Style {
+    let Some(w) = app.watchers().get(name) else {
+        return Style::default().fg(Color::DarkGray);
+    };
+    match w.state {
+        WatcherState::Idle => match w.last_exit_code {
+            None => Style::default().fg(Color::DarkGray),
+            Some(0) => Style::default().fg(Color::Green),
+            Some(_) => Style::default().fg(Color::Red),
+        },
+        WatcherState::Debouncing => Style::default().fg(Color::Yellow),
+        WatcherState::Running => Style::default().fg(Color::Cyan),
+    }
 }
 
 fn service_indicator_style(app: &App, service: &str) -> Style {

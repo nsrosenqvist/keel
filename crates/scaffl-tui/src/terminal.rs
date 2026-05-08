@@ -47,6 +47,7 @@ async fn drive(
         app.poll_run().await;
         app.drain_services();
         app.refresh_service_status().await;
+        app.tick_watchers().await;
 
         terminal.draw(|f| ui::render(app, f))?;
         if app.should_quit() {
