@@ -31,8 +31,8 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
-        Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+        Wrap,
     },
 };
 use scaffl_config::Run;
@@ -899,11 +899,6 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 
 // ─────────────────────── helpers ───────────────────────
 
-/// Standard padding inside any bordered panel: one column of breathing
-/// room on each horizontal edge, no vertical padding (panel content
-/// already manages its own line spacing).
-const PANEL_PADDING: Padding = Padding::new(1, 1, 0, 0);
-
 fn panel_block(title: &'static str) -> Block<'static> {
     Block::default()
         .title(Span::styled(
@@ -913,7 +908,6 @@ fn panel_block(title: &'static str) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .padding(PANEL_PADDING)
 }
 
 fn panel_block_titled(title: Line<'static>) -> Block<'static> {
@@ -922,7 +916,6 @@ fn panel_block_titled(title: Line<'static>) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .padding(PANEL_PADDING)
 }
 
 #[cfg(test)]
