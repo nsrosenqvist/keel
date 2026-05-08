@@ -38,6 +38,8 @@ pub struct Executor {
     project_root: Arc<Path>,
     base_env: Arc<OnceCell<Env>>,
     sink: Arc<dyn OutputSink>,
+    /// Active profile name, applied to recipes via [`Recipe::with_profile`].
+    profile: Option<String>,
 }
 
 impl Executor {
@@ -48,6 +50,7 @@ impl Executor {
             project_root: Arc::from(project_root),
             base_env: Arc::new(OnceCell::new()),
             sink: Arc::new(InheritSink),
+            profile: None,
         }
     }
 
@@ -58,6 +61,19 @@ impl Executor {
         let mut clone = self.clone();
         clone.sink = sink;
         clone
+    }
+
+    /// Activate a named profile for subsequent recipe runs. Recipes that
+    /// declare `[command.<name>.profile.<profile>]` overrides will have
+    /// those overrides applied.
+    pub fn with_profile(&self, profile: impl Into<String>) -> Self {
+        let mut clone = self.clone();
+        clone.profile = Some(profile.into());
+        clone
+    }
+
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
     }
 
     /// Resolve and cache the project base env (process + .env + `[env]`).
@@ -96,7 +112,7 @@ impl Executor {
                 return Err(RuntimeError::DependencyCycle(name));
             }
 
-            let recipe =
+            let raw_recipe =
                 self.config
                     .commands
                     .get(&name)
@@ -104,6 +120,7 @@ impl Executor {
                         name: name.clone(),
                         suggestion: None,
                     })?;
+            let recipe = raw_recipe.with_profile(self.profile.as_deref());
 
             for dep in &recipe.needs {
                 let code = self.run_dependency(&name, dep, in_progress.clone()).await?;
@@ -112,7 +129,7 @@ impl Executor {
                 }
             }
 
-            self.execute(recipe, &args, in_progress).await
+            self.execute(&recipe, &args, in_progress).await
         })
     }
 

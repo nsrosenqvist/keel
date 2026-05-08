@@ -24,6 +24,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub explain: bool,
 
+    /// Activate a named profile for recipe execution. Profiles are
+    /// declared as `[command.<name>.profile.<profile>]` in scaffl.toml.
+    #[arg(long, global = true)]
+    pub profile: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -44,7 +49,11 @@ pub enum Command {
     /// Validate the configuration and report on backend / deps / env files.
     Doctor,
     /// Scaffold a starter scaffl.toml in the project root.
-    Init,
+    Init {
+        /// Use a specific stack template instead of auto-detection.
+        #[arg(long)]
+        template: Option<commands::init::Template>,
+    },
     /// Open the TUI dashboard.
     Ui,
     /// Manage git hooks (install / run / uninstall).
@@ -52,6 +61,8 @@ pub enum Command {
         #[command(subcommand)]
         action: HooksAction,
     },
+    /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
+    Completions { shell: clap_complete::Shell },
     /// Re-run a recipe whenever watched files change.
     Watch {
         /// Recipe or script name.
@@ -91,11 +102,16 @@ pub enum HooksAction {
 pub async fn run(cli: Cli) -> Result<()> {
     init_tracing();
 
-    // `init` runs before config load — the whole point is to write the
-    // config that doesn't exist yet.
-    if matches!(cli.command, Some(Command::Init)) {
+    // `init` and `completions` run before config load — `init` writes
+    // the config that doesn't exist yet; `completions` should never fail
+    // on a broken scaffl.toml because users may regenerate completions
+    // *while fixing* such a file.
+    if let Some(Command::Init { template }) = cli.command {
         let project_root = locate_project_root(cli.project.as_deref())?;
-        return commands::init::run(&project_root);
+        return commands::init::run(&project_root, template);
+    }
+    if let Some(Command::Completions { shell }) = cli.command {
+        return commands::completions::run(shell);
     }
 
     let project_root = locate_project_root(cli.project.as_deref())?;
@@ -111,7 +127,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 let code = commands::doctor::run(&cfg_arc, &project_root).await?;
                 std::process::exit(code);
             }
-            Command::Init => unreachable!("handled above"),
+            Command::Init { .. } => unreachable!("handled above"),
+            Command::Completions { .. } => unreachable!("handled above"),
             Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root).await,
             Command::Watch {
                 recipe,
@@ -164,21 +181,30 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Resolution::Recipe(recipe_name) => {
             let backend = build_backend(&cfg_arc).await?;
-            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            if let Some(p) = cli.profile.as_deref() {
+                executor = executor.with_profile(p);
+            }
             let owned = recipe_name.to_string();
             let code = executor.run_recipe(&owned, rest).await?;
             std::process::exit(code);
         }
         Resolution::Script(script_name) => {
             let backend = build_backend(&cfg_arc).await?;
-            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            if let Some(p) = cli.profile.as_deref() {
+                executor = executor.with_profile(p);
+            }
             let owned = script_name.to_string();
             let code = executor.run_script(&owned, rest).await?;
             std::process::exit(code);
         }
         Resolution::ComposePassthrough(sub) => {
             let backend = build_backend(&cfg_arc).await?;
-            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            if let Some(p) = cli.profile.as_deref() {
+                executor = executor.with_profile(p);
+            }
             let mut argv: Vec<&str> = vec![sub];
             argv.extend(rest.iter().map(String::as_str));
             let code = executor.passthrough(&argv).await?;
@@ -186,7 +212,10 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Resolution::ServiceExec(service) => {
             let backend = build_backend(&cfg_arc).await?;
-            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            if let Some(p) = cli.profile.as_deref() {
+                executor = executor.with_profile(p);
+            }
             let argv: Vec<&str> = rest.iter().map(String::as_str).collect();
             let code = executor.service_exec(service, &argv, true).await?;
             std::process::exit(code);

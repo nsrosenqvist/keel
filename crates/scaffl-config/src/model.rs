@@ -178,6 +178,77 @@ pub struct Recipe {
     /// When `run` is an array, run steps concurrently rather than sequentially.
     #[serde(default)]
     pub parallel: bool,
+
+    /// Named overrides activated by `--profile <name>`. Each profile may
+    /// override a subset of the recipe's fields.
+    #[serde(default)]
+    pub profile: BTreeMap<String, RecipeProfile>,
+}
+
+/// Override layer applied on top of a [`Recipe`] when a named profile is
+/// active. Every field is optional; missing fields leave the recipe's
+/// value untouched.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeProfile {
+    #[serde(default)]
+    pub run: Option<Run>,
+
+    #[serde(default, rename = "in")]
+    pub service: Option<String>,
+
+    #[serde(default)]
+    pub tty: Option<bool>,
+
+    /// Env entries from the profile are merged on top of the recipe's
+    /// `env`. Profile keys win.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+
+    #[serde(default)]
+    pub needs: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub forward_args: Option<bool>,
+
+    #[serde(default)]
+    pub parallel: Option<bool>,
+}
+
+impl Recipe {
+    /// Apply the named profile (if it exists) and return the effective
+    /// recipe. The original is left untouched.
+    pub fn with_profile(&self, profile_name: Option<&str>) -> std::borrow::Cow<'_, Recipe> {
+        let Some(name) = profile_name else {
+            return std::borrow::Cow::Borrowed(self);
+        };
+        let Some(profile) = self.profile.get(name) else {
+            return std::borrow::Cow::Borrowed(self);
+        };
+        let mut merged = self.clone();
+        if let Some(run) = &profile.run {
+            merged.run = run.clone();
+        }
+        if let Some(service) = &profile.service {
+            merged.service = Some(service.clone());
+        }
+        if let Some(tty) = profile.tty {
+            merged.tty = tty;
+        }
+        for (k, v) in &profile.env {
+            merged.env.insert(k.clone(), v.clone());
+        }
+        if let Some(needs) = &profile.needs {
+            merged.needs = needs.clone();
+        }
+        if let Some(forward_args) = profile.forward_args {
+            merged.forward_args = forward_args;
+        }
+        if let Some(parallel) = profile.parallel {
+            merged.parallel = parallel;
+        }
+        std::borrow::Cow::Owned(merged)
+    }
 }
 
 /// Either a single command string or a sequence of steps.
@@ -329,6 +400,70 @@ mod tests {
             UiPane::Watcher { debounce_ms, .. } => assert_eq!(*debounce_ms, 500),
             _ => panic!("expected Watcher pane"),
         }
+    }
+
+    #[test]
+    fn parses_recipe_profiles() {
+        let src = r#"
+            [command.test]
+            run = "composer test"
+
+            [command.test.profile.ci]
+            tty = false
+            forward_args = true
+
+            [command.test.profile.ci.env]
+            XDEBUG_MODE = "off"
+
+            [command.test.profile.parallel]
+            parallel = true
+        "#;
+        let cfg: Config = toml::from_str(src).unwrap();
+        let test = &cfg.commands["test"];
+        assert_eq!(test.profile.len(), 2);
+        let ci = &test.profile["ci"];
+        assert_eq!(ci.tty, Some(false));
+        assert_eq!(ci.forward_args, Some(true));
+        assert_eq!(ci.env.get("XDEBUG_MODE").map(String::as_str), Some("off"));
+    }
+
+    #[test]
+    fn with_profile_applies_overrides() {
+        let cfg: Config = toml::from_str(
+            r#"
+                [command.test]
+                run = "composer test"
+                tty = true
+
+                [command.test.profile.ci]
+                tty = false
+                env = { XDEBUG_MODE = "off" }
+            "#,
+        )
+        .unwrap();
+        let test = &cfg.commands["test"];
+        let active = test.with_profile(Some("ci"));
+        assert!(!active.tty);
+        assert_eq!(
+            active.env.get("XDEBUG_MODE").map(String::as_str),
+            Some("off")
+        );
+        // No profile name → identity.
+        let untouched = test.with_profile(None);
+        assert!(untouched.tty);
+    }
+
+    #[test]
+    fn with_profile_unknown_returns_original() {
+        let cfg: Config = toml::from_str(
+            r#"
+                [command.test]
+                run = "true"
+            "#,
+        )
+        .unwrap();
+        let active = cfg.commands["test"].with_profile(Some("does-not-exist"));
+        assert_eq!(*active, cfg.commands["test"]);
     }
 
     #[test]

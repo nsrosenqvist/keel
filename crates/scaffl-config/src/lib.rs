@@ -11,5 +11,5 @@ pub mod scripts;
 
 pub use error::ConfigError;
 pub use loader::{load_from_path, load_project, parse_str};
-pub use model::{Config, EnvSpec, HooksConfig, Recipe, Run, RuntimeConfig};
+pub use model::{Config, EnvSpec, HooksConfig, Recipe, RecipeProfile, Run, RuntimeConfig};
 pub use scripts::ScriptCommand;

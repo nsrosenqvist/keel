@@ -23,6 +23,7 @@ scaffl-hooks = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 comfy-table = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
