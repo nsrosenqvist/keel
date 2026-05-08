@@ -7,8 +7,7 @@
 //! the same way.
 //!
 //! Status (running / stopped / missing) is polled at most once every
-//! [`STATUS_REFRESH`]; the result drives the indicator dot in the
-//! sidebar.
+//! 2 seconds; the result drives the indicator dot in the sidebar.
 
 use crate::runner::{CapturedLine, OUTPUT_BUFFER_CAP, push_capped};
 use scaffl_container::{Backend, BackendError, ServiceStatus};
@@ -133,8 +132,8 @@ impl ServicePane {
         drained
     }
 
-    /// Refresh the cached status if the last check is older than
-    /// [`STATUS_REFRESH`].
+    /// Refresh the cached status if the last check is older than the
+    /// status-refresh window (2 seconds).
     pub async fn refresh_status(&mut self, backend: &Arc<dyn Backend>) {
         let now = Instant::now();
         let stale = self
