@@ -12,6 +12,7 @@ readme.workspace = true
 
 [dependencies]
 scaffl-config = { workspace = true }
+scaffl-container = { workspace = true }
 scaffl-runtime = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -21,5 +22,4 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-scaffl-container = { workspace = true }
 pretty_assertions = { workspace = true }

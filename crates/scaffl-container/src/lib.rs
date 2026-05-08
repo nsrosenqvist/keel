@@ -12,6 +12,7 @@ pub mod null;
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
+use tokio::process::Child;
 
 pub use error::BackendError;
 
@@ -64,4 +65,20 @@ pub trait Backend: Send + Sync {
     /// Run a passthrough command directly against the backend (e.g.
     /// `docker compose ps`). Used by `compose_passthrough`.
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError>;
+
+    /// Spawn a long-running process that tails logs for `service`. The
+    /// returned [`Child`] has its stdout / stderr piped — callers wire
+    /// them through their own line readers (e.g. an [`OutputSink`]
+    /// channel for the TUI).
+    ///
+    /// Default implementation errors. Backends that don't have a tail
+    /// notion (NullBackend, hypothetical future backends without log
+    /// support) inherit this default.
+    ///
+    /// [`OutputSink`]: scaffl-runtime::OutputSink
+    async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
+        Err(BackendError::Reported(
+            "this backend does not support log tailing".into(),
+        ))
+    }
 }

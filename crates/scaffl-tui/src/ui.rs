@@ -2,6 +2,7 @@
 
 use crate::app::{App, ItemKind};
 use crate::runner::CapturedLine;
+use crate::services::ServicePane;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -10,6 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use scaffl_config::Run;
+use scaffl_container::ServiceStatus;
 use scaffl_runtime::OutputStream;
 
 const SIDEBAR_RATIO: u16 = 25;
@@ -32,8 +34,13 @@ pub fn render(app: &App, frame: &mut Frame) {
 
     render_sidebar(app, frame, body[0]);
 
-    // Right pane splits vertically when a run is in progress or finished.
-    if app.current_run().is_some() {
+    // Right pane:
+    //   - if a service is selected, show its tailed logs (full height)
+    //   - if a run is in progress / finished, split detail + output
+    //   - otherwise just detail
+    if let Some(service) = app.selected_service() {
+        render_service_logs(service, frame, body[1]);
+    } else if app.current_run().is_some() {
         let right = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
@@ -53,11 +60,16 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         .iter()
         .map(|item| {
             let glyph = match item.kind {
+                ItemKind::Service => "●",
                 ItemKind::Recipe => "▸",
                 ItemKind::Script => "▪",
             };
+            let glyph_style = match item.kind {
+                ItemKind::Service => service_indicator_style(app, &item.name),
+                _ => Style::default().fg(Color::DarkGray),
+            };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{glyph} "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{glyph} "), glyph_style),
                 Span::raw(item.name.clone()),
             ]))
         })
@@ -104,6 +116,7 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
         Span::raw("  "),
         Span::styled(
             match item.kind {
+                ItemKind::Service => "service",
                 ItemKind::Recipe => "recipe",
                 ItemKind::Script => "script",
             },
@@ -211,6 +224,63 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
         OutputStream::Stderr => Style::default().fg(Color::Red),
     };
     Line::from(Span::styled(line.text.clone(), style))
+}
+
+fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
+    let title = match (&service.tail_error, service.status) {
+        (Some(err), _) => format!(" {} · ! {} ", service.name, truncate(err, 60)),
+        (None, Some(s)) => format!(" {} · {} ", service.name, status_word(s)),
+        (None, None) => format!(" {} · ? ", service.name),
+    };
+    let block = Block::default().title(title).borders(Borders::ALL);
+
+    let max_lines = area.height.saturating_sub(2) as usize;
+    let total = service.buffer.len();
+    let start = total.saturating_sub(max_lines);
+    let lines: Vec<Line<'static>> = service
+        .buffer
+        .iter()
+        .skip(start)
+        .map(render_captured_line)
+        .collect();
+
+    let body = if service.buffer.is_empty() && service.tail_error.is_none() {
+        vec![Line::from(Span::styled(
+            "(waiting for output...)".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        lines
+    };
+
+    let paragraph = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn service_indicator_style(app: &App, service: &str) -> Style {
+    match app.services().get(service).and_then(|p| p.status) {
+        Some(ServiceStatus::Running) => Style::default().fg(Color::Green),
+        Some(ServiceStatus::Stopped) => Style::default().fg(Color::Yellow),
+        Some(ServiceStatus::Missing) => Style::default().fg(Color::Red),
+        None => Style::default().fg(Color::DarkGray),
+    }
+}
+
+fn status_word(s: ServiceStatus) -> &'static str {
+    match s {
+        ServiceStatus::Running => "running",
+        ServiceStatus::Stopped => "stopped",
+        ServiceStatus::Missing => "missing",
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max - 1).collect();
+        format!("{cut}…")
+    }
 }
 
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {

@@ -35,11 +35,18 @@ async fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
 ) -> Result<(), TuiError> {
+    // Spawn long-lived tail processes once, before the event loop. Any
+    // tail that fails to spawn surfaces in the pane's tail_error and the
+    // others continue.
+    app.spawn_service_tails().await;
+
     let mut events = spawn_event_reader();
     loop {
-        // Pre-render hooks: drain any queued output and advance run state.
+        // Pre-render hooks: drain queued output and advance run state.
         app.drain_run();
         app.poll_run().await;
+        app.drain_services();
+        app.refresh_service_status().await;
 
         terminal.draw(|f| ui::render(app, f))?;
         if app.should_quit() {
@@ -52,7 +59,7 @@ async fn drive(
                 handle_event(app, ev);
             }
             _ = tokio::time::sleep(Duration::from_millis(TICK_INTERVAL_MS)) => {
-                // Tick — re-poll run state, redraw timers, etc.
+                // Tick — re-drain output, re-poll status, redraw timers.
             }
         }
     }

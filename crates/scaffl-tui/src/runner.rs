@@ -123,7 +123,12 @@ impl RunState {
     }
 }
 
-fn push_capped(buf: &mut VecDeque<CapturedLine>, line: CapturedLine) {
+/// Push a captured line into a buffer, evicting the oldest entry once the
+/// buffer reaches [`OUTPUT_BUFFER_CAP`].
+///
+/// Shared between [`RunState`] and the per-service pane buffers so both
+/// follow the same memory bound.
+pub(crate) fn push_capped(buf: &mut VecDeque<CapturedLine>, line: CapturedLine) {
     if buf.len() == OUTPUT_BUFFER_CAP {
         buf.pop_front();
     }

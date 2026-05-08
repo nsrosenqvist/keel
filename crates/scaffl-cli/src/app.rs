@@ -283,8 +283,11 @@ async fn run_tui(config: Arc<Config>, project_root: &Path) -> Result<()> {
         Ok(b) => b,
         Err(_) => Arc::new(scaffl_container::null::NullBackend),
     };
-    let executor = scaffl_runtime::Executor::new(backend, Arc::clone(&config), project_root);
-    scaffl_tui::run(config, executor).await.context("run TUI")
+    let executor =
+        scaffl_runtime::Executor::new(Arc::clone(&backend), Arc::clone(&config), project_root);
+    scaffl_tui::run(config, executor, backend)
+        .await
+        .context("run TUI")
 }
 
 fn load_config(project_root: &Path) -> Result<Config> {

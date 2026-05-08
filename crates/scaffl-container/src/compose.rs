@@ -130,6 +130,21 @@ impl Backend for ComposeBackend {
         let status = Command::new(head).args(tail).args(args).status().await?;
         Ok(status.code().unwrap_or(-1))
     }
+
+    async fn tail_logs(&self, service: &str) -> Result<tokio::process::Child, BackendError> {
+        let prefix = self.prefix();
+        let (head, tail) = prefix.split_first().expect("non-empty prefix");
+        let mut cmd = Command::new(head);
+        cmd.args(tail);
+        // --tail seeds the buffer with recent history so users don't open
+        // an empty pane on a long-running service. -f follows.
+        cmd.args(["logs", "-f", "--tail", "200", service]);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
+    }
 }
 
 #[cfg(test)]

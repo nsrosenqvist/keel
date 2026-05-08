@@ -3,13 +3,17 @@
 //! The model and the controller. Pure functions — no terminal I/O here.
 
 use crate::runner::RunState;
-use scaffl_config::{Config, Recipe, ScriptCommand};
+use crate::services::ServicePane;
+use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
+use scaffl_container::Backend;
 use scaffl_runtime::Executor;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
+    Service,
     Recipe,
     Script,
 }
@@ -36,7 +40,11 @@ pub struct App {
     selected: usize,
     quit: bool,
     executor: Option<Executor>,
+    backend: Option<Arc<dyn Backend>>,
     current_run: Option<RunState>,
+    /// Service pane state, keyed by service name. Populated for every
+    /// `[[ui.pane]] type = "service"` declaration in the config.
+    services: BTreeMap<String, ServicePane>,
     /// Last rejection / status banner (decays after a few seconds — kept
     /// simple by just clearing on the next successful action).
     pub flash: Option<String>,
@@ -45,13 +53,16 @@ pub struct App {
 impl App {
     pub fn new(config: Arc<Config>) -> Self {
         let items = build_items(&config);
+        let services = collect_service_panes(&config);
         Self {
             config,
             items,
             selected: 0,
             quit: false,
             executor: None,
+            backend: None,
             current_run: None,
+            services,
             flash: None,
         }
     }
@@ -59,6 +70,31 @@ impl App {
     pub fn with_executor(mut self, executor: Executor) -> Self {
         self.executor = Some(executor);
         self
+    }
+
+    pub fn with_backend(mut self, backend: Arc<dyn Backend>) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    pub fn backend(&self) -> Option<&Arc<dyn Backend>> {
+        self.backend.as_ref()
+    }
+
+    pub fn services(&self) -> &BTreeMap<String, ServicePane> {
+        &self.services
+    }
+
+    pub fn services_mut(&mut self) -> &mut BTreeMap<String, ServicePane> {
+        &mut self.services
+    }
+
+    pub fn selected_service(&self) -> Option<&ServicePane> {
+        let item = self.selected_item()?;
+        if item.kind != ItemKind::Service {
+            return None;
+        }
+        self.services.get(&item.name)
     }
 
     pub fn items(&self) -> &[Item] {
@@ -149,6 +185,11 @@ impl App {
             .clone();
 
         match item.kind {
+            ItemKind::Service => {
+                return Err(LaunchRejection::NotRunnable(
+                    "service panes show logs; press q to quit or navigate to a recipe".into(),
+                ));
+            }
             ItemKind::Recipe => {
                 let Some(recipe) = self.config.commands.get(&item.name) else {
                     return Err(LaunchRejection::NotRunnable(format!(
@@ -194,10 +235,48 @@ impl App {
             run.poll_completion().await;
         }
     }
+
+    /// Drain output from every service pane. Cheap when nothing has
+    /// arrived; called on every pre-render hook.
+    pub fn drain_services(&mut self) {
+        for pane in self.services.values_mut() {
+            pane.drain();
+        }
+    }
+
+    /// Spawn tail processes for every service pane that doesn't already
+    /// have one. Called once at startup; idempotent if called again.
+    pub async fn spawn_service_tails(&mut self) {
+        let Some(backend) = self.backend.as_ref().map(Arc::clone) else {
+            return;
+        };
+        for pane in self.services.values_mut() {
+            pane.ensure_tailing(&backend).await;
+        }
+    }
+
+    /// Refresh service status indicators. Each pane decides whether
+    /// enough time has elapsed to actually re-poll.
+    pub async fn refresh_service_status(&mut self) {
+        let Some(backend) = self.backend.as_ref().map(Arc::clone) else {
+            return;
+        };
+        for pane in self.services.values_mut() {
+            pane.refresh_status(&backend).await;
+        }
+    }
 }
 
 fn build_items(config: &Config) -> Vec<Item> {
-    let mut items = Vec::with_capacity(config.commands.len() + config.scripts.len());
+    let mut items = Vec::new();
+    for pane in &config.ui.panes {
+        if let UiPane::Service { service, .. } = pane {
+            items.push(Item {
+                name: service.clone(),
+                kind: ItemKind::Service,
+            });
+        }
+    }
     items.extend(config.commands.keys().map(|name| Item {
         name: name.clone(),
         kind: ItemKind::Recipe,
@@ -207,6 +286,17 @@ fn build_items(config: &Config) -> Vec<Item> {
         kind: ItemKind::Script,
     }));
     items
+}
+
+fn collect_service_panes(config: &Config) -> BTreeMap<String, ServicePane> {
+    let mut out = BTreeMap::new();
+    for pane in &config.ui.panes {
+        if let UiPane::Service { service, .. } = pane {
+            out.entry(service.clone())
+                .or_insert_with(|| ServicePane::new(service.clone()));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -230,11 +320,68 @@ mod tests {
     }
 
     #[test]
-    fn build_items_sorts_recipes_before_scripts() {
-        let cfg = cfg();
+    fn build_items_orders_services_recipes_scripts() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [command.up]
+                run = "true"
+
+                [[ui.pane]]
+                type = "service"
+                service = "app"
+            "#,
+            )
+            .unwrap(),
+        );
         let app = App::new(cfg);
         assert_eq!(app.items().len(), 2);
-        assert!(app.items().iter().all(|i| i.kind == ItemKind::Recipe));
+        assert_eq!(app.items()[0].kind, ItemKind::Service);
+        assert_eq!(app.items()[0].name, "app");
+        assert_eq!(app.items()[1].kind, ItemKind::Recipe);
+    }
+
+    #[test]
+    fn collect_service_panes_picks_up_ui_services() {
+        let cfg = scaffl_config::parse_str(
+            r#"
+            [[ui.pane]]
+            type = "service"
+            service = "app"
+
+            [[ui.pane]]
+            type = "service"
+            service = "worker"
+            "#,
+        )
+        .unwrap();
+        let panes = collect_service_panes(&cfg);
+        assert_eq!(panes.len(), 2);
+        assert!(panes.contains_key("app"));
+        assert!(panes.contains_key("worker"));
+    }
+
+    #[test]
+    fn launch_rejects_service_selection() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [[ui.pane]]
+                type = "service"
+                service = "app"
+            "#,
+            )
+            .unwrap(),
+        );
+        let backend: Arc<dyn scaffl_container::Backend> =
+            Arc::new(scaffl_container::null::NullBackend);
+        let executor = Executor::new(backend, Arc::clone(&cfg), std::path::Path::new("/tmp"));
+        let mut app = App::new(cfg).with_executor(executor);
+        let err = app.try_launch_selected().unwrap_err();
+        match err {
+            LaunchRejection::NotRunnable(msg) => assert!(msg.contains("service panes")),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[test]
