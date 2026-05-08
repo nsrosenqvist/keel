@@ -25,10 +25,12 @@ pub enum Resolution<'a> {
 }
 
 /// Inputs the resolver needs that are not in the config itself.
+///
+/// Scripts are resolved from `Config::scripts` (populated by
+/// [`scaffl_config::load_project`]). Services and compose subcommands come
+/// from outside the config because they aren't user-authored.
 #[derive(Debug, Default, Clone)]
 pub struct ResolverContext {
-    /// Names of scripts found under `.scaffl/commands/`.
-    pub script_names: Vec<String>,
     /// Compose service names known from the project.
     pub services: Vec<String>,
     /// Compose subcommands eligible for passthrough (`ps`, `logs`, ...).
@@ -66,7 +68,7 @@ impl<'a> Resolver<'a> {
         if self.config.commands.contains_key(name) {
             return Resolution::Recipe(name);
         }
-        if self.ctx.script_names.iter().any(|s| s == name) {
+        if self.config.scripts.contains_key(name) {
             return Resolution::Script(name);
         }
         if self.config.runtime.compose_passthrough && self.ctx.compose_subcommands.contains(&name) {
@@ -93,7 +95,7 @@ impl<'a> Resolver<'a> {
         let mut v = Vec::new();
         v.extend(BUILTINS.iter().map(|s| (*s).to_string()));
         v.extend(self.config.commands.keys().cloned());
-        v.extend(self.ctx.script_names.iter().cloned());
+        v.extend(self.config.scripts.keys().cloned());
         v.extend(self.ctx.services.iter().cloned());
         if self.config.runtime.compose_passthrough {
             v.extend(
@@ -166,14 +168,25 @@ mod tests {
 
     #[test]
     fn script_resolves_when_no_recipe() {
-        let cfg = config_with(&[]);
-        let r = Resolver::new(
-            &cfg,
-            ResolverContext {
-                script_names: vec!["seed".into()],
-                ..Default::default()
+        use scaffl_config::ScriptCommand;
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        let mut cfg = config_with(&[]);
+        cfg.scripts.insert(
+            "seed".into(),
+            ScriptCommand {
+                name: "seed".into(),
+                path: PathBuf::from("/dev/null"),
+                desc: None,
+                service: None,
+                tty: false,
+                env: BTreeMap::new(),
+                needs: Vec::new(),
+                forward_args: false,
             },
         );
+        let r = Resolver::new(&cfg, ResolverContext::default());
         assert_eq!(r.resolve("seed"), Resolution::Script("seed"));
     }
 

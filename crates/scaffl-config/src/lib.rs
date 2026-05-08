@@ -7,7 +7,9 @@
 pub mod error;
 pub mod loader;
 pub mod model;
+pub mod scripts;
 
 pub use error::ConfigError;
-pub use loader::{load_from_path, parse_str};
+pub use loader::{load_from_path, load_project, parse_str};
 pub use model::{Config, EnvSpec, Recipe, Run, RuntimeConfig};
+pub use scripts::ScriptCommand;

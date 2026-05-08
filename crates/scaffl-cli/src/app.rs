@@ -81,8 +81,12 @@ pub async fn run(cli: Cli) -> Result<()> {
             let code = executor.run_recipe(&owned, rest).await?;
             std::process::exit(code);
         }
-        Resolution::Script(_) => {
-            anyhow::bail!("script-based recipes are pending implementation");
+        Resolution::Script(script_name) => {
+            let backend = build_backend(&cfg_arc).await?;
+            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let owned = script_name.to_string();
+            let code = executor.run_script(&owned, rest).await?;
+            std::process::exit(code);
         }
         Resolution::ComposePassthrough(sub) => {
             let backend = build_backend(&cfg_arc).await?;
@@ -111,8 +115,8 @@ pub async fn run(cli: Cli) -> Result<()> {
 fn cmd_list(config: &Config) -> Result<()> {
     use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 
-    if config.commands.is_empty() {
-        println!("No recipes defined in scaffl.toml.");
+    if config.commands.is_empty() && config.scripts.is_empty() {
+        println!("No recipes or scripts defined.");
         return Ok(());
     }
 
@@ -120,12 +124,21 @@ fn cmd_list(config: &Config) -> Result<()> {
     table
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec!["recipe", "in", "description"]);
+        .set_header(vec!["name", "kind", "in", "description"]);
     for (name, recipe) in &config.commands {
         table.add_row(vec![
             name.clone(),
+            "recipe".into(),
             recipe.service.clone().unwrap_or_else(|| "host".into()),
             recipe.desc.clone().unwrap_or_default(),
+        ]);
+    }
+    for (name, script) in &config.scripts {
+        table.add_row(vec![
+            name.clone(),
+            "script".into(),
+            script.service.clone().unwrap_or_else(|| "host".into()),
+            script.desc.clone().unwrap_or_default(),
         ]);
     }
     println!("{table}");
@@ -167,11 +180,8 @@ async fn build_backend(_config: &Config) -> Result<Arc<dyn Backend>> {
 }
 
 fn load_config(project_root: &Path) -> Result<Config> {
-    let path = project_root.join("scaffl.toml");
-    if !path.exists() {
-        return Ok(Config::default());
-    }
-    scaffl_config::load_from_path(&path).with_context(|| format!("load {}", path.display()))
+    scaffl_config::load_project(project_root)
+        .with_context(|| format!("load project at {}", project_root.display()))
 }
 
 fn init_tracing() {

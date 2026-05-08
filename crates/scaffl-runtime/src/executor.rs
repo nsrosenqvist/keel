@@ -11,7 +11,7 @@
 
 use crate::env::Env;
 use crate::error::RuntimeError;
-use scaffl_config::{Config, Recipe, Run};
+use scaffl_config::{Config, Recipe, Run, ScriptCommand};
 use scaffl_container::{Backend, ExecOptions, ServiceStatus};
 use std::collections::HashSet;
 use std::path::Path;
@@ -64,6 +64,13 @@ impl Executor {
             .await
     }
 
+    /// Run a script command by name. Mirrors [`Self::run_recipe`] but
+    /// dispatches to a `.scaffl/commands/<name>` file.
+    pub async fn run_script(&self, name: &str, args: &[String]) -> Result<i32, RuntimeError> {
+        self.run_script_inner(name.to_string(), args.to_vec(), HashSet::new())
+            .await
+    }
+
     fn run_recipe_inner(
         &self,
         name: String,
@@ -85,21 +92,65 @@ impl Executor {
                     })?;
 
             for dep in &recipe.needs {
-                if !self.config.commands.contains_key(dep) {
-                    return Err(RuntimeError::UnknownDependency {
-                        recipe: name.clone(),
-                        dep: dep.clone(),
-                    });
-                }
-                let code = self
-                    .run_recipe_inner(dep.clone(), Vec::new(), in_progress.clone())
-                    .await?;
+                let code = self.run_dependency(&name, dep, in_progress.clone()).await?;
                 if code != 0 {
                     return Ok(code);
                 }
             }
 
             self.execute(recipe, &args, in_progress).await
+        })
+    }
+
+    fn run_script_inner(
+        &self,
+        name: String,
+        args: Vec<String>,
+        mut in_progress: HashSet<String>,
+    ) -> BoxFut<'_, Result<i32, RuntimeError>> {
+        Box::pin(async move {
+            if !in_progress.insert(name.clone()) {
+                return Err(RuntimeError::DependencyCycle(name));
+            }
+            let script =
+                self.config
+                    .scripts
+                    .get(&name)
+                    .ok_or_else(|| RuntimeError::UnknownCommand {
+                        name: name.clone(),
+                        suggestion: None,
+                    })?;
+            for dep in &script.needs {
+                let code = self.run_dependency(&name, dep, in_progress.clone()).await?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+            self.execute_script(script, &args).await
+        })
+    }
+
+    /// Run a dependency — looks for a recipe first, then a script, before
+    /// erroring with [`RuntimeError::UnknownDependency`].
+    async fn run_dependency(
+        &self,
+        from: &str,
+        dep: &str,
+        in_progress: HashSet<String>,
+    ) -> Result<i32, RuntimeError> {
+        if self.config.commands.contains_key(dep) {
+            return self
+                .run_recipe_inner(dep.to_string(), Vec::new(), in_progress)
+                .await;
+        }
+        if self.config.scripts.contains_key(dep) {
+            return self
+                .run_script_inner(dep.to_string(), Vec::new(), in_progress)
+                .await;
+        }
+        Err(RuntimeError::UnknownDependency {
+            recipe: from.to_string(),
+            dep: dep.to_string(),
         })
     }
 
@@ -196,13 +247,21 @@ impl Executor {
         forwarded: &[String],
         in_progress: HashSet<String>,
     ) -> Result<i32, RuntimeError> {
-        // A step is a recipe reference if it contains no whitespace and
-        // names a known recipe.
-        if !step.chars().any(char::is_whitespace) && self.config.commands.contains_key(step) {
-            debug!(recipe_ref = step, "step is recipe reference");
-            return self
-                .run_recipe_inner(step.to_string(), forwarded.to_vec(), in_progress)
-                .await;
+        // A step is a recipe / script reference if it contains no whitespace
+        // and names a known recipe or script.
+        if !step.chars().any(char::is_whitespace) {
+            if self.config.commands.contains_key(step) {
+                debug!(recipe_ref = step, "step is recipe reference");
+                return self
+                    .run_recipe_inner(step.to_string(), forwarded.to_vec(), in_progress)
+                    .await;
+            }
+            if self.config.scripts.contains_key(step) {
+                debug!(script_ref = step, "step is script reference");
+                return self
+                    .run_script_inner(step.to_string(), forwarded.to_vec(), in_progress)
+                    .await;
+            }
         }
 
         let env = self
@@ -240,6 +299,46 @@ impl Executor {
         let (program, rest) = argv.split_first().expect("non-empty argv");
         let mut cmd = Command::new(program);
         cmd.args(rest);
+        cmd.current_dir(self.project_root.as_ref());
+        cmd.env_clear();
+        for (k, v) in env.iter() {
+            cmd.env(k, v);
+        }
+        let status = cmd
+            .status()
+            .await
+            .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+        Ok(status.code().unwrap_or(-1))
+    }
+
+    async fn execute_script(
+        &self,
+        script: &ScriptCommand,
+        args: &[String],
+    ) -> Result<i32, RuntimeError> {
+        if let Some(service) = &script.service {
+            // In-container script execution is deferred — staging the file
+            // into the container and selecting an interpreter is not in
+            // Phase 2's scope. Surface a clear error rather than silently
+            // running on the host.
+            return Err(RuntimeError::Backend(
+                scaffl_container::BackendError::Reported(format!(
+                    "script `{name}` declares `in = \"{service}\"`; in-container scripts are not yet supported (run on host or move the logic into a recipe with `in =`)",
+                    name = script.name,
+                )),
+            ));
+        }
+
+        let env = self
+            .base_env()
+            .await?
+            .clone()
+            .with_overrides(script.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        let mut cmd = Command::new(&script.path);
+        if script.forward_args {
+            cmd.args(args);
+        }
         cmd.current_dir(self.project_root.as_ref());
         cmd.env_clear();
         for (k, v) in env.iter() {

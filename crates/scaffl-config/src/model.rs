@@ -4,6 +4,7 @@
 //! validated, and then handed (immutable) to the runtime. They expose no
 //! behaviour beyond accessors. Behaviour lives in `scaffl-runtime`.
 
+use crate::scripts::ScriptCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -31,6 +32,11 @@ pub struct Config {
 
     #[serde(default)]
     pub ui: UiConfig,
+
+    /// Scripts discovered under `.scaffl/commands/`. Populated by
+    /// [`crate::loader::load_project`]; never serialized.
+    #[serde(skip)]
+    pub scripts: BTreeMap<String, ScriptCommand>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
