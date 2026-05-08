@@ -10,3 +10,4 @@ pub mod doctor;
 pub mod env;
 pub mod hooks;
 pub mod init;
+pub mod watch;

@@ -52,6 +52,21 @@ pub enum Command {
         #[command(subcommand)]
         action: HooksAction,
     },
+    /// Re-run a recipe whenever watched files change.
+    Watch {
+        /// Recipe or script name.
+        recipe: String,
+        /// Args forwarded to the recipe.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Paths to watch (default: project root). Repeat the flag for
+        /// multiple paths.
+        #[arg(long)]
+        path: Vec<PathBuf>,
+        /// Debounce window in milliseconds (default: 300).
+        #[arg(long)]
+        debounce_ms: Option<u64>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -98,6 +113,22 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             Command::Init => unreachable!("handled above"),
             Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root).await,
+            Command::Watch {
+                recipe,
+                args,
+                path,
+                debounce_ms,
+            } => {
+                commands::watch::run(
+                    Arc::clone(&cfg_arc),
+                    &project_root,
+                    recipe,
+                    args,
+                    path,
+                    debounce_ms,
+                )
+                .await
+            }
             Command::Hooks { action } => match action {
                 HooksAction::Install { stages } => {
                     commands::hooks::install(&project_root, &stages).await
