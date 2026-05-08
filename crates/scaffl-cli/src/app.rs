@@ -47,6 +47,30 @@ pub enum Command {
     Init,
     /// Open the TUI dashboard.
     Ui,
+    /// Manage git hooks (install / run / uninstall).
+    Hooks {
+        #[command(subcommand)]
+        action: HooksAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HooksAction {
+    /// Install scaffl-managed git hook shims.
+    Install {
+        /// Stages to install (default: pre-commit).
+        #[arg(long, value_delimiter = ',')]
+        stages: Vec<String>,
+    },
+    /// Remove scaffl-managed git hook shims.
+    Uninstall {
+        /// Stages to remove (default: all known stages).
+        #[arg(long, value_delimiter = ',')]
+        stages: Vec<String>,
+    },
+    /// Run hooks for a stage. Used by the installed shims; `git commit`
+    /// invokes this via .git/hooks/pre-commit.
+    Run { stage: String },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -74,6 +98,18 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             Command::Init => unreachable!("handled above"),
             Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root).await,
+            Command::Hooks { action } => match action {
+                HooksAction::Install { stages } => {
+                    commands::hooks::install(&project_root, &stages).await
+                }
+                HooksAction::Uninstall { stages } => {
+                    commands::hooks::uninstall(&project_root, &stages).await
+                }
+                HooksAction::Run { stage } => {
+                    let code = commands::hooks::run(&cfg_arc, &project_root, &stage).await?;
+                    std::process::exit(code);
+                }
+            },
         };
     }
 
