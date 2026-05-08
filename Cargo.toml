@@ -67,6 +67,7 @@ which = "7"
 shell-escape = "0.1"
 shell-words = "1"
 dirs = "5"
+dotenvy = "0.15"
 walkdir = "2"
 
 # Tracing / logging

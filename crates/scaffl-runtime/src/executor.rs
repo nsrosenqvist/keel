@@ -15,19 +15,25 @@ use scaffl_config::{Config, Recipe, Run};
 use scaffl_container::{Backend, ExecOptions, ServiceStatus};
 use std::collections::HashSet;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::OnceCell;
 use tracing::{debug, instrument};
+
+type BoxFut<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 /// The executor.
 ///
 /// Holds shared, immutable references to its collaborators. Cheap to clone
-/// for spawning concurrent recipe steps.
+/// for spawning concurrent recipe steps; the cached base env is shared via
+/// [`Arc`].
 #[derive(Clone)]
 pub struct Executor {
     backend: Arc<dyn Backend>,
     config: Arc<Config>,
     project_root: Arc<Path>,
+    base_env: Arc<OnceCell<Env>>,
 }
 
 impl Executor {
@@ -36,52 +42,64 @@ impl Executor {
             backend,
             config,
             project_root: Arc::from(project_root),
+            base_env: Arc::new(OnceCell::new()),
         }
+    }
+
+    /// Resolve and cache the project base env (process + .env + `[env]`).
+    /// Subsequent calls return the cached value without re-running
+    /// `from_command`s.
+    async fn base_env(&self) -> Result<&Env, RuntimeError> {
+        self.base_env
+            .get_or_try_init(|| async {
+                Env::resolve(&self.config, self.project_root.as_ref()).await
+            })
+            .await
     }
 
     /// Run a recipe by name. `args` are forwarded to the recipe's `run` if
     /// `forward_args = true`.
     pub async fn run_recipe(&self, name: &str, args: &[String]) -> Result<i32, RuntimeError> {
-        self.run_recipe_inner(name, args, &mut HashSet::new()).await
+        self.run_recipe_inner(name.to_string(), args.to_vec(), HashSet::new())
+            .await
     }
 
-    fn run_recipe_inner<'a>(
-        &'a self,
-        name: &'a str,
-        args: &'a [String],
-        in_progress: &'a mut HashSet<String>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, RuntimeError>> + Send + 'a>>
-    {
+    fn run_recipe_inner(
+        &self,
+        name: String,
+        args: Vec<String>,
+        mut in_progress: HashSet<String>,
+    ) -> BoxFut<'_, Result<i32, RuntimeError>> {
         Box::pin(async move {
-            if !in_progress.insert(name.to_string()) {
-                return Err(RuntimeError::DependencyCycle(name.to_string()));
+            if !in_progress.insert(name.clone()) {
+                return Err(RuntimeError::DependencyCycle(name));
             }
 
             let recipe =
                 self.config
                     .commands
-                    .get(name)
+                    .get(&name)
                     .ok_or_else(|| RuntimeError::UnknownCommand {
-                        name: name.to_string(),
+                        name: name.clone(),
                         suggestion: None,
                     })?;
 
             for dep in &recipe.needs {
                 if !self.config.commands.contains_key(dep) {
                     return Err(RuntimeError::UnknownDependency {
-                        recipe: name.to_string(),
+                        recipe: name.clone(),
                         dep: dep.clone(),
                     });
                 }
-                let code = self.run_recipe_inner(dep, &[], in_progress).await?;
+                let code = self
+                    .run_recipe_inner(dep.clone(), Vec::new(), in_progress.clone())
+                    .await?;
                 if code != 0 {
                     return Ok(code);
                 }
             }
 
-            let code = self.execute(recipe, args, in_progress).await?;
-            in_progress.remove(name);
-            Ok(code)
+            self.execute(recipe, &args, in_progress).await
         })
     }
 
@@ -90,7 +108,7 @@ impl Executor {
         &self,
         recipe: &Recipe,
         args: &[String],
-        in_progress: &mut HashSet<String>,
+        in_progress: HashSet<String>,
     ) -> Result<i32, RuntimeError> {
         if let Some(service) = &recipe.service {
             let status = self.backend.status(service).await?;
@@ -106,18 +124,69 @@ impl Executor {
 
         match &recipe.run {
             Run::Single(cmd) => self.run_step(recipe, cmd, args, in_progress).await,
+            Run::Steps(steps) if recipe.parallel => {
+                self.run_steps_parallel(recipe, steps, args, in_progress)
+                    .await
+            }
             Run::Steps(steps) => {
-                for (idx, step) in steps.iter().enumerate() {
-                    // Forward args only to the final step, mirroring `bash -c "a; b $@"`.
-                    let step_args: &[String] = if idx + 1 == steps.len() { args } else { &[] };
-                    let code = self.run_step(recipe, step, step_args, in_progress).await?;
-                    if code != 0 {
-                        return Ok(code);
-                    }
-                }
-                Ok(0)
+                self.run_steps_sequential(recipe, steps, args, in_progress)
+                    .await
             }
         }
+    }
+
+    async fn run_steps_sequential(
+        &self,
+        recipe: &Recipe,
+        steps: &[String],
+        args: &[String],
+        in_progress: HashSet<String>,
+    ) -> Result<i32, RuntimeError> {
+        for (idx, step) in steps.iter().enumerate() {
+            // Forward args only to the final step, mirroring `bash -c "a; b $@"`.
+            let step_args: &[String] = if idx + 1 == steps.len() { args } else { &[] };
+            let code = self
+                .run_step(recipe, step, step_args, in_progress.clone())
+                .await?;
+            if code != 0 {
+                return Ok(code);
+            }
+        }
+        Ok(0)
+    }
+
+    async fn run_steps_parallel(
+        &self,
+        recipe: &Recipe,
+        steps: &[String],
+        args: &[String],
+        in_progress: HashSet<String>,
+    ) -> Result<i32, RuntimeError> {
+        // Args forwarding has no useful semantics under parallelism — each
+        // step runs concurrently, so "the last step" is undefined. We
+        // forward to all steps when forward_args is set, matching how a
+        // shell would do `cmd1 "$@" & cmd2 "$@" &`.
+        let futures = steps.iter().map(|step| {
+            let step_args = if recipe.forward_args {
+                args.to_vec()
+            } else {
+                Vec::new()
+            };
+            let in_progress = in_progress.clone();
+            let step = step.clone();
+            async move { self.run_step(recipe, &step, &step_args, in_progress).await }
+        });
+        let results = futures::future::join_all(futures).await;
+
+        // First Err wins; otherwise return the first non-zero exit, or 0.
+        let mut first_failure: Option<i32> = None;
+        for r in results {
+            let code = r?;
+            if code != 0 && first_failure.is_none() {
+                first_failure = Some(code);
+            }
+        }
+        Ok(first_failure.unwrap_or(0))
     }
 
     async fn run_step(
@@ -125,22 +194,26 @@ impl Executor {
         recipe: &Recipe,
         step: &str,
         forwarded: &[String],
-        in_progress: &mut HashSet<String>,
+        in_progress: HashSet<String>,
     ) -> Result<i32, RuntimeError> {
         // A step is a recipe reference if it contains no whitespace and
         // names a known recipe.
         if !step.chars().any(char::is_whitespace) && self.config.commands.contains_key(step) {
             debug!(recipe_ref = step, "step is recipe reference");
-            return self.run_recipe_inner(step, forwarded, in_progress).await;
+            return self
+                .run_recipe_inner(step.to_string(), forwarded.to_vec(), in_progress)
+                .await;
         }
 
-        let env = Env::from_config(&self.config)
+        let env = self
+            .base_env()
+            .await?
+            .clone()
             .with_overrides(recipe.env.iter().map(|(k, v)| (k.clone(), v.clone())));
 
-        let mut argv = shell_words::split(step).map_err(|e| {
-            RuntimeError::Backend(scaffl_container::BackendError::Reported(format!(
-                "argv parse: {e}"
-            )))
+        let mut argv = shell_words::split(step).map_err(|e| RuntimeError::ArgvParse {
+            input: step.into(),
+            message: e.to_string(),
         })?;
         if recipe.forward_args {
             argv.extend(forwarded.iter().cloned());
@@ -168,7 +241,6 @@ impl Executor {
         let mut cmd = Command::new(program);
         cmd.args(rest);
         cmd.current_dir(self.project_root.as_ref());
-        // Note: env_clear() then re-set ensures recipe.env overrides take.
         cmd.env_clear();
         for (k, v) in env.iter() {
             cmd.env(k, v);
@@ -192,7 +264,7 @@ impl Executor {
         argv: &[&str],
         tty: bool,
     ) -> Result<i32, RuntimeError> {
-        let env = Env::from_config(&self.config);
+        let env = self.base_env().await?.clone();
         let opts = ExecOptions {
             tty,
             env: env.into_map(),
@@ -212,7 +284,6 @@ mod tests {
     use scaffl_container::{Backend, BackendError, ExecOptions, ServiceStatus};
     use std::sync::Mutex;
 
-    /// Mock backend that records calls and returns programmed responses.
     struct MockBackend {
         status: ServiceStatus,
         exec_log: Mutex<Vec<(String, Vec<String>)>>,
@@ -234,11 +305,9 @@ mod tests {
         fn name(&self) -> &'static str {
             "mock"
         }
-
         async fn status(&self, _service: &str) -> Result<ServiceStatus, BackendError> {
             Ok(self.status)
         }
-
         async fn exec(
             &self,
             service: &str,
@@ -251,7 +320,6 @@ mod tests {
             ));
             Ok(self.exec_code)
         }
-
         async fn passthrough(&self, _args: &[&str]) -> Result<i32, BackendError> {
             Ok(0)
         }
@@ -385,12 +453,34 @@ mod tests {
         assert_eq!(code, 0);
         let log = backend.exec_log.lock().unwrap();
         assert_eq!(log.len(), 2);
-        // first step: no forwarded args
         assert_eq!(log[0].1, vec!["echo".to_string(), "first".to_string()]);
-        // last step: forwarded args appended
         assert_eq!(
             log[1].1,
             vec!["echo".to_string(), "second".to_string(), "arg".to_string(),]
         );
+    }
+
+    #[tokio::test]
+    async fn parallel_array_runs_all_steps() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.combo]
+            in = "app"
+            run = ["echo a", "echo b", "echo c"]
+            parallel = true
+        "#);
+        let exec = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            cfg,
+            Path::new("/tmp"),
+        );
+        let code = exec.run_recipe("combo", &[]).await.unwrap();
+        assert_eq!(code, 0);
+        let log = backend.exec_log.lock().unwrap();
+        assert_eq!(log.len(), 3);
+        // Order is non-deterministic under parallelism — just verify the set.
+        let mut joined: Vec<String> = log.iter().map(|(_, argv)| argv.join(" ")).collect();
+        joined.sort();
+        assert_eq!(joined, vec!["echo a", "echo b", "echo c"]);
     }
 }
