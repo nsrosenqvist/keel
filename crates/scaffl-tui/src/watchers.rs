@@ -210,6 +210,11 @@ fn build_glob_set(patterns: &[String]) -> Result<GlobSet, WatcherError> {
     })
 }
 
+/// How long the watcher thread blocks on its sync mpsc before checking
+/// for shutdown. Shorter = quicker exit on `q`; longer = lower idle CPU.
+/// 500 ms is a fine middle.
+const SHUTDOWN_POLL_MS: u64 = 500;
+
 fn spawn_notify(
     glob_set: GlobSet,
     project_root: PathBuf,
@@ -231,17 +236,30 @@ fn spawn_notify(
             );
             return;
         }
-        for res in sync_rx {
-            let Ok(event) = res else { continue };
-            if !event_is_relevant(&event) {
-                continue;
+        // Poll with a timeout so we can periodically check whether the
+        // tokio receiver has been dropped (TUI exit). Without this the
+        // thread blocks in `sync_rx.recv()` forever and pins tokio's
+        // runtime shutdown after `q`.
+        loop {
+            if tx.is_closed() {
+                return;
             }
-            let matched = event
-                .paths
-                .iter()
-                .any(|p| matches_glob_relative(&glob_set, p, &project_root));
-            if matched && tx.send(()).is_err() {
-                break;
+            match sync_rx.recv_timeout(Duration::from_millis(SHUTDOWN_POLL_MS)) {
+                Ok(Ok(event)) => {
+                    if !event_is_relevant(&event) {
+                        continue;
+                    }
+                    let matched = event
+                        .paths
+                        .iter()
+                        .any(|p| matches_glob_relative(&glob_set, p, &project_root));
+                    if matched && tx.send(()).is_err() {
+                        return;
+                    }
+                }
+                Ok(Err(_)) => continue, // notify-internal error event
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
     });

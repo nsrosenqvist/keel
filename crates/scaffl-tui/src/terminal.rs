@@ -263,11 +263,19 @@ fn leave_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<(
 }
 
 /// Spawn a blocking thread that polls crossterm events and forwards them
-/// over an mpsc channel. The channel closes when the thread exits.
+/// over an mpsc channel.
+///
+/// The thread exits within `POLL_INTERVAL_MS` of the receiver being
+/// dropped — without the closed-check, a quiet terminal would keep the
+/// thread blocked in `poll()` forever, which in turn blocks tokio's
+/// runtime shutdown and leaves the process alive after `q`.
 fn spawn_event_reader() -> mpsc::UnboundedReceiver<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::task::spawn_blocking(move || {
         loop {
+            if tx.is_closed() {
+                return;
+            }
             match crossterm::event::poll(Duration::from_millis(POLL_INTERVAL_MS)) {
                 Ok(true) => match crossterm::event::read() {
                     Ok(ev) => {
@@ -280,7 +288,9 @@ fn spawn_event_reader() -> mpsc::UnboundedReceiver<Event> {
                         return;
                     }
                 },
-                Ok(false) => {} // No event — loop and poll again.
+                // No event — loop, but the next iteration's is_closed
+                // check gives us a clean exit path on quit.
+                Ok(false) => {}
                 Err(e) => {
                     warn!("crossterm poll error: {e}");
                     return;
