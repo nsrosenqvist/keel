@@ -1,0 +1,396 @@
+//! Recipe executor.
+//!
+//! Turns a recipe (already resolved by the [`Resolver`](crate::Resolver))
+//! into actual process work, talking to a [`scaffl_container::Backend`] for
+//! anything container-shaped. The CLI and the TUI both call into this; both
+//! get the same semantics.
+//!
+//! Bounded responsibility: receive inputs, produce exit codes. Does not
+//! decide *which* recipe to run — that's the resolver's job — and does not
+//! parse anything from disk — that's the config's job.
+
+use crate::env::Env;
+use crate::error::RuntimeError;
+use scaffl_config::{Config, Recipe, Run};
+use scaffl_container::{Backend, ExecOptions, ServiceStatus};
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::Arc;
+use tokio::process::Command;
+use tracing::{debug, instrument};
+
+/// The executor.
+///
+/// Holds shared, immutable references to its collaborators. Cheap to clone
+/// for spawning concurrent recipe steps.
+#[derive(Clone)]
+pub struct Executor {
+    backend: Arc<dyn Backend>,
+    config: Arc<Config>,
+    project_root: Arc<Path>,
+}
+
+impl Executor {
+    pub fn new(backend: Arc<dyn Backend>, config: Arc<Config>, project_root: &Path) -> Self {
+        Self {
+            backend,
+            config,
+            project_root: Arc::from(project_root),
+        }
+    }
+
+    /// Run a recipe by name. `args` are forwarded to the recipe's `run` if
+    /// `forward_args = true`.
+    pub async fn run_recipe(&self, name: &str, args: &[String]) -> Result<i32, RuntimeError> {
+        self.run_recipe_inner(name, args, &mut HashSet::new()).await
+    }
+
+    fn run_recipe_inner<'a>(
+        &'a self,
+        name: &'a str,
+        args: &'a [String],
+        in_progress: &'a mut HashSet<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<i32, RuntimeError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            if !in_progress.insert(name.to_string()) {
+                return Err(RuntimeError::DependencyCycle(name.to_string()));
+            }
+
+            let recipe =
+                self.config
+                    .commands
+                    .get(name)
+                    .ok_or_else(|| RuntimeError::UnknownCommand {
+                        name: name.to_string(),
+                        suggestion: None,
+                    })?;
+
+            for dep in &recipe.needs {
+                if !self.config.commands.contains_key(dep) {
+                    return Err(RuntimeError::UnknownDependency {
+                        recipe: name.to_string(),
+                        dep: dep.clone(),
+                    });
+                }
+                let code = self.run_recipe_inner(dep, &[], in_progress).await?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+
+            let code = self.execute(recipe, args, in_progress).await?;
+            in_progress.remove(name);
+            Ok(code)
+        })
+    }
+
+    #[instrument(skip(self, recipe, args, in_progress))]
+    async fn execute(
+        &self,
+        recipe: &Recipe,
+        args: &[String],
+        in_progress: &mut HashSet<String>,
+    ) -> Result<i32, RuntimeError> {
+        if let Some(service) = &recipe.service {
+            let status = self.backend.status(service).await?;
+            if status != ServiceStatus::Running {
+                return Err(RuntimeError::Backend(
+                    scaffl_container::BackendError::ServiceUnavailable {
+                        service: service.clone(),
+                        status: format!("{status:?}").to_lowercase(),
+                    },
+                ));
+            }
+        }
+
+        match &recipe.run {
+            Run::Single(cmd) => self.run_step(recipe, cmd, args, in_progress).await,
+            Run::Steps(steps) => {
+                for (idx, step) in steps.iter().enumerate() {
+                    // Forward args only to the final step, mirroring `bash -c "a; b $@"`.
+                    let step_args: &[String] = if idx + 1 == steps.len() { args } else { &[] };
+                    let code = self.run_step(recipe, step, step_args, in_progress).await?;
+                    if code != 0 {
+                        return Ok(code);
+                    }
+                }
+                Ok(0)
+            }
+        }
+    }
+
+    async fn run_step(
+        &self,
+        recipe: &Recipe,
+        step: &str,
+        forwarded: &[String],
+        in_progress: &mut HashSet<String>,
+    ) -> Result<i32, RuntimeError> {
+        // A step is a recipe reference if it contains no whitespace and
+        // names a known recipe.
+        if !step.chars().any(char::is_whitespace) && self.config.commands.contains_key(step) {
+            debug!(recipe_ref = step, "step is recipe reference");
+            return self.run_recipe_inner(step, forwarded, in_progress).await;
+        }
+
+        let env = Env::from_config(&self.config)
+            .with_overrides(recipe.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        let mut argv = shell_words::split(step).map_err(|e| {
+            RuntimeError::Backend(scaffl_container::BackendError::Reported(format!(
+                "argv parse: {e}"
+            )))
+        })?;
+        if recipe.forward_args {
+            argv.extend(forwarded.iter().cloned());
+        }
+        if argv.is_empty() {
+            return Ok(0);
+        }
+
+        if let Some(service) = &recipe.service {
+            let opts = ExecOptions {
+                tty: recipe.tty,
+                env: env.into_map(),
+                workdir: None,
+            };
+            let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+            return self
+                .backend
+                .exec(service, &argv_refs, &opts)
+                .await
+                .map_err(RuntimeError::from);
+        }
+
+        // Host execution.
+        let (program, rest) = argv.split_first().expect("non-empty argv");
+        let mut cmd = Command::new(program);
+        cmd.args(rest);
+        cmd.current_dir(self.project_root.as_ref());
+        // Note: env_clear() then re-set ensures recipe.env overrides take.
+        cmd.env_clear();
+        for (k, v) in env.iter() {
+            cmd.env(k, v);
+        }
+        let status = cmd
+            .status()
+            .await
+            .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+        Ok(status.code().unwrap_or(-1))
+    }
+
+    /// Run a passthrough through the backend (e.g. `compose ps`).
+    pub async fn passthrough(&self, args: &[&str]) -> Result<i32, RuntimeError> {
+        self.backend.passthrough(args).await.map_err(Into::into)
+    }
+
+    /// Exec a raw command in a service (used by service passthrough).
+    pub async fn service_exec(
+        &self,
+        service: &str,
+        argv: &[&str],
+        tty: bool,
+    ) -> Result<i32, RuntimeError> {
+        let env = Env::from_config(&self.config);
+        let opts = ExecOptions {
+            tty,
+            env: env.into_map(),
+            workdir: None,
+        };
+        self.backend
+            .exec(service, argv, &opts)
+            .await
+            .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use scaffl_container::{Backend, BackendError, ExecOptions, ServiceStatus};
+    use std::sync::Mutex;
+
+    /// Mock backend that records calls and returns programmed responses.
+    struct MockBackend {
+        status: ServiceStatus,
+        exec_log: Mutex<Vec<(String, Vec<String>)>>,
+        exec_code: i32,
+    }
+
+    impl MockBackend {
+        fn new(status: ServiceStatus) -> Self {
+            Self {
+                status,
+                exec_log: Mutex::new(Vec::new()),
+                exec_code: 0,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Backend for MockBackend {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+
+        async fn status(&self, _service: &str) -> Result<ServiceStatus, BackendError> {
+            Ok(self.status)
+        }
+
+        async fn exec(
+            &self,
+            service: &str,
+            argv: &[&str],
+            _opts: &ExecOptions,
+        ) -> Result<i32, BackendError> {
+            self.exec_log.lock().unwrap().push((
+                service.to_string(),
+                argv.iter().map(|s| (*s).to_string()).collect(),
+            ));
+            Ok(self.exec_code)
+        }
+
+        async fn passthrough(&self, _args: &[&str]) -> Result<i32, BackendError> {
+            Ok(0)
+        }
+    }
+
+    fn cfg(toml_src: &str) -> Arc<Config> {
+        Arc::new(scaffl_config::parse_str(toml_src).unwrap())
+    }
+
+    #[tokio::test]
+    async fn errors_on_unknown_recipe() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let exec = Executor::new(backend, cfg(""), Path::new("/tmp"));
+        let err = exec.run_recipe("nope", &[]).await.unwrap_err();
+        match err {
+            RuntimeError::UnknownCommand { name, .. } => assert_eq!(name, "nope"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn errors_on_undefined_dependency() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.test]
+            run = "true"
+            needs = ["build"]
+        "#);
+        let exec = Executor::new(backend, cfg, Path::new("/tmp"));
+        let err = exec.run_recipe("test", &[]).await.unwrap_err();
+        match err {
+            RuntimeError::UnknownDependency { recipe, dep } => {
+                assert_eq!(recipe, "test");
+                assert_eq!(dep, "build");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn errors_on_dependency_cycle() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.a]
+            run = "true"
+            needs = ["b"]
+
+            [command.b]
+            run = "true"
+            needs = ["a"]
+        "#);
+        let exec = Executor::new(backend, cfg, Path::new("/tmp"));
+        let err = exec.run_recipe("a", &[]).await.unwrap_err();
+        assert!(matches!(err, RuntimeError::DependencyCycle(_)));
+    }
+
+    #[tokio::test]
+    async fn refuses_to_exec_in_stopped_service() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Stopped));
+        let cfg = cfg(r#"
+            [command.shell]
+            in = "app"
+            run = "/bin/sh"
+        "#);
+        let exec = Executor::new(backend, cfg, Path::new("/tmp"));
+        let err = exec.run_recipe("shell", &[]).await.unwrap_err();
+        match err {
+            RuntimeError::Backend(scaffl_container::BackendError::ServiceUnavailable {
+                service,
+                ..
+            }) => assert_eq!(service, "app"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execs_in_service_when_running() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.test]
+            in = "app"
+            run = "composer test"
+            forward_args = true
+        "#);
+        let exec = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            cfg,
+            Path::new("/tmp"),
+        );
+        let code = exec
+            .run_recipe("test", &["--filter".into(), "Login".into()])
+            .await
+            .unwrap();
+        assert_eq!(code, 0);
+        let log = backend.exec_log.lock().unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].0, "app");
+        assert_eq!(
+            log[0].1,
+            vec!["composer", "test", "--filter", "Login"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn sequential_array_forwards_args_to_last_step() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.first]
+            in = "app"
+            run = "echo first"
+
+            [command.second]
+            in = "app"
+            run = "echo second"
+            forward_args = true
+
+            [command.combo]
+            in = "app"
+            run = ["first", "second"]
+            forward_args = true
+        "#);
+        let exec = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            cfg,
+            Path::new("/tmp"),
+        );
+        let code = exec.run_recipe("combo", &["arg".into()]).await.unwrap();
+        assert_eq!(code, 0);
+        let log = backend.exec_log.lock().unwrap();
+        assert_eq!(log.len(), 2);
+        // first step: no forwarded args
+        assert_eq!(log[0].1, vec!["echo".to_string(), "first".to_string()]);
+        // last step: forwarded args appended
+        assert_eq!(
+            log[1].1,
+            vec!["echo".to_string(), "second".to_string(), "arg".to_string(),]
+        );
+    }
+}

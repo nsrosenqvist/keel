@@ -14,6 +14,7 @@ readme.workspace = true
 scaffl-config = { workspace = true }
 scaffl-container = { workspace = true }
 async-trait = { workspace = true }
+shell-words = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

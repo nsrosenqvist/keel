@@ -65,6 +65,7 @@ notify = "7"
 globset = "0.4"
 which = "7"
 shell-escape = "0.1"
+shell-words = "1"
 dirs = "5"
 walkdir = "2"
 

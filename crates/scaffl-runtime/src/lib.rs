@@ -5,8 +5,12 @@
 //! [`scaffl_container::Backend`] for anything container-shaped. The CLI and
 //! the TUI both consume this crate; they do not duplicate any of its logic.
 
+pub mod env;
 pub mod error;
+pub mod executor;
 pub mod resolver;
 
+pub use env::Env;
 pub use error::RuntimeError;
-pub use resolver::{Resolution, Resolver};
+pub use executor::Executor;
+pub use resolver::{Resolution, Resolver, ResolverContext};

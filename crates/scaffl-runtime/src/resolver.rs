@@ -69,14 +69,10 @@ impl<'a> Resolver<'a> {
         if self.ctx.script_names.iter().any(|s| s == name) {
             return Resolution::Script(name);
         }
-        if self.config.runtime.compose_passthrough
-            && self.ctx.compose_subcommands.contains(&name)
-        {
+        if self.config.runtime.compose_passthrough && self.ctx.compose_subcommands.contains(&name) {
             return Resolution::ComposePassthrough(name);
         }
-        if self.config.runtime.service_passthrough
-            && self.ctx.services.iter().any(|s| s == name)
-        {
+        if self.config.runtime.service_passthrough && self.ctx.services.iter().any(|s| s == name) {
             return Resolution::ServiceExec(name);
         }
         Resolution::Unknown {
