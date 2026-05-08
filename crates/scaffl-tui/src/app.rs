@@ -2,7 +2,9 @@
 //!
 //! The model and the controller. Pure functions — no terminal I/O here.
 
+use crate::runner::RunState;
 use scaffl_config::{Config, Recipe, ScriptCommand};
+use scaffl_runtime::Executor;
 use std::sync::Arc;
 
 /// What kind of thing a sidebar item points at.
@@ -12,20 +14,32 @@ pub enum ItemKind {
     Script,
 }
 
-/// A single sidebar entry. Cheap to clone (string pointer + index).
+/// A single sidebar entry.
 #[derive(Debug, Clone)]
 pub struct Item {
     pub name: String,
     pub kind: ItemKind,
 }
 
+/// Why a run attempt was rejected.
+#[derive(Debug, Clone)]
+pub enum LaunchRejection {
+    NoExecutor,
+    AlreadyRunning,
+    NotRunnable(String),
+}
+
 /// TUI application state.
-#[derive(Debug)]
 pub struct App {
     config: Arc<Config>,
     items: Vec<Item>,
     selected: usize,
     quit: bool,
+    executor: Option<Executor>,
+    current_run: Option<RunState>,
+    /// Last rejection / status banner (decays after a few seconds — kept
+    /// simple by just clearing on the next successful action).
+    pub flash: Option<String>,
 }
 
 impl App {
@@ -36,7 +50,15 @@ impl App {
             items,
             selected: 0,
             quit: false,
+            executor: None,
+            current_run: None,
+            flash: None,
         }
+    }
+
+    pub fn with_executor(mut self, executor: Executor) -> Self {
+        self.executor = Some(executor);
+        self
     }
 
     pub fn items(&self) -> &[Item] {
@@ -84,7 +106,6 @@ impl App {
         }
     }
 
-    /// Look up the [`Recipe`] for the currently selected item, if any.
     pub fn selected_recipe(&self) -> Option<&Recipe> {
         let item = self.selected_item()?;
         if item.kind != ItemKind::Recipe {
@@ -93,13 +114,85 @@ impl App {
         self.config.commands.get(&item.name)
     }
 
-    /// Look up the [`ScriptCommand`] for the currently selected item, if any.
     pub fn selected_script(&self) -> Option<&ScriptCommand> {
         let item = self.selected_item()?;
         if item.kind != ItemKind::Script {
             return None;
         }
         self.config.scripts.get(&item.name)
+    }
+
+    pub fn current_run(&self) -> Option<&RunState> {
+        self.current_run.as_ref()
+    }
+
+    pub fn current_run_mut(&mut self) -> Option<&mut RunState> {
+        self.current_run.as_mut()
+    }
+
+    /// Try to launch the currently selected item. Returns [`LaunchRejection`]
+    /// when the launch can't proceed; the caller renders the reason as a
+    /// flash message.
+    pub fn try_launch_selected(&mut self) -> Result<(), LaunchRejection> {
+        if self.current_run.as_ref().is_some_and(|r| !r.is_done()) {
+            return Err(LaunchRejection::AlreadyRunning);
+        }
+        let executor = self
+            .executor
+            .as_ref()
+            .ok_or(LaunchRejection::NoExecutor)?
+            .clone();
+
+        let item = self
+            .selected_item()
+            .ok_or_else(|| LaunchRejection::NotRunnable("no selection".into()))?
+            .clone();
+
+        match item.kind {
+            ItemKind::Recipe => {
+                let Some(recipe) = self.config.commands.get(&item.name) else {
+                    return Err(LaunchRejection::NotRunnable(format!(
+                        "recipe `{}` vanished from config",
+                        item.name
+                    )));
+                };
+                if recipe.service.is_some() {
+                    return Err(LaunchRejection::NotRunnable(
+                        "in-container recipes from the TUI are deferred — run from the CLI".into(),
+                    ));
+                }
+            }
+            ItemKind::Script => {
+                let Some(script) = self.config.scripts.get(&item.name) else {
+                    return Err(LaunchRejection::NotRunnable(format!(
+                        "script `{}` vanished from config",
+                        item.name
+                    )));
+                };
+                if script.service.is_some() {
+                    return Err(LaunchRejection::NotRunnable(
+                        "in-container scripts are deferred".into(),
+                    ));
+                }
+            }
+        }
+
+        let run = RunState::spawn(&executor, item.name, Vec::new());
+        self.current_run = Some(run);
+        self.flash = None;
+        Ok(())
+    }
+
+    pub fn drain_run(&mut self) {
+        if let Some(run) = self.current_run.as_mut() {
+            run.drain();
+        }
+    }
+
+    pub async fn poll_run(&mut self) {
+        if let Some(run) = self.current_run.as_mut() {
+            run.poll_completion().await;
+        }
     }
 }
 
@@ -151,7 +244,7 @@ mod tests {
         assert_eq!(app.selected_index(), 0);
         app.select_next();
         assert_eq!(app.selected_index(), 1);
-        app.select_next(); // past the end
+        app.select_next();
         assert_eq!(app.selected_index(), 1);
         app.select_first();
         assert_eq!(app.selected_index(), 0);
@@ -173,5 +266,35 @@ mod tests {
         let app = App::new(cfg);
         assert_eq!(app.items().len(), 0);
         assert!(app.selected_item().is_none());
+    }
+
+    #[test]
+    fn launch_without_executor_is_rejected() {
+        let mut app = App::new(cfg());
+        let err = app.try_launch_selected().unwrap_err();
+        assert!(matches!(err, LaunchRejection::NoExecutor));
+    }
+
+    #[test]
+    fn launch_rejects_in_container_recipe() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [command.shell]
+                in = "app"
+                run = "/bin/sh"
+            "#,
+            )
+            .unwrap(),
+        );
+        let backend: Arc<dyn scaffl_container::Backend> =
+            Arc::new(scaffl_container::null::NullBackend);
+        let executor = Executor::new(backend, Arc::clone(&cfg), std::path::Path::new("/tmp"));
+        let mut app = App::new(cfg).with_executor(executor);
+        let err = app.try_launch_selected().unwrap_err();
+        match err {
+            LaunchRejection::NotRunnable(msg) => assert!(msg.contains("in-container")),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

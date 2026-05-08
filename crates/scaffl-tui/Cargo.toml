@@ -21,4 +21,5 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+scaffl-container = { workspace = true }
 pretty_assertions = { workspace = true }

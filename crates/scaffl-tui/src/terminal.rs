@@ -37,6 +37,10 @@ async fn drive(
 ) -> Result<(), TuiError> {
     let mut events = spawn_event_reader();
     loop {
+        // Pre-render hooks: drain any queued output and advance run state.
+        app.drain_run();
+        app.poll_run().await;
+
         terminal.draw(|f| ui::render(app, f))?;
         if app.should_quit() {
             return Ok(());
@@ -48,7 +52,7 @@ async fn drive(
                 handle_event(app, ev);
             }
             _ = tokio::time::sleep(Duration::from_millis(TICK_INTERVAL_MS)) => {
-                // Tick — gives long-running future state changes a chance to redraw.
+                // Tick — re-poll run state, redraw timers, etc.
             }
         }
     }
@@ -83,7 +87,21 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Char('g') | KeyCode::Home => app.select_first(),
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
+        KeyCode::Enter => {
+            if let Err(rejection) = app.try_launch_selected() {
+                app.flash = Some(launch_message(rejection));
+            }
+        }
         _ => {}
+    }
+}
+
+fn launch_message(rejection: crate::app::LaunchRejection) -> String {
+    use crate::app::LaunchRejection::*;
+    match rejection {
+        NoExecutor => "no backend wired into the TUI".into(),
+        AlreadyRunning => "another run is in progress".into(),
+        NotRunnable(msg) => msg,
     }
 }
 

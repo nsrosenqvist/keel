@@ -1,6 +1,7 @@
 //! Rendering — pure function from [`App`] state to a ratatui [`Frame`].
 
 use crate::app::{App, ItemKind};
+use crate::runner::CapturedLine;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,10 +10,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use scaffl_config::Run;
+use scaffl_runtime::OutputStream;
 
-const SIDEBAR_RATIO: u16 = 30;
+const SIDEBAR_RATIO: u16 = 25;
 const STATUS_BAR_HEIGHT: u16 = 1;
-const HOTKEY_HINTS: &str = "↑↓ navigate · g/G first/last · q quit · enter run (TODO)";
+const HOTKEY_HINTS: &str = "↑↓ navigate · g/G first/last · enter run · q quit";
 
 pub fn render(app: &App, frame: &mut Frame) {
     let outer = Layout::default()
@@ -29,7 +31,19 @@ pub fn render(app: &App, frame: &mut Frame) {
         .split(outer[0]);
 
     render_sidebar(app, frame, body[0]);
-    render_detail(app, frame, body[1]);
+
+    // Right pane splits vertically when a run is in progress or finished.
+    if app.current_run().is_some() {
+        let right = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(body[1]);
+        render_detail(app, frame, right[0]);
+        render_output(app, frame, right[1]);
+    } else {
+        render_detail(app, frame, body[1]);
+    }
+
     render_status(app, frame, outer[1]);
 }
 
@@ -166,7 +180,48 @@ fn kv(key: &str, value: &str) -> Line<'static> {
     ])
 }
 
-fn render_status(_app: &App, frame: &mut Frame, area: Rect) {
+fn render_output(app: &App, frame: &mut Frame, area: Rect) {
+    let Some(run) = app.current_run() else {
+        return;
+    };
+
+    let title = format!(" {} ", run.status_label());
+    let block = Block::default().title(title).borders(Borders::ALL);
+
+    // Show the most recent lines that fit in the pane (height − borders).
+    let max_lines = area.height.saturating_sub(2) as usize;
+    let total = run.buffer.len();
+    let start = total.saturating_sub(max_lines);
+    let lines: Vec<Line<'static>> = run
+        .buffer
+        .iter()
+        .skip(start)
+        .map(render_captured_line)
+        .collect();
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_captured_line(line: &CapturedLine) -> Line<'static> {
+    let style = match line.stream {
+        OutputStream::Stdout => Style::default(),
+        OutputStream::Stderr => Style::default().fg(Color::Red),
+    };
+    Line::from(Span::styled(line.text.clone(), style))
+}
+
+fn render_status(app: &App, frame: &mut Frame, area: Rect) {
+    if let Some(flash) = &app.flash {
+        let p = Paragraph::new(Line::from(Span::styled(
+            flash.clone(),
+            Style::default().fg(Color::Yellow),
+        )));
+        frame.render_widget(p, area);
+        return;
+    }
     let p = Paragraph::new(Line::from(vec![Span::styled(
         HOTKEY_HINTS,
         Style::default().fg(Color::DarkGray),

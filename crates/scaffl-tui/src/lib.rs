@@ -16,15 +16,18 @@
 //!   thread piped through an mpsc channel.
 
 use scaffl_config::Config;
+use scaffl_runtime::Executor;
 use std::sync::Arc;
 use thiserror::Error;
 
 pub mod app;
+pub mod runner;
 pub mod ui;
 
 mod terminal;
 
 pub use app::{App, Item, ItemKind};
+pub use runner::{CapturedLine, RunState};
 
 #[derive(Debug, Error)]
 pub enum TuiError {
@@ -33,7 +36,7 @@ pub enum TuiError {
 }
 
 /// Open the TUI dashboard. Returns when the user quits.
-pub async fn run(config: Arc<Config>) -> Result<(), TuiError> {
-    let mut app = App::new(config);
+pub async fn run(config: Arc<Config>, executor: Executor) -> Result<(), TuiError> {
+    let mut app = App::new(config).with_executor(executor);
     terminal::run_event_loop(&mut app).await
 }

@@ -73,12 +73,12 @@ pub async fn run(cli: Cli) -> Result<()> {
                 std::process::exit(code);
             }
             Command::Init => unreachable!("handled above"),
-            Command::Ui => run_tui(Arc::clone(&cfg_arc)).await,
+            Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root).await,
         };
     }
 
     if cli.args.is_empty() {
-        return run_tui(Arc::clone(&cfg_arc)).await;
+        return run_tui(Arc::clone(&cfg_arc), &project_root).await;
     }
 
     let (name, rest) = split_args(&cli.args);
@@ -193,15 +193,31 @@ fn split_args(args: &[String]) -> (&str, &[String]) {
     (head.as_str(), tail)
 }
 
-async fn build_backend(_config: &Config) -> Result<Arc<dyn Backend>> {
-    let backend = ComposeBackend::detect()
-        .await
-        .context("detect compose backend")?;
-    Ok(Arc::new(backend))
+async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
+    use scaffl_config::model::Backend as B;
+    match config.runtime.backend {
+        B::None => Ok(Arc::new(scaffl_container::null::NullBackend)),
+        B::Compose => Ok(Arc::new(
+            ComposeBackend::detect()
+                .await
+                .context("detect compose backend")?,
+        )),
+        B::Docker | B::Podman => anyhow::bail!(
+            "backend `{:?}` is configured but not yet implemented; use `compose` or `none`",
+            config.runtime.backend
+        ),
+    }
 }
 
-async fn run_tui(config: Arc<Config>) -> Result<()> {
-    scaffl_tui::run(config).await.context("run TUI")
+async fn run_tui(config: Arc<Config>, project_root: &Path) -> Result<()> {
+    // Pick the configured backend, falling back to NullBackend on detection
+    // failure so the TUI is still browseable on systems without compose.
+    let backend: Arc<dyn Backend> = match build_backend(&config).await {
+        Ok(b) => b,
+        Err(_) => Arc::new(scaffl_container::null::NullBackend),
+    };
+    let executor = scaffl_runtime::Executor::new(backend, Arc::clone(&config), project_root);
+    scaffl_tui::run(config, executor).await.context("run TUI")
 }
 
 fn load_config(project_root: &Path) -> Result<Config> {
