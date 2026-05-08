@@ -420,24 +420,48 @@ impl Executor {
         script: &ScriptCommand,
         args: &[String],
     ) -> Result<i32, RuntimeError> {
-        if let Some(service) = &script.service {
-            // In-container script execution is deferred — staging the file
-            // into the container and selecting an interpreter is not in
-            // Phase 2's scope. Surface a clear error rather than silently
-            // running on the host.
-            return Err(RuntimeError::Backend(
-                scaffl_container::BackendError::Reported(format!(
-                    "script `{name}` declares `in = \"{service}\"`; in-container scripts are not yet supported (run on host or move the logic into a recipe with `in =`)",
-                    name = script.name,
-                )),
-            ));
-        }
-
         let env = self
             .base_env()
             .await?
             .clone()
             .with_overrides(script.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+        // In-container script: pipe the script body to
+        // `<interpreter> -s -- <args>` over the backend's stdin-piped
+        // exec. The shebang (if any) drives the interpreter choice;
+        // default is `sh`.
+        if let Some(service) = &script.service {
+            let body = std::fs::read_to_string(&script.path)
+                .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+            let interpreter = parse_shebang_interpreter(&body).unwrap_or("sh");
+
+            // Service must be running before we exec into it.
+            let status = self.backend.status(service).await?;
+            if status != ServiceStatus::Running {
+                return Err(RuntimeError::Backend(
+                    scaffl_container::BackendError::ServiceUnavailable {
+                        service: service.clone(),
+                        status: format!("{status:?}").to_lowercase(),
+                    },
+                ));
+            }
+
+            let mut argv: Vec<&str> = vec![interpreter, "-s"];
+            if script.forward_args && !args.is_empty() {
+                argv.push("--");
+                argv.extend(args.iter().map(String::as_str));
+            }
+            let opts = ExecOptions {
+                tty: false, // forced off — stdin pipe + TTY are mutually exclusive
+                env: env.into_map(),
+                workdir: None,
+            };
+            return self
+                .backend
+                .exec_with_stdin(service, &argv, &opts, &body)
+                .await
+                .map_err(RuntimeError::from);
+        }
 
         let mut cmd = Command::new(&script.path);
         if script.forward_args {
@@ -476,6 +500,29 @@ impl Executor {
     }
 }
 
+/// Read the shebang (if any) of a script body and return a plain
+/// interpreter name suitable for use inside a container.
+///
+/// Recognises the common cases — `bash`, `zsh`, `sh` — by substring
+/// match against the shebang line. Anything else (including `python`,
+/// `node`, etc.) returns `None`; the caller will fall back to `sh`.
+/// This is intentionally narrow: containers usually have at least
+/// `sh` and often `bash`; everything else is the script author's
+/// responsibility to ensure.
+fn parse_shebang_interpreter(body: &str) -> Option<&'static str> {
+    let first_line = body.lines().next()?;
+    let trimmed = first_line.strip_prefix("#!")?;
+    if trimmed.contains("bash") {
+        Some("bash")
+    } else if trimmed.contains("zsh") {
+        Some("zsh")
+    } else if trimmed.contains("/sh") || trimmed.ends_with(" sh") || trimmed.trim_end() == "sh" {
+        Some("sh")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,9 +530,41 @@ mod tests {
     use scaffl_container::{Backend, BackendError, ExecOptions, ServiceStatus};
     use std::sync::Mutex;
 
+    #[test]
+    fn shebang_bash() {
+        assert_eq!(
+            parse_shebang_interpreter("#!/usr/bin/env bash\necho hi\n"),
+            Some("bash")
+        );
+        assert_eq!(parse_shebang_interpreter("#!/bin/bash\n"), Some("bash"));
+    }
+
+    #[test]
+    fn shebang_zsh() {
+        assert_eq!(
+            parse_shebang_interpreter("#!/usr/bin/env zsh\n"),
+            Some("zsh")
+        );
+    }
+
+    #[test]
+    fn shebang_sh() {
+        assert_eq!(parse_shebang_interpreter("#!/bin/sh\n"), Some("sh"));
+        assert_eq!(parse_shebang_interpreter("#!/usr/bin/env sh\n"), Some("sh"));
+    }
+
+    #[test]
+    fn shebang_unknown() {
+        assert_eq!(parse_shebang_interpreter("#!/usr/bin/python3\n"), None);
+        assert_eq!(parse_shebang_interpreter("echo no shebang\n"), None);
+        assert_eq!(parse_shebang_interpreter(""), None);
+    }
+
     struct MockBackend {
         status: ServiceStatus,
         exec_log: Mutex<Vec<(String, Vec<String>)>>,
+        /// Records (service, argv, stdin) for stdin-piped exec calls.
+        exec_stdin_log: Mutex<Vec<(String, Vec<String>, String)>>,
         exec_code: i32,
     }
 
@@ -494,6 +573,7 @@ mod tests {
             Self {
                 status,
                 exec_log: Mutex::new(Vec::new()),
+                exec_stdin_log: Mutex::new(Vec::new()),
                 exec_code: 0,
             }
         }
@@ -521,6 +601,20 @@ mod tests {
         }
         async fn passthrough(&self, _args: &[&str]) -> Result<i32, BackendError> {
             Ok(0)
+        }
+        async fn exec_with_stdin(
+            &self,
+            service: &str,
+            argv: &[&str],
+            _opts: &ExecOptions,
+            stdin: &str,
+        ) -> Result<i32, BackendError> {
+            self.exec_stdin_log.lock().unwrap().push((
+                service.to_string(),
+                argv.iter().map(|s| (*s).to_string()).collect(),
+                stdin.to_string(),
+            ));
+            Ok(self.exec_code)
         }
     }
 
@@ -688,6 +782,102 @@ mod tests {
         }
         assert_eq!(stdout, vec!["hi from stdout"]);
         assert_eq!(stderr, vec!["oops"]);
+    }
+
+    #[tokio::test]
+    async fn in_container_script_pipes_body_to_interpreter() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(""); // No recipes; script will be injected manually.
+        let dir = tempfile::TempDir::new().unwrap();
+        let script_path = dir.path().join("setup");
+        std::fs::write(
+            &script_path,
+            "#!/usr/bin/env bash\nset -euo pipefail\necho \"in container\"\n",
+        )
+        .unwrap();
+
+        // Build a Config with the script attached. We can't use load_project here
+        // (it scans .scaffl/commands/) so we synthesise a ScriptCommand directly.
+        let mut cfg_inner = (*cfg).clone();
+        cfg_inner.scripts.insert(
+            "setup".into(),
+            scaffl_config::ScriptCommand {
+                name: "setup".into(),
+                path: script_path.clone(),
+                desc: None,
+                service: Some("app".into()),
+                tty: false,
+                env: Default::default(),
+                needs: Vec::new(),
+                forward_args: true,
+            },
+        );
+        let cfg_arc = Arc::new(cfg_inner);
+
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            cfg_arc,
+            dir.path(),
+        );
+        let code = executor
+            .run_script("setup", &["alpha".into(), "beta".into()])
+            .await
+            .unwrap();
+        assert_eq!(code, 0);
+
+        let log = backend.exec_stdin_log.lock().unwrap();
+        assert_eq!(log.len(), 1);
+        let (service, argv, stdin) = &log[0];
+        assert_eq!(service, "app");
+        // bash -s -- alpha beta
+        assert_eq!(
+            argv,
+            &vec![
+                "bash".to_string(),
+                "-s".into(),
+                "--".into(),
+                "alpha".into(),
+                "beta".into(),
+            ]
+        );
+        // The piped body matches the script content verbatim.
+        assert!(stdin.contains("set -euo pipefail"));
+        assert!(stdin.contains("echo \"in container\""));
+    }
+
+    #[tokio::test]
+    async fn in_container_script_refuses_when_service_stopped() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Stopped));
+        let dir = tempfile::TempDir::new().unwrap();
+        let script_path = dir.path().join("nope");
+        std::fs::write(&script_path, "#!/bin/sh\necho hi\n").unwrap();
+        let mut cfg_inner = scaffl_config::Config::default();
+        cfg_inner.scripts.insert(
+            "nope".into(),
+            scaffl_config::ScriptCommand {
+                name: "nope".into(),
+                path: script_path,
+                desc: None,
+                service: Some("app".into()),
+                tty: false,
+                env: Default::default(),
+                needs: Vec::new(),
+                forward_args: false,
+            },
+        );
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            Arc::new(cfg_inner),
+            dir.path(),
+        );
+        let err = executor.run_script("nope", &[]).await.unwrap_err();
+        match err {
+            RuntimeError::Backend(scaffl_container::BackendError::ServiceUnavailable {
+                service,
+                ..
+            }) => assert_eq!(service, "app"),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[tokio::test]

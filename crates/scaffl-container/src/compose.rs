@@ -124,6 +124,49 @@ impl Backend for ComposeBackend {
         Ok(status.code().unwrap_or(-1))
     }
 
+    async fn exec_with_stdin(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+        stdin: &str,
+    ) -> Result<i32, BackendError> {
+        use tokio::io::AsyncWriteExt;
+
+        let prefix = self.prefix();
+        let (head, tail) = prefix.split_first().expect("non-empty prefix");
+        let mut cmd = Command::new(head);
+        cmd.args(tail);
+        cmd.arg("exec");
+        // -T disables TTY allocation; piping stdin and -it are
+        // mutually exclusive in compose exec, and `tty` on opts is
+        // intentionally ignored here.
+        cmd.arg("-T");
+        for (k, v) in &opts.env {
+            cmd.arg("-e").arg(format!("{k}={v}"));
+        }
+        if let Some(wd) = &opts.workdir {
+            cmd.arg("-w").arg(wd);
+        }
+        cmd.arg(service);
+        cmd.args(argv);
+        cmd.stdin(Stdio::piped());
+        cmd.kill_on_drop(true);
+
+        let mut child = cmd.spawn().map_err(BackendError::Spawn)?;
+        if let Some(mut stdin_handle) = child.stdin.take() {
+            stdin_handle
+                .write_all(stdin.as_bytes())
+                .await
+                .map_err(BackendError::Spawn)?;
+            // Closing stdin (drop) signals EOF — many shells (e.g. bash
+            // -s) won't start until stdin is closed.
+            drop(stdin_handle);
+        }
+        let status = child.wait().await.map_err(BackendError::Spawn)?;
+        Ok(status.code().unwrap_or(-1))
+    }
+
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError> {
         let prefix = self.prefix();
         let (head, tail) = prefix.split_first().expect("non-empty prefix");

@@ -15,8 +15,13 @@
 //! - `forward-args` / `forward_args` — boolean, append CLI args to the script
 //!
 //! Anything beyond the frontmatter block is the script body and is not
-//! parsed by scaffl. The whole file is executed verbatim by the host shell
-//! (or by the container, when in-container scripts are supported).
+//! parsed by scaffl. The file is executed verbatim — by the host shell
+//! when no `in =` is set, or piped into `<interpreter> -s` inside the
+//! configured service when `in = "<service>"` is set. The interpreter
+//! is determined from the script's shebang (`bash` / `zsh` / `sh`),
+//! falling back to `sh`. `tty = true` is ignored for in-container
+//! scripts because compose's `exec` rejects the combination of stdin
+//! piping and TTY allocation.
 //!
 //! [`Recipe`]: crate::Recipe
 

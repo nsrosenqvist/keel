@@ -62,6 +62,25 @@ pub trait Backend: Send + Sync {
         opts: &ExecOptions,
     ) -> Result<i32, BackendError>;
 
+    /// Like [`Self::exec`], but feeds `stdin` to the child's standard
+    /// input before waiting for it. Used for in-container script
+    /// execution: scaffl pipes the script body into `<interpreter> -s
+    /// -- <args>` rather than copying the file in.
+    ///
+    /// `tty` is forced off internally because compose `exec` rejects
+    /// the combination of `-i` + piped stdin.
+    async fn exec_with_stdin(
+        &self,
+        _service: &str,
+        _argv: &[&str],
+        _opts: &ExecOptions,
+        _stdin: &str,
+    ) -> Result<i32, BackendError> {
+        Err(BackendError::Reported(
+            "this backend does not support stdin-piped exec".into(),
+        ))
+    }
+
     /// Run a passthrough command directly against the backend (e.g.
     /// `docker compose ps`). Used by `compose_passthrough`.
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError>;
