@@ -52,6 +52,9 @@ pub async fn run(
     let mut app = App::new(config)
         .with_executor(executor)
         .with_backend(backend);
+    // Order matters: discover before watchers so the sidebar sections
+    // populate in one rebuild rather than two flickers.
+    app.discover_services().await;
     app.spawn_watcher_panes(project_root);
     terminal::run_event_loop(&mut app).await
 }

@@ -78,7 +78,18 @@ pub trait Backend: Send + Sync {
     /// [`OutputSink`]: scaffl-runtime::OutputSink
     async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "this backend does not support log tailing".into(),
+            "no container backend configured (set runtime.backend = \"compose\" in scaffl.toml)"
+                .into(),
         ))
+    }
+
+    /// List the names of services known to this backend, e.g. by
+    /// reading `docker-compose.yaml`. Used by the TUI to auto-populate
+    /// service panes.
+    ///
+    /// Default implementation returns an empty list. Backends without a
+    /// notion of services (NullBackend) inherit this.
+    async fn list_services(&self) -> Result<Vec<String>, BackendError> {
+        Ok(Vec::new())
     }
 }

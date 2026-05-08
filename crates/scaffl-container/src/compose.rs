@@ -131,6 +131,27 @@ impl Backend for ComposeBackend {
         Ok(status.code().unwrap_or(-1))
     }
 
+    async fn list_services(&self) -> Result<Vec<String>, BackendError> {
+        let prefix = self.prefix();
+        let (head, tail) = prefix.split_first().expect("non-empty prefix");
+        let mut cmd = Command::new(head);
+        cmd.args(tail).args(["config", "--services"]);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            // Non-zero is normal when there's no compose file; the TUI
+            // treats an empty list the same as "no services".
+            return Ok(Vec::new());
+        }
+        let stdout = std::str::from_utf8(&output.stdout)?;
+        Ok(stdout
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
     async fn tail_logs(&self, service: &str) -> Result<tokio::process::Child, BackendError> {
         let prefix = self.prefix();
         let (head, tail) = prefix.split_first().expect("non-empty prefix");

@@ -36,4 +36,13 @@ impl Backend for NullBackend {
             "backend = \"none\"; container passthrough is unavailable".into(),
         ))
     }
+
+    async fn tail_logs(&self, _service: &str) -> Result<tokio::process::Child, BackendError> {
+        Err(BackendError::Reported(
+            "backend = \"none\"; declare a service in [[ui.pane]] only after setting runtime.backend = \"compose\""
+                .into(),
+        ))
+    }
+
+    // list_services inherits the default empty Vec — Null has nothing to enumerate.
 }
