@@ -451,13 +451,14 @@ fn build_items_from(
 
     // Declared services first, in scaffl.toml [[ui.pane]] order.
     for pane in &config.ui.panes {
-        if let UiPane::Service { service, .. } = pane {
-            if services.contains_key(service) && emitted_services.insert(service.as_str()) {
-                items.push(Item {
-                    name: service.clone(),
-                    kind: ItemKind::Service,
-                });
-            }
+        if let UiPane::Service { service, .. } = pane
+            && services.contains_key(service)
+            && emitted_services.insert(service.as_str())
+        {
+            items.push(Item {
+                name: service.clone(),
+                kind: ItemKind::Service,
+            });
         }
     }
     // Auto-discovered services follow (alphabetical via BTreeMap iter).

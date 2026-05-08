@@ -121,18 +121,18 @@ impl WatcherPane {
                 push_capped(&mut self.buffer, CapturedLine::from(line));
             }
         }
-        if let Some(handle) = self.completion.as_mut() {
-            if handle.is_finished() {
-                let h = self.completion.take().expect("checked above");
-                match h.await {
-                    Ok(Ok(code)) => self.last_exit_code = Some(code),
-                    Ok(Err(_)) => self.last_exit_code = Some(-1),
-                    Err(_) => self.last_exit_code = Some(-1),
-                }
-                self.last_finished_at = Some(Instant::now());
-                self.state = WatcherState::Idle;
-                self.rx_output = None;
+        if let Some(handle) = self.completion.as_mut()
+            && handle.is_finished()
+        {
+            let h = self.completion.take().expect("checked above");
+            match h.await {
+                Ok(Ok(code)) => self.last_exit_code = Some(code),
+                Ok(Err(_)) => self.last_exit_code = Some(-1),
+                Err(_) => self.last_exit_code = Some(-1),
             }
+            self.last_finished_at = Some(Instant::now());
+            self.state = WatcherState::Idle;
+            self.rx_output = None;
         }
 
         // 3. If debounce window has elapsed and we're not currently

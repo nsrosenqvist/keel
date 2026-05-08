@@ -79,10 +79,11 @@ pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Resu
             .context("run pre-commit hooks")?;
         for outcome in &outcomes {
             print_outcome(outcome);
-            if let Some(code) = outcome.exit_code {
-                if code != 0 && overall == 0 {
-                    overall = code;
-                }
+            if let Some(code) = outcome.exit_code
+                && code != 0
+                && overall == 0
+            {
+                overall = code;
             }
         }
     }

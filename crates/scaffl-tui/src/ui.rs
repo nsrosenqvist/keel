@@ -67,10 +67,10 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_right_pane(app, frame, body[1]);
     render_status(app, frame, outer[2]);
 
-    if app.mode() == Mode::Palette {
-        if let Some(palette) = app.palette() {
-            render_palette(app, palette, frame);
-        }
+    if app.mode() == Mode::Palette
+        && let Some(palette) = app.palette()
+    {
+        render_palette(app, palette, frame);
     }
 }
 
@@ -691,10 +691,10 @@ fn watcher_indicator_style(app: &App, name: &str) -> Style {
 }
 
 fn service_indicator_style(app: &App, service: &str) -> Style {
-    if let Some(pane) = app.services().get(service) {
-        if pane.tail_error.is_some() {
-            return Style::default().fg(Color::Red);
-        }
+    if let Some(pane) = app.services().get(service)
+        && pane.tail_error.is_some()
+    {
+        return Style::default().fg(Color::Red);
     }
     match app.services().get(service).and_then(|p| p.status) {
         Some(ServiceStatus::Running) => Style::default().fg(Color::Green),

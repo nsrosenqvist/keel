@@ -253,15 +253,15 @@ pub fn expand_vars(s: &str, vars: &BTreeMap<String, String>) -> String {
                 i += 2;
                 continue;
             }
-            if next == '{' {
-                if let Some(close) = bytes[i + 2..].iter().position(|b| *b == b'}') {
-                    let name = &s[i + 2..i + 2 + close];
-                    if let Some(v) = vars.get(name) {
-                        out.push_str(v);
-                    }
-                    i += 2 + close + 1;
-                    continue;
+            if next == '{'
+                && let Some(close) = bytes[i + 2..].iter().position(|b| *b == b'}')
+            {
+                let name = &s[i + 2..i + 2 + close];
+                if let Some(v) = vars.get(name) {
+                    out.push_str(v);
                 }
+                i += 2 + close + 1;
+                continue;
             }
         }
         out.push(c);

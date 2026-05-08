@@ -86,10 +86,15 @@ fn handle_event(app: &mut App, event: Event) {
             code,
             modifiers,
             ..
-        }) => match app.mode() {
-            crate::app::Mode::Normal => handle_key_normal(app, code, modifiers),
-            crate::app::Mode::Palette => handle_key_palette(app, code, modifiers),
-        },
+        }) => {
+            // Any key dismisses a stale flash. The dispatched handler
+            // may re-arm a fresh one for this event.
+            app.flash = None;
+            match app.mode() {
+                crate::app::Mode::Normal => handle_key_normal(app, code, modifiers),
+                crate::app::Mode::Palette => handle_key_palette(app, code, modifiers),
+            }
+        }
         Event::Resize(_, _) => {
             // The next draw call already adapts to the new size.
         }

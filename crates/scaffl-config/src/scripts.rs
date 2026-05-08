@@ -77,10 +77,10 @@ fn parse_frontmatter(
     path: &Path,
 ) -> Result<(), ConfigError> {
     let mut lines = content.lines();
-    if let Some(first) = lines.clone().next() {
-        if first.starts_with("#!") {
-            lines.next();
-        }
+    if let Some(first) = lines.clone().next()
+        && first.starts_with("#!")
+    {
+        lines.next();
     }
     for line in lines {
         let trimmed = line.trim_end();

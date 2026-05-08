@@ -115,20 +115,15 @@ async fn detect_base_ref(project_root: &Path) -> BaseRef {
     }
 
     // 2. Detached HEAD or no-branch — see if we're in a linked worktree.
-    if let Some(git_dir) = git_output(project_root, &["rev-parse", "--git-dir"]).await {
-        if git_dir.contains("/worktrees/") {
-            if let Some(toplevel) =
-                git_output(project_root, &["rev-parse", "--show-toplevel"]).await
-            {
-                if let Some(name) = Path::new(&toplevel)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                {
-                    return BaseRef::WorktreeDir(name);
-                }
-            }
-        }
+    if let Some(git_dir) = git_output(project_root, &["rev-parse", "--git-dir"]).await
+        && git_dir.contains("/worktrees/")
+        && let Some(toplevel) = git_output(project_root, &["rev-parse", "--show-toplevel"]).await
+        && let Some(name) = Path::new(&toplevel)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+    {
+        return BaseRef::WorktreeDir(name);
     }
 
     // 3. Detached HEAD in main checkout — fall back to short SHA.
