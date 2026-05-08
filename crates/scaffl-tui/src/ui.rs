@@ -435,7 +435,11 @@ fn render_output(app: &App, frame: &mut Frame, area: Rect) {
     };
 
     let title = run_pane_title(run);
-    let block = panel_block_titled(title);
+    // Captured output is arbitrary command stdout — no leading-space
+    // hack like the kv detail lines, no inherent indent. Apply the
+    // same local padding the error path uses so output (and any
+    // wrapped lines of it) sits inside a 2-col gutter.
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 0, 0));
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = run.buffer.len();
@@ -638,11 +642,11 @@ fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
     let body = if lines.is_empty() {
         let placeholder = match watcher.state {
             WatcherState::Idle if watcher.last_exit_code.is_none() => {
-                "  (no run yet — edit a watched file)".to_string()
+                "(no run yet — edit a watched file)".to_string()
             }
-            WatcherState::Idle => "  (idle — buffer cleared on next run)".into(),
-            WatcherState::Debouncing => "  (cooldown…)".into(),
-            WatcherState::Running => "  (starting…)".into(),
+            WatcherState::Idle => "(idle — buffer cleared on next run)".into(),
+            WatcherState::Debouncing => "(cooldown…)".into(),
+            WatcherState::Running => "(starting…)".into(),
         };
         vec![Line::from(Span::styled(
             placeholder,
@@ -651,7 +655,13 @@ fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
     } else {
         lines
     };
-    let paragraph = Paragraph::new(body).wrap(Wrap { trim: false });
+    // Borderless inner block solely to add the same 2-col padding the
+    // run output uses. Keeps captured recipe stdout off the border
+    // without affecting the kv-style header above.
+    let body_block = Block::default().padding(Padding::new(2, 1, 0, 0));
+    let paragraph = Paragraph::new(body)
+        .block(body_block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, layout[1]);
 }
 
