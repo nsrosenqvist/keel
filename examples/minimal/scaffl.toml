@@ -1,0 +1,15 @@
+# Smallest useful scaffl config. No backend, just host commands.
+
+[project]
+name = "minimal"
+
+[runtime]
+backend = "none"
+
+[command.greet]
+desc = "Say hello"
+run  = "echo hello from scaffl"
+
+[command.check]
+desc = "Format + lint + test, in that order"
+run  = ["echo formatting...", "echo linting...", "echo testing..."]

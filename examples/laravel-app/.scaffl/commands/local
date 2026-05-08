@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# @desc: Stop the in-container app and run it locally with mprocs
+# @needs: up
+set -euo pipefail
+
+if ! command -v mprocs &> /dev/null; then
+    echo "mprocs is not installed (cargo install mprocs)." >&2
+    exit 1
+fi
+
+# Stop the in-container app/worker, keep infra (postgres/redis) running.
+docker compose stop app worker scheduler 2>/dev/null || true
+
+mprocs

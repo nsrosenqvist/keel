@@ -1,0 +1,133 @@
+# scaffl config that mirrors a typical Laravel + Docker Compose dev loop.
+# Models the same surface as a hand-rolled `dev` shell script: up / down,
+# in-container artisan / composer / php, tests with overrides, local-mode
+# with mprocs, code-quality checks, deploy.
+
+[project]
+name = "laravel-app"
+description = "Example: Laravel + Docker Compose + Kamal"
+
+[runtime]
+backend             = "compose"
+default_service     = "app"
+compose_passthrough = true
+service_passthrough = true
+
+[env_files]
+files = [".env", ".env.${APP_ENV}"]
+
+[env]
+APP_PORT      = { default = "80" }
+APP_SERVICE   = { default = "app" }
+WWWUSER       = { from_command = "id -u" }
+WWWGROUP      = { from_command = "id -g" }
+
+# ----- Container lifecycle -----
+
+[command.up]
+desc = "Start all services"
+run  = "docker compose up -d"
+
+[command.down]
+desc = "Stop all services"
+run  = "docker compose down"
+
+[command.observability]
+desc = "Start with the LGTM observability stack"
+run  = "docker compose --profile observability up -d"
+
+# ----- Inside the app container -----
+
+[command.shell]
+desc         = "Open a shell in the app container"
+in           = "app"
+run          = "/bin/sh"
+tty          = true
+
+[command.artisan]
+desc         = "Run an artisan command"
+in           = "app"
+run          = "php -d opentelemetry.disabled=1 artisan"
+tty          = true
+forward_args = true
+
+[command.composer]
+desc         = "Run a composer command"
+in           = "app"
+run          = "php -d opentelemetry.disabled=1 -d memory_limit=4G /usr/bin/composer"
+tty          = true
+forward_args = true
+
+[command.tinker]
+desc = "Laravel Tinker"
+in   = "app"
+run  = "php artisan tinker"
+tty  = true
+
+# ----- Database / setup -----
+
+[command.migrate]
+desc         = "Run database migrations"
+needs        = ["up"]
+in           = "app"
+run          = "php artisan migrate"
+forward_args = true
+
+[command.fresh]
+desc  = "Fresh DB with seeds"
+needs = ["up"]
+in    = "app"
+run   = "php artisan migrate:fresh --seed"
+
+# ----- Tests -----
+
+[command.test]
+desc         = "Run the test suite (in container, with overrides)"
+needs        = ["up"]
+in           = "app"
+forward_args = true
+run          = "composer test"
+
+[command.test.env]
+APP_ENV         = "testing"
+DB_CONNECTION   = "sqlite"
+DB_DATABASE     = ":memory:"
+SESSION_DRIVER  = "array"
+CACHE_STORE     = "array"
+QUEUE_CONNECTION = "sync"
+
+# ----- Code quality -----
+
+[command."check:frontend"]
+desc = "Frontend quality checks"
+run  = "npm run check"
+
+[command."check:backend"]
+desc = "Backend quality checks"
+run  = "composer check"
+
+[command.check]
+desc = "All quality checks"
+run  = ["check:frontend", "check:backend"]
+
+# ----- Hooks -----
+
+[hooks]
+pre-commit = ["check"]
+
+# ----- TUI panes (Phase 5+ wiring) -----
+
+[[ui.pane]]
+type    = "service"
+service = "app"
+key     = "1"
+
+[[ui.pane]]
+type    = "service"
+service = "worker"
+key     = "2"
+
+[[ui.pane]]
+type    = "command"
+name    = "vite"
+key     = "v"
