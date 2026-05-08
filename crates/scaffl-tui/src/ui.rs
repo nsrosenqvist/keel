@@ -437,9 +437,11 @@ fn render_output(app: &App, frame: &mut Frame, area: Rect) {
     let title = run_pane_title(run);
     // Captured output is arbitrary command stdout — no leading-space
     // hack like the kv detail lines, no inherent indent. Apply the
-    // same local padding the error path uses so output (and any
-    // wrapped lines of it) sits inside a 2-col gutter.
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 0, 0));
+    // same gutter the error path uses (2 left, 1 right, 1 top) so
+    // output and wrapped continuation lines sit inset from both the
+    // title border and the body sides — matching the detail pane's
+    // top-of-content blank line.
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = run.buffer.len();
@@ -655,10 +657,11 @@ fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
     } else {
         lines
     };
-    // Borderless inner block solely to add the same 2-col padding the
-    // run output uses. Keeps captured recipe stdout off the border
-    // without affecting the kv-style header above.
-    let body_block = Block::default().padding(Padding::new(2, 1, 0, 0));
+    // Borderless inner block solely to add the same gutter the run
+    // output uses. Keeps captured recipe stdout off the border
+    // without affecting the kv-style header above. The 1-row top
+    // padding gives the body breathing room from the header.
+    let body_block = Block::default().padding(Padding::new(2, 1, 1, 0));
     let paragraph = Paragraph::new(body)
         .block(body_block)
         .wrap(Wrap { trim: false });
