@@ -170,16 +170,21 @@ impl<'a> SidebarGroup<'a> {
 }
 
 fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
+    // Recipes and scripts share a single "commands" group in the
+    // sidebar — to most users they're the same thing (a runnable
+    // command), and the distinction is still visible where it matters
+    // (kind tag in the palette and detail pane). Sidebar order
+    // preserves the iteration order of `app.items()` within the
+    // commands group, which is recipes (alphabetical) then scripts
+    // (alphabetical) — natural enough for browsing.
     let mut services = Vec::new();
     let mut watchers = Vec::new();
-    let mut recipes = Vec::new();
-    let mut scripts = Vec::new();
+    let mut commands = Vec::new();
     for item in app.items() {
         match item.kind {
             ItemKind::Service => services.push(item),
             ItemKind::Watcher => watchers.push(item),
-            ItemKind::Recipe => recipes.push(item),
-            ItemKind::Script => scripts.push(item),
+            ItemKind::Recipe | ItemKind::Script => commands.push(item),
         }
     }
     let mut out = Vec::new();
@@ -195,16 +200,10 @@ fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
             items: watchers,
         });
     }
-    if !recipes.is_empty() {
+    if !commands.is_empty() {
         out.push(SidebarGroup {
-            label: "recipes",
-            items: recipes,
-        });
-    }
-    if !scripts.is_empty() {
-        out.push(SidebarGroup {
-            label: "scripts",
-            items: scripts,
+            label: "commands",
+            items: commands,
         });
     }
     out
@@ -266,8 +265,10 @@ fn glyph_for(kind: ItemKind) -> &'static str {
     match kind {
         ItemKind::Service => "●",
         ItemKind::Watcher => "◇",
-        ItemKind::Recipe => "▸",
-        ItemKind::Script => "▪",
+        // Same glyph for recipes and scripts — they share the
+        // "commands" sidebar group. Kind is still distinguishable in
+        // the detail pane and palette tags.
+        ItemKind::Recipe | ItemKind::Script => "▸",
     }
 }
 
