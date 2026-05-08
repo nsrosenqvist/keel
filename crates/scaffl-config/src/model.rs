@@ -33,10 +33,36 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiConfig,
 
+    /// Project-defined hooks. `[hooks]` in `scaffl.toml` is a table whose
+    /// keys are stage names (`pre-commit`, `pre-push`, ...) and whose
+    /// values are lists of recipe / script names to run for that stage.
+    #[serde(default)]
+    pub hooks: HooksConfig,
+
     /// Scripts discovered under `.scaffl/commands/`. Populated by
     /// [`crate::loader::load_project`]; never serialized.
     #[serde(skip)]
     pub scripts: BTreeMap<String, ScriptCommand>,
+}
+
+/// Native scaffl hook configuration. Keyed by stage name.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct HooksConfig {
+    pub stages: BTreeMap<String, Vec<String>>,
+}
+
+impl HooksConfig {
+    pub fn for_stage(&self, stage: &str) -> &[String] {
+        self.stages
+            .get(stage)
+            .map(|v| v.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub fn declared_stages(&self) -> impl Iterator<Item = &str> {
+        self.stages.keys().map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
@@ -303,6 +329,22 @@ mod tests {
             UiPane::Watcher { debounce_ms, .. } => assert_eq!(*debounce_ms, 500),
             _ => panic!("expected Watcher pane"),
         }
+    }
+
+    #[test]
+    fn parses_hooks_config() {
+        let src = r#"
+            [hooks]
+            pre-commit = ["check:format", "check:lint"]
+            pre-push = ["test"]
+        "#;
+        let cfg: Config = toml::from_str(src).unwrap();
+        assert_eq!(
+            cfg.hooks.for_stage("pre-commit"),
+            &["check:format", "check:lint"]
+        );
+        assert_eq!(cfg.hooks.for_stage("pre-push"), &["test"]);
+        assert!(cfg.hooks.for_stage("post-commit").is_empty());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "scaffl-hooks"
-description = "Git hook installation and pre-commit-config compatibility (stub; Phase 4)"
+description = "Git hook installation and pre-commit-config compatibility for scaffl"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,16 @@ readme.workspace = true
 
 [dependencies]
 scaffl-config = { workspace = true }
+scaffl-runtime = { workspace = true }
 serde = { workspace = true }
 serde_yaml_ng = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
+shell-words = { workspace = true }
+which = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }
