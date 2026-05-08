@@ -13,7 +13,9 @@ use crossterm::{
         KeyModifiers,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::{Stdout, stdout};
@@ -25,10 +27,21 @@ const POLL_INTERVAL_MS: u64 = 100;
 const TICK_INTERVAL_MS: u64 = 250;
 
 pub async fn run_event_loop(app: &mut App) -> Result<(), TuiError> {
-    let mut terminal = enter_terminal()?;
+    let title = terminal_title(app);
+    let mut terminal = enter_terminal(&title)?;
     let result = drive(&mut terminal, app).await;
     leave_terminal(&mut terminal)?;
     result
+}
+
+fn terminal_title(app: &App) -> String {
+    let project = app
+        .config()
+        .project
+        .name
+        .clone()
+        .unwrap_or_else(|| "scaffl".into());
+    format!("scaffl — {project}")
 }
 
 async fn drive(
@@ -86,8 +99,12 @@ fn handle_event(app: &mut App, event: Event) {
 
 fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char('c') = code {
-            app.quit();
+        match code {
+            // Quit
+            KeyCode::Char('c') => app.quit(),
+            // Modern palette opener (VS Code / many TUIs use Ctrl-K).
+            KeyCode::Char('k') | KeyCode::Char('p') => app.open_palette(),
+            _ => {}
         }
         return;
     }
@@ -98,7 +115,11 @@ fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Char('g') | KeyCode::Home => app.select_first(),
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
-        KeyCode::Char(':') => app.open_palette(),
+        // Palette: `:` (vim-style), `/` (fuzzy-search-style).
+        KeyCode::Char(':') | KeyCode::Char('/') => app.open_palette(),
+        KeyCode::Char('s') if app.abort_current_run() => {
+            app.flash = Some("aborted current run".into());
+        }
         KeyCode::Enter => {
             if let Err(rejection) = app.try_launch_selected() {
                 app.flash = Some(launch_message(rejection));
@@ -132,11 +153,9 @@ fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 p.pop_char();
             }
         }
-        KeyCode::Enter => {
-            if app.confirm_palette() {
-                if let Err(rejection) = app.try_launch_selected() {
-                    app.flash = Some(launch_message(rejection));
-                }
+        KeyCode::Enter if app.confirm_palette() => {
+            if let Err(rejection) = app.try_launch_selected() {
+                app.flash = Some(launch_message(rejection));
             }
         }
         KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
@@ -157,10 +176,15 @@ fn launch_message(rejection: crate::app::LaunchRejection) -> String {
     }
 }
 
-fn enter_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, TuiError> {
+fn enter_terminal(title: &str) -> Result<Terminal<CrosstermBackend<Stdout>>, TuiError> {
     enable_raw_mode()?;
     let mut out = stdout();
-    execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        SetTitle(title)
+    )?;
     let backend = CrosstermBackend::new(out);
     Ok(Terminal::new(backend)?)
 }
@@ -170,7 +194,10 @@ fn leave_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<(
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        // Restore a sane title; emitting an empty string asks the
+        // terminal to reset to the shell's default in most emulators.
+        SetTitle(""),
     )?;
     terminal.show_cursor()?;
     Ok(())
@@ -288,6 +315,27 @@ mod tests {
     fn colon_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char(':')));
+        assert_eq!(app.mode(), crate::app::Mode::Palette);
+    }
+
+    #[test]
+    fn slash_opens_palette() {
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        handle_event(&mut app, press(KeyCode::Char('/')));
+        assert_eq!(app.mode(), crate::app::Mode::Palette);
+    }
+
+    #[test]
+    fn ctrl_k_opens_palette() {
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        handle_event(&mut app, ctrl(KeyCode::Char('k')));
+        assert_eq!(app.mode(), crate::app::Mode::Palette);
+    }
+
+    #[test]
+    fn ctrl_p_opens_palette() {
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        handle_event(&mut app, ctrl(KeyCode::Char('p')));
         assert_eq!(app.mode(), crate::app::Mode::Palette);
     }
 

@@ -159,6 +159,16 @@ impl WatcherPane {
         self.last_run_started_at = Some(Instant::now());
     }
 
+    /// Milliseconds remaining in the current cooldown window. `None`
+    /// when the pane isn't debouncing or the window has elapsed.
+    pub fn pending_remaining_ms(&self) -> Option<u64> {
+        let until = self.pending_until?;
+        let now = Instant::now();
+        until
+            .checked_duration_since(now)
+            .map(|d| d.as_millis() as u64)
+    }
+
     /// Status text for the sidebar / pane title.
     pub fn status_label(&self) -> String {
         match self.state {

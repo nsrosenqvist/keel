@@ -373,6 +373,10 @@ impl Executor {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.stdin(Stdio::null());
+        // When the consumer (TUI) drops the spawning task, the Child
+        // is dropped, and kill_on_drop fires SIGKILL. Without this,
+        // aborting the JoinHandle would leak the process.
+        cmd.kill_on_drop(true);
         let mut child = cmd
             .spawn()
             .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;

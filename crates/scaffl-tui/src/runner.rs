@@ -103,6 +103,20 @@ impl RunState {
         self.exit_code.is_some() || self.error.is_some()
     }
 
+    /// Abort the running task. Aborts the JoinHandle, dropping the
+    /// underlying child process; the executor sets `kill_on_drop` so
+    /// the OS kills it. Records "aborted" in `error` for the title.
+    /// No-op when the run is already done.
+    pub fn abort(&mut self) {
+        if self.is_done() {
+            return;
+        }
+        if let Some(handle) = self.completion.take() {
+            handle.abort();
+        }
+        self.error = Some("aborted".into());
+    }
+
     /// Status line for the output pane title.
     pub fn status_label(&self) -> String {
         if let Some(code) = self.exit_code {

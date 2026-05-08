@@ -304,6 +304,18 @@ impl App {
         }
     }
 
+    /// Abort the current run, if any is in flight. Returns true when an
+    /// abort was issued (so the caller can flash a status message).
+    pub fn abort_current_run(&mut self) -> bool {
+        match self.current_run.as_mut() {
+            Some(run) if !run.is_done() => {
+                run.abort();
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub async fn poll_run(&mut self) {
         if let Some(run) = self.current_run.as_mut() {
             run.poll_completion().await;
@@ -329,6 +341,32 @@ impl App {
         }
     }
 
+    /// Auto-discover services from the backend and add ones not already
+    /// declared in `[[ui.pane]]`. Idempotent. Called once at startup,
+    /// before [`Self::spawn_service_tails`].
+    pub async fn discover_services(&mut self) {
+        let Some(backend) = self.backend.as_ref().map(Arc::clone) else {
+            return;
+        };
+        let Ok(discovered) = backend.list_services().await else {
+            return;
+        };
+        let mut added = false;
+        for name in discovered {
+            if self.services.contains_key(&name) {
+                continue;
+            }
+            self.services
+                .insert(name.clone(), ServicePane::new(name.clone()));
+            added = true;
+        }
+        if added {
+            // Rebuild items so the new services land in the sidebar's
+            // services group, preserving ordering for the rest.
+            self.items = build_items_from(&self.config, &self.services, &self.watchers);
+        }
+    }
+
     /// Refresh service status indicators. Each pane decides whether
     /// enough time has elapsed to actually re-poll.
     pub async fn refresh_service_status(&mut self) {
@@ -344,6 +382,7 @@ impl App {
     /// failures (bad globs, notify init failures) are logged and the
     /// pane is omitted; the rest of the dashboard still works.
     pub fn spawn_watcher_panes(&mut self, project_root: &Path) {
+        let mut added = false;
         for (idx, pane) in self.config.ui.panes.iter().enumerate() {
             if let UiPane::Watcher {
                 glob,
@@ -361,17 +400,17 @@ impl App {
                     project_root,
                 ) {
                     Ok(p) => {
-                        self.items.push(Item {
-                            name: name.clone(),
-                            kind: ItemKind::Watcher,
-                        });
                         self.watchers.insert(name, p);
+                        added = true;
                     }
                     Err(e) => {
                         tracing::warn!("watcher pane `{on_change}` failed to start: {e}");
                     }
                 }
             }
+        }
+        if added {
+            self.items = build_items_from(&self.config, &self.services, &self.watchers);
         }
     }
 
@@ -396,14 +435,46 @@ fn unique_watcher_name(base: &str, idx: usize, existing: &BTreeMap<String, Watch
 }
 
 fn build_items(config: &Config) -> Vec<Item> {
+    build_items_from(config, &collect_service_panes(config), &BTreeMap::new())
+}
+
+/// Reconstruct the sidebar item list from live state. The order is
+/// stable: services (declared first in scaffl.toml order, then any
+/// auto-discovered ones), watchers, recipes, scripts.
+fn build_items_from(
+    config: &Config,
+    services: &BTreeMap<String, ServicePane>,
+    watchers: &BTreeMap<String, WatcherPane>,
+) -> Vec<Item> {
     let mut items = Vec::new();
+    let mut emitted_services: std::collections::BTreeSet<&str> = Default::default();
+
+    // Declared services first, in scaffl.toml [[ui.pane]] order.
     for pane in &config.ui.panes {
         if let UiPane::Service { service, .. } = pane {
+            if services.contains_key(service) && emitted_services.insert(service.as_str()) {
+                items.push(Item {
+                    name: service.clone(),
+                    kind: ItemKind::Service,
+                });
+            }
+        }
+    }
+    // Auto-discovered services follow (alphabetical via BTreeMap iter).
+    for name in services.keys() {
+        if emitted_services.insert(name.as_str()) {
             items.push(Item {
-                name: service.clone(),
+                name: name.clone(),
                 kind: ItemKind::Service,
             });
         }
+    }
+    // Watchers (BTreeMap iteration is stable / alphabetical).
+    for name in watchers.keys() {
+        items.push(Item {
+            name: name.clone(),
+            kind: ItemKind::Watcher,
+        });
     }
     items.extend(config.commands.keys().map(|name| Item {
         name: name.clone(),
