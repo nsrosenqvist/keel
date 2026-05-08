@@ -31,8 +31,8 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
-        Wrap,
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
+        Paragraph, Wrap,
     },
 };
 use scaffl_config::Run;
@@ -503,7 +503,18 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
 
 fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
     let title = service_pane_title(service);
-    let block = panel_block_titled(title);
+
+    // The error path is the only place this pane prints prose that's
+    // long enough to wrap. Apply local block padding so the wrapped
+    // continuation lines keep the indent — the leading "  " hack used
+    // elsewhere only pads the first visual line. Other paths fall back
+    // to the bare panel block so streaming compose logs render flush
+    // (artificial indent would misalign the upstream tool's output).
+    let block = if service.tail_error.is_some() {
+        panel_block_titled(title).padding(Padding::new(2, 1, 1, 0))
+    } else {
+        panel_block_titled(title)
+    };
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = service.buffer.len();
@@ -524,19 +535,20 @@ fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
             )),
         ]
     } else if let Some(err) = &service.tail_error {
+        // No leading "  " — the block padding handles it, including
+        // for wrapped continuation lines.
         vec![
-            Line::from(""),
             Line::from(Span::styled(
-                format!("  log tail unavailable: {err}"),
+                format!("log tail unavailable: {err}"),
                 Style::default().fg(Color::Red),
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  set runtime.backend = \"compose\" in scaffl.toml",
+                "set runtime.backend = \"compose\" in scaffl.toml",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
-                "  and ensure docker compose is on PATH.",
+                "and ensure docker compose is on PATH.",
                 Style::default().fg(Color::DarkGray),
             )),
         ]
