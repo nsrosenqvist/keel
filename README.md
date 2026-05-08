@@ -36,6 +36,12 @@ whole stack from a built-in TUI.
 - **Doctor + init.** `scaffl init` scaffolds a starter `scaffl.toml`
   with detection hints (compose / .env / package.json / composer.json).
   `scaffl doctor` validates backend, env files, and dependency graph.
+- **Worktree-aware envs.** Each git worktree gets a deterministic
+  slug + integer offset. `[env]` entries with `base = "8080", offset
+  = "SCAFFL_WORKTREE_OFFSET"` make ports vary per worktree
+  automatically. `COMPOSE_PROJECT_NAME` is auto-set so two checkouts
+  of the same project can run side-by-side. Pin specific worktrees
+  with `scaffl worktree assign <slug> <n>`.
 
 ## Install
 
@@ -93,6 +99,8 @@ scaffl env                  # print resolved environment
 scaffl doctor               # validate backend / deps / env files
 scaffl hooks install        # writes .git/hooks/pre-commit
 scaffl watch test           # re-run on file changes
+scaffl worktree status      # current worktree's slug + offset
+scaffl worktree list        # every git worktree + offsets
 ```
 
 Anything not matched as a recipe / script / built-in falls through to

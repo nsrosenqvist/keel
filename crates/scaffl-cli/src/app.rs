@@ -63,6 +63,11 @@ pub enum Command {
     },
     /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
     Completions { shell: clap_complete::Shell },
+    /// Worktree identity, offset, and pinned-assignment management.
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
     /// Re-run a recipe whenever watched files change.
     Watch {
         /// Recipe or script name.
@@ -97,6 +102,24 @@ pub enum HooksAction {
     /// Run hooks for a stage. Used by the installed shims; `git commit`
     /// invokes this via .git/hooks/pre-commit.
     Run { stage: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorktreeAction {
+    /// Show the current worktree's identity, offset, and computed env.
+    Status,
+    /// List every git worktree with its computed offset.
+    List,
+    /// Pin a slug to a specific offset.
+    Assign {
+        /// Slug to pin (e.g. `main`, `feature/x`).
+        name: String,
+        /// Integer offset to assign.
+        offset: u32,
+        /// Write to .scaffl/local.toml (per-developer) instead of scaffl.toml.
+        #[arg(long)]
+        local: bool,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -161,6 +184,15 @@ pub async fn run(cli: Cli) -> Result<()> {
                 )
                 .await
             }
+            Command::Worktree { action } => match action {
+                WorktreeAction::Status => commands::worktree::status(&cfg_arc, &identity).await,
+                WorktreeAction::List => commands::worktree::list(&cfg_arc, &project_root).await,
+                WorktreeAction::Assign {
+                    name,
+                    offset,
+                    local,
+                } => commands::worktree::assign(&name, offset, local, &project_root),
+            },
             Command::Hooks { action } => match action {
                 HooksAction::Install { stages } => {
                     commands::hooks::install(&project_root, &stages).await

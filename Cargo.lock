@@ -1002,6 +1002,7 @@ dependencies = [
  "scaffl-tui",
  "tempfile",
  "tokio",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
 ]

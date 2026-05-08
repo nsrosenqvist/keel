@@ -57,6 +57,7 @@ pub async fn run(config: &Config, project_root: &Path) -> Result<i32> {
     findings.extend(check_env_files(config, project_root));
     findings.extend(check_dependency_graph(config));
     findings.extend(check_service_hints(config));
+    findings.extend(check_worktree(config, project_root).await);
 
     let mut had_fail = false;
     for f in &findings {
@@ -186,6 +187,27 @@ fn check_service_hints(config: &Config) -> Vec<Finding> {
             "{with_service} command(s) target a container service (verify with `compose ps`)"
         ))]
     }
+}
+
+async fn check_worktree(config: &Config, project_root: &Path) -> Vec<Finding> {
+    let identity = scaffl_runtime::Identity::detect(project_root, config).await;
+    if !identity.is_isolated() {
+        return vec![Finding::ok(
+            "worktree: no git branch detected (offset = 0, no compose isolation)",
+        )];
+    }
+    let pinned = config.worktrees.assign.contains_key(&identity.slug);
+    let source = if pinned { "pinned" } else { "hashed" };
+    vec![Finding::ok(format!(
+        "worktree: slug `{}` → offset {} ({source}); compose isolation {}",
+        identity.slug,
+        identity.offset,
+        if config.worktrees.isolate_compose {
+            "on"
+        } else {
+            "off"
+        },
+    ))]
 }
 
 #[cfg(test)]

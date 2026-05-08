@@ -73,6 +73,63 @@ Examples:
 
 Breaking changes: add `BREAKING CHANGE: <description>` as a footer, and add `!` after type/scope: `feat(config)!: rename run_args to forward_args`.
 
+## Worktree-aware environments
+
+scaffl detects the current git checkout and gives each one a
+deterministic identity (slug + integer offset). Recipes use the offset
+to vary ports and the like, so two worktrees of the same project can
+run side-by-side without collisions.
+
+### Loading order
+
+```
+1. Built-in defaults
+2. scaffl.toml
+3. .scaffl/local.toml                        (per-developer overrides)
+4. .scaffl/worktrees/<slug>.toml             (per-worktree overrides)
+5. SCAFFL_WORKTREE_SLUG / _OFFSET injected
+6. COMPOSE_PROJECT_NAME injected (if isolate_compose, slug non-empty,
+   user hasn't already set it)
+7. [env] resolution (can reference SCAFFL_WORKTREE_OFFSET)
+```
+
+Per-worktree overlays live in the *current working directory's*
+`.scaffl/worktrees/<slug>.toml`. Each git worktree has its own working
+tree, so each maintains its own overlay file (or share via symlink).
+
+### Identity
+
+`slug` derives from (in order): branch name → linked-worktree
+directory basename → `det-<7-char SHA>` for detached HEAD →
+empty string for non-git directories. Slugification is
+`[^a-z0-9-]` → `-`, runs collapsed, trimmed.
+
+`offset` is `[worktrees.assign][slug]` if pinned, otherwise
+`fnv1a_32("<seed>|<slug>") % modulus`. Default modulus is 1000;
+seed defaults to `[project] name`. Empty slug → offset 0.
+
+### `[env]` arithmetic
+
+```toml
+[env]
+APP_PORT = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
+```
+
+Resolves to `base.parse::<i64>() + existing[offset].parse::<i64>()`.
+Missing offset var → falls back to `base`. Non-integer base → error.
+Use this instead of shell math in `from_command`.
+
+### CLI
+
+- `scaffl worktree status` — current slug, offset, isolation, derived
+  env values.
+- `scaffl worktree list` — every git worktree's computed offset, with
+  collision warnings.
+- `scaffl worktree assign <slug> <n> [--local]` — pin a slug. Without
+  `--local`, writes to `scaffl.toml` (team-wide; commit to share).
+  With `--local`, writes to `.scaffl/local.toml` (per-developer, this
+  checkout only).
+
 ## Layout
 
 ```

@@ -17,10 +17,17 @@ service_passthrough = true
 files = [".env", ".env.${APP_ENV}"]
 
 [env]
-APP_PORT      = { default = "80" }
+# Ports vary per worktree so multiple branches can run side-by-side.
+# Base port + scaffl's per-worktree integer offset (0 for main, hashed
+# for other branches; pin specific slugs in `[worktrees.assign]`).
+APP_PORT      = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
 APP_SERVICE   = { default = "app" }
 WWWUSER       = { from_command = "id -u" }
 WWWGROUP      = { from_command = "id -g" }
+
+[worktrees.assign]
+main       = 0      # production-shaped main always at the base port
+production = 0
 
 # ----- Container lifecycle -----
 

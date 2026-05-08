@@ -55,6 +55,7 @@ futures = "0.3"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 clap_complete = "4"
 comfy-table = "7"
+toml_edit = "0.22"
 
 # TUI
 ratatui = "0.29"
