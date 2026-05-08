@@ -1,22 +1,39 @@
 //! scaffl TUI — embedded dashboard.
 //!
-//! Phase 3 work. This stub exists so the workspace builds end-to-end and the
-//! CLI can compile against the future entry point without churn.
+//! First slice (this commit): a navigable browser. Sidebar lists every
+//! recipe and script declared in the project; the right-hand detail pane
+//! shows what each one would do. No execution from the TUI yet — that
+//! arrives in the next slice once the executor learns to stream output
+//! into a buffer instead of inheriting stdout.
+//!
+//! Architecture:
+//!
+//! - [`app::App`] holds state (item list, selection, scroll, quit flag).
+//! - [`ui::render`] is a pure function from `App -> Frame`. No state mutation
+//!   in the renderer, no I/O in the model.
+//! - [`run`] owns the terminal lifecycle (raw mode, alternate screen) and
+//!   drives the event loop. Crossterm events arrive via a blocking polling
+//!   thread piped through an mpsc channel.
 
-#![allow(clippy::module_inception)]
+use scaffl_config::Config;
+use std::sync::Arc;
+use thiserror::Error;
 
-/// Placeholder. Will be replaced by the `App` type that owns the ratatui
-/// runtime, pane registry, and palette state.
-pub struct TuiApp;
+pub mod app;
+pub mod ui;
 
-impl TuiApp {
-    pub fn new() -> Self {
-        Self
-    }
+mod terminal;
+
+pub use app::{App, Item, ItemKind};
+
+#[derive(Debug, Error)]
+pub enum TuiError {
+    #[error("terminal io: {0}")]
+    Io(#[from] std::io::Error),
 }
 
-impl Default for TuiApp {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Open the TUI dashboard. Returns when the user quits.
+pub async fn run(config: Arc<Config>) -> Result<(), TuiError> {
+    let mut app = App::new(config);
+    terminal::run_event_loop(&mut app).await
 }

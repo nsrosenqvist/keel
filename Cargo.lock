@@ -888,11 +888,13 @@ version = "0.0.1"
 dependencies = [
  "crossterm 0.28.1",
  "nucleo-matcher",
+ "pretty_assertions",
  "ratatui",
  "scaffl-config",
  "scaffl-runtime",
  "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

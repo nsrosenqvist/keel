@@ -45,6 +45,8 @@ pub enum Command {
     Doctor,
     /// Scaffold a starter scaffl.toml in the project root.
     Init,
+    /// Open the TUI dashboard.
+    Ui,
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -71,13 +73,12 @@ pub async fn run(cli: Cli) -> Result<()> {
                 std::process::exit(code);
             }
             Command::Init => unreachable!("handled above"),
+            Command::Ui => run_tui(Arc::clone(&cfg_arc)).await,
         };
     }
 
     if cli.args.is_empty() {
-        // TODO: open the TUI dashboard once `scaffl-tui` ships its app.
-        println!("scaffl: no command given (TUI launch pending implementation)");
-        return Ok(());
+        return run_tui(Arc::clone(&cfg_arc)).await;
     }
 
     let (name, rest) = split_args(&cli.args);
@@ -197,6 +198,10 @@ async fn build_backend(_config: &Config) -> Result<Arc<dyn Backend>> {
         .await
         .context("detect compose backend")?;
     Ok(Arc::new(backend))
+}
+
+async fn run_tui(config: Arc<Config>) -> Result<()> {
+    scaffl_tui::run(config).await.context("run TUI")
 }
 
 fn load_config(project_root: &Path) -> Result<Config> {
