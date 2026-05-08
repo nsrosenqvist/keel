@@ -115,7 +115,22 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 
     let project_root = locate_project_root(cli.project.as_deref())?;
-    let config = load_config(&project_root)?;
+
+    // Bootstrap pass: load scaffl.toml + local.toml so we can detect
+    // the worktree identity using the user's `[worktrees]` settings
+    // (modulus / seed / pinned assignments). Then load again with the
+    // slug applied, so per-worktree overlays at
+    // `.scaffl/worktrees/<slug>.toml` take effect.
+    let bootstrap_cfg = scaffl_config::load_project_with_slug(&project_root, None)
+        .with_context(|| format!("load project at {}", project_root.display()))?;
+    let identity = scaffl_runtime::Identity::detect(&project_root, &bootstrap_cfg).await;
+    let slug_for_overlay = if identity.is_isolated() {
+        Some(identity.slug.as_str())
+    } else {
+        None
+    };
+    let config = scaffl_config::load_project_with_slug(&project_root, slug_for_overlay)
+        .with_context(|| format!("load project at {}", project_root.display()))?;
     let cfg_arc = Arc::new(config);
 
     if let Some(sub) = cli.command {
@@ -180,42 +195,30 @@ pub async fn run(cli: Cli) -> Result<()> {
             anyhow::bail!("built-in `{b}` not yet implemented");
         }
         Resolution::Recipe(recipe_name) => {
-            let backend = build_backend(&cfg_arc).await?;
-            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
-            if let Some(p) = cli.profile.as_deref() {
-                executor = executor.with_profile(p);
-            }
+            let executor =
+                build_executor(&cfg_arc, &project_root, &identity, cli.profile.as_deref()).await?;
             let owned = recipe_name.to_string();
             let code = executor.run_recipe(&owned, rest).await?;
             std::process::exit(code);
         }
         Resolution::Script(script_name) => {
-            let backend = build_backend(&cfg_arc).await?;
-            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
-            if let Some(p) = cli.profile.as_deref() {
-                executor = executor.with_profile(p);
-            }
+            let executor =
+                build_executor(&cfg_arc, &project_root, &identity, cli.profile.as_deref()).await?;
             let owned = script_name.to_string();
             let code = executor.run_script(&owned, rest).await?;
             std::process::exit(code);
         }
         Resolution::ComposePassthrough(sub) => {
-            let backend = build_backend(&cfg_arc).await?;
-            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
-            if let Some(p) = cli.profile.as_deref() {
-                executor = executor.with_profile(p);
-            }
+            let executor =
+                build_executor(&cfg_arc, &project_root, &identity, cli.profile.as_deref()).await?;
             let mut argv: Vec<&str> = vec![sub];
             argv.extend(rest.iter().map(String::as_str));
             let code = executor.passthrough(&argv).await?;
             std::process::exit(code);
         }
         Resolution::ServiceExec(service) => {
-            let backend = build_backend(&cfg_arc).await?;
-            let mut executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
-            if let Some(p) = cli.profile.as_deref() {
-                executor = executor.with_profile(p);
-            }
+            let executor =
+                build_executor(&cfg_arc, &project_root, &identity, cli.profile.as_deref()).await?;
             let argv: Vec<&str> = rest.iter().map(String::as_str).collect();
             let code = executor.service_exec(service, &argv, true).await?;
             std::process::exit(code);
@@ -227,6 +230,24 @@ pub async fn run(cli: Cli) -> Result<()> {
             anyhow::bail!("no such command `{name}`");
         }
     }
+}
+
+/// Build a fully-configured Executor for CLI dispatch: detects the
+/// backend, attaches the pre-resolved worktree identity, and applies an
+/// optional profile.
+async fn build_executor(
+    config: &Arc<Config>,
+    project_root: &Path,
+    identity: &scaffl_runtime::Identity,
+    profile: Option<&str>,
+) -> Result<Executor> {
+    let backend = build_backend(config).await?;
+    let mut executor =
+        Executor::new(backend, Arc::clone(config), project_root).with_identity(identity.clone());
+    if let Some(p) = profile {
+        executor = executor.with_profile(p);
+    }
+    Ok(executor)
 }
 
 fn cmd_list(config: &Config) -> Result<()> {
@@ -317,11 +338,6 @@ async fn run_tui(config: Arc<Config>, project_root: &Path) -> Result<()> {
     scaffl_tui::run(config, executor, backend, project_root)
         .await
         .context("run TUI")
-}
-
-fn load_config(project_root: &Path) -> Result<Config> {
-    scaffl_config::load_project(project_root)
-        .with_context(|| format!("load project at {}", project_root.display()))
 }
 
 fn init_tracing() {

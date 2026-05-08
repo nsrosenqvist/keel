@@ -12,6 +12,7 @@
 use crate::env::Env;
 use crate::error::RuntimeError;
 use crate::sink::{InheritSink, OutputSink, OutputStream};
+use crate::worktree::Identity;
 use scaffl_config::{Config, Recipe, Run, ScriptCommand};
 use scaffl_container::{Backend, ExecOptions, ServiceStatus};
 use std::collections::HashSet;
@@ -40,6 +41,10 @@ pub struct Executor {
     sink: Arc<dyn OutputSink>,
     /// Active profile name, applied to recipes via [`Recipe::with_profile`].
     profile: Option<String>,
+    /// Pre-detected worktree identity. When `None`, [`Env::resolve`]
+    /// auto-detects on first use. CLI / TUI pass a known identity to
+    /// avoid duplicate `git rev-parse` invocations.
+    identity: Option<Identity>,
 }
 
 impl Executor {
@@ -51,7 +56,16 @@ impl Executor {
             base_env: Arc::new(OnceCell::new()),
             sink: Arc::new(InheritSink),
             profile: None,
+            identity: None,
         }
+    }
+
+    /// Return a clone with a pre-detected worktree identity. Skips the
+    /// implicit `git rev-parse` calls inside `Env::resolve`.
+    pub fn with_identity(&self, identity: Identity) -> Self {
+        let mut clone = self.clone();
+        clone.identity = Some(identity);
+        clone
     }
 
     /// Return a clone of this executor that uses `sink` for output capture
@@ -82,7 +96,13 @@ impl Executor {
     async fn base_env(&self) -> Result<&Env, RuntimeError> {
         self.base_env
             .get_or_try_init(|| async {
-                Env::resolve(&self.config, self.project_root.as_ref()).await
+                match &self.identity {
+                    Some(id) => {
+                        Env::resolve_with_identity(&self.config, self.project_root.as_ref(), id)
+                            .await
+                    }
+                    None => Env::resolve(&self.config, self.project_root.as_ref()).await,
+                }
             })
             .await
     }

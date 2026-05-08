@@ -29,19 +29,32 @@ pub fn load_from_path(path: &Path) -> Result<Config, ConfigError> {
     })
 }
 
-/// Load the full project configuration.
+/// Load the full project configuration without applying a worktree
+/// overlay. Equivalent to `load_project_with_slug(root, None)`.
+pub fn load_project(project_root: &Path) -> Result<Config, ConfigError> {
+    load_project_with_slug(project_root, None)
+}
+
+/// Load the full project configuration with an optional per-worktree
+/// overlay.
 ///
 /// Layered on top of each other (later wins):
 ///
 /// 1. `scaffl.toml` at the project root.
 /// 2. `.scaffl/local.toml` (per-developer overrides; gitignored).
+/// 3. `.scaffl/worktrees/<slug>.toml` when `slug` is `Some` and the
+///    file exists (per-worktree overrides; gitignored).
 ///
-/// Missing `scaffl.toml` is fine — a default config is used as the base.
-/// Plus: scripts under `.scaffl/commands/` are discovered after merging.
+/// Missing `scaffl.toml` is fine — a default config is used as the
+/// base. Plus: scripts under `.scaffl/commands/` are discovered after
+/// merging.
 ///
 /// Merging is done at the `toml::Value` level so any TOML structure
 /// works: tables merge recursively, scalars and arrays replace.
-pub fn load_project(project_root: &Path) -> Result<Config, ConfigError> {
+pub fn load_project_with_slug(
+    project_root: &Path,
+    slug: Option<&str>,
+) -> Result<Config, ConfigError> {
     let toml_path = project_root.join("scaffl.toml");
     let local_path = project_root.join(".scaffl").join("local.toml");
 
@@ -54,6 +67,17 @@ pub fn load_project(project_root: &Path) -> Result<Config, ConfigError> {
     if local_path.exists() {
         let local = read_toml_value(&local_path)?;
         deep_merge(&mut value, local);
+    }
+
+    if let Some(slug) = slug.filter(|s| !s.is_empty()) {
+        let overlay_path = project_root
+            .join(".scaffl")
+            .join("worktrees")
+            .join(format!("{slug}.toml"));
+        if overlay_path.exists() {
+            let overlay = read_toml_value(&overlay_path)?;
+            deep_merge(&mut value, overlay);
+        }
     }
 
     let mut config: Config =
@@ -283,6 +307,111 @@ mod tests {
         .unwrap();
         let cfg = load_project(root.path()).unwrap();
         assert!(cfg.commands.contains_key("greet"));
+    }
+
+    #[test]
+    fn load_project_with_slug_applies_overlay() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(
+            root.path().join("scaffl.toml"),
+            r#"
+                [project]
+                name = "base"
+
+                [command.test]
+                run = "composer test"
+            "#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.path().join(".scaffl").join("worktrees")).unwrap();
+        std::fs::write(
+            root.path()
+                .join(".scaffl")
+                .join("worktrees")
+                .join("feature-x.toml"),
+            r#"
+                [command.test]
+                forward_args = true
+
+                [command.feature-only]
+                run = "echo from-feature"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = load_project_with_slug(root.path(), Some("feature-x")).unwrap();
+        assert!(cfg.commands["test"].forward_args);
+        assert!(cfg.commands.contains_key("feature-only"));
+
+        // Without the slug, the overlay is invisible.
+        let cfg_main = load_project_with_slug(root.path(), Some("main")).unwrap();
+        assert!(!cfg_main.commands["test"].forward_args);
+        assert!(!cfg_main.commands.contains_key("feature-only"));
+    }
+
+    #[test]
+    fn load_project_with_slug_layers_after_local() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(
+            root.path().join("scaffl.toml"),
+            r#"
+                [project]
+                name = "base"
+            "#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.path().join(".scaffl").join("worktrees")).unwrap();
+        std::fs::write(
+            root.path().join(".scaffl").join("local.toml"),
+            r#"
+                [project]
+                name = "from-local"
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join(".scaffl").join("worktrees").join("x.toml"),
+            r#"
+                [project]
+                name = "from-worktree"
+            "#,
+        )
+        .unwrap();
+        let cfg = load_project_with_slug(root.path(), Some("x")).unwrap();
+        // Worktree overlay is applied last, so its name wins.
+        assert_eq!(cfg.project.name.as_deref(), Some("from-worktree"));
+    }
+
+    #[test]
+    fn load_project_with_slug_falls_back_when_overlay_absent() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(
+            root.path().join("scaffl.toml"),
+            r#"
+                [project]
+                name = "stable"
+            "#,
+        )
+        .unwrap();
+        // No overlay file present.
+        let cfg = load_project_with_slug(root.path(), Some("missing-slug")).unwrap();
+        assert_eq!(cfg.project.name.as_deref(), Some("stable"));
+    }
+
+    #[test]
+    fn load_project_with_slug_none_matches_load_project() {
+        let root = TempDir::new().unwrap();
+        std::fs::write(
+            root.path().join("scaffl.toml"),
+            r#"
+                [project]
+                name = "x"
+            "#,
+        )
+        .unwrap();
+        let a = load_project(root.path()).unwrap();
+        let b = load_project_with_slug(root.path(), None).unwrap();
+        assert_eq!(a, b);
     }
 
     #[test]
