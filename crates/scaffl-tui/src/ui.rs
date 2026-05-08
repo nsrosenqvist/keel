@@ -30,7 +30,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
+        Paragraph, Wrap,
+    },
 };
 use scaffl_config::Run;
 use scaffl_container::ServiceStatus;
@@ -248,7 +251,11 @@ fn render_group(
                 .bg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ");
+        .highlight_symbol("▶ ")
+        // Reserve the gutter for the indicator on every row so
+        // unselected items align with the selected one. Without this,
+        // changing selection horizontally shifts the rest of the list.
+        .highlight_spacing(HighlightSpacing::Always);
 
     let mut state = ListState::default();
     state.select(selected);
@@ -892,6 +899,11 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 
 // ─────────────────────── helpers ───────────────────────
 
+/// Standard padding inside any bordered panel: one column of breathing
+/// room on each horizontal edge, no vertical padding (panel content
+/// already manages its own line spacing).
+const PANEL_PADDING: Padding = Padding::new(1, 1, 0, 0);
+
 fn panel_block(title: &'static str) -> Block<'static> {
     Block::default()
         .title(Span::styled(
@@ -901,6 +913,7 @@ fn panel_block(title: &'static str) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
+        .padding(PANEL_PADDING)
 }
 
 fn panel_block_titled(title: Line<'static>) -> Block<'static> {
@@ -909,6 +922,7 @@ fn panel_block_titled(title: Line<'static>) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
+        .padding(PANEL_PADDING)
 }
 
 #[cfg(test)]
