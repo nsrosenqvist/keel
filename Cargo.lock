@@ -824,6 +824,7 @@ dependencies = [
  "scaffl-hooks",
  "scaffl-runtime",
  "scaffl-tui",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

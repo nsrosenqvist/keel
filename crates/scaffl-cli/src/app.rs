@@ -1,5 +1,6 @@
 //! CLI application wiring.
 
+use crate::commands;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use scaffl_config::Config;
@@ -33,15 +34,28 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// List available recipes.
+    /// List available recipes and scripts.
     #[command(alias = "ls")]
     List,
     /// Show how a name resolves (recipe, script, compose, service, none).
     Which { name: String },
+    /// Print the resolved project environment (process + .env + [env]).
+    Env,
+    /// Validate the configuration and report on backend / deps / env files.
+    Doctor,
+    /// Scaffold a starter scaffl.toml in the project root.
+    Init,
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
     init_tracing();
+
+    // `init` runs before config load — the whole point is to write the
+    // config that doesn't exist yet.
+    if matches!(cli.command, Some(Command::Init)) {
+        let project_root = locate_project_root(cli.project.as_deref())?;
+        return commands::init::run(&project_root);
+    }
 
     let project_root = locate_project_root(cli.project.as_deref())?;
     let config = load_config(&project_root)?;
@@ -51,6 +65,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         return match sub {
             Command::List => cmd_list(&cfg_arc),
             Command::Which { name } => cmd_which(&cfg_arc, &name),
+            Command::Env => commands::env::run(&cfg_arc, &project_root).await,
+            Command::Doctor => {
+                let code = commands::doctor::run(&cfg_arc, &project_root).await?;
+                std::process::exit(code);
+            }
+            Command::Init => unreachable!("handled above"),
         };
     }
 
