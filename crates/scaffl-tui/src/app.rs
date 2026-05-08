@@ -2,6 +2,7 @@
 //!
 //! The model and the controller. Pure functions — no terminal I/O here.
 
+use crate::palette::Palette;
 use crate::runner::RunState;
 use crate::services::ServicePane;
 use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
@@ -33,6 +34,13 @@ pub enum LaunchRejection {
     NotRunnable(String),
 }
 
+/// High-level UI mode. Controls how key events route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Palette,
+}
+
 /// TUI application state.
 pub struct App {
     config: Arc<Config>,
@@ -48,6 +56,8 @@ pub struct App {
     /// Last rejection / status banner (decays after a few seconds — kept
     /// simple by just clearing on the next successful action).
     pub flash: Option<String>,
+    mode: Mode,
+    palette: Option<Palette>,
 }
 
 impl App {
@@ -64,6 +74,8 @@ impl App {
             current_run: None,
             services,
             flash: None,
+            mode: Mode::Normal,
+            palette: None,
         }
     }
 
@@ -222,6 +234,42 @@ impl App {
         self.current_run = Some(run);
         self.flash = None;
         Ok(())
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub fn palette(&self) -> Option<&Palette> {
+        self.palette.as_ref()
+    }
+
+    pub fn open_palette(&mut self) {
+        self.mode = Mode::Palette;
+        self.palette = Some(Palette::new(&self.items));
+    }
+
+    pub fn close_palette(&mut self) {
+        self.mode = Mode::Normal;
+        self.palette = None;
+    }
+
+    pub fn palette_mut(&mut self) -> Option<&mut Palette> {
+        self.palette.as_mut()
+    }
+
+    /// Move the sidebar selection to the palette's current match and close
+    /// the palette. Returns true iff there was a match to confirm.
+    pub fn confirm_palette(&mut self) -> bool {
+        let Some(palette) = self.palette.as_ref() else {
+            return false;
+        };
+        let Some(m) = palette.selected_match() else {
+            return false;
+        };
+        self.selected = m.item_index;
+        self.close_palette();
+        true
     }
 
     pub fn drain_run(&mut self) {

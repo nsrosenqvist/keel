@@ -22,6 +22,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub mod app;
+pub mod palette;
 pub mod runner;
 pub mod services;
 pub mod ui;

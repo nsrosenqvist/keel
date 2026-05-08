@@ -1,6 +1,7 @@
 //! Rendering — pure function from [`App`] state to a ratatui [`Frame`].
 
-use crate::app::{App, ItemKind};
+use crate::app::{App, ItemKind, Mode};
+use crate::palette::Palette;
 use crate::runner::CapturedLine;
 use crate::services::ServicePane;
 use ratatui::{
@@ -8,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use scaffl_config::Run;
 use scaffl_container::ServiceStatus;
@@ -16,7 +17,7 @@ use scaffl_runtime::OutputStream;
 
 const SIDEBAR_RATIO: u16 = 25;
 const STATUS_BAR_HEIGHT: u16 = 1;
-const HOTKEY_HINTS: &str = "↑↓ navigate · g/G first/last · enter run · q quit";
+const HOTKEY_HINTS: &str = "↑↓ navigate · enter run · : palette · q quit";
 
 pub fn render(app: &App, frame: &mut Frame) {
     let outer = Layout::default()
@@ -52,6 +53,118 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 
     render_status(app, frame, outer[1]);
+
+    if app.mode() == Mode::Palette {
+        if let Some(palette) = app.palette() {
+            render_palette(app, palette, frame);
+        }
+    }
+}
+
+fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
+    let outer = frame.area();
+    let area = centered_rect(outer, 60, 16);
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" run … (Esc cancels) ")
+        .borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
+        .split(inner);
+
+    // Input line.
+    let input_line = Line::from(vec![
+        Span::styled("❯ ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            palette.input().to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("│", Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), layout[0]);
+
+    // Match list — show enough to fill the area, with the selected item
+    // marked. Names render with their kind tag so users know what they
+    // launch.
+    let visible = layout[1].height as usize;
+    let total = palette.matches().len();
+    let selected = palette.selected();
+    let (start, end) = window(selected, visible, total);
+
+    let lines: Vec<Line<'static>> = palette
+        .matches()
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end - start)
+        .map(|(idx, m)| {
+            let item = &app.items()[m.item_index];
+            let kind = match item.kind {
+                ItemKind::Recipe => "recipe",
+                ItemKind::Script => "script",
+                ItemKind::Service => "service",
+            };
+            let style = if idx == selected {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("  {:<24} ", item.name),
+                    style.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("[{kind}]"), style.fg(Color::DarkGray)),
+            ])
+        })
+        .collect();
+
+    let body = if lines.is_empty() {
+        vec![Line::from(Span::styled(
+            "  (no matches)".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        lines
+    };
+
+    frame.render_widget(Paragraph::new(body), layout[1]);
+}
+
+fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
+    let h = height.min(area.height);
+    let v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length((area.height.saturating_sub(h)) / 2),
+            Constraint::Length(h),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    let h_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(v[1]);
+    h_layout[1]
+}
+
+fn window(selected: usize, visible: usize, total: usize) -> (usize, usize) {
+    if total <= visible {
+        return (0, total);
+    }
+    let half = visible / 2;
+    let start = selected.saturating_sub(half).min(total - visible);
+    let end = (start + visible).min(total);
+    (start, end)
 }
 
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {

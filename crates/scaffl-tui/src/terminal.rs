@@ -72,7 +72,10 @@ fn handle_event(app: &mut App, event: Event) {
             code,
             modifiers,
             ..
-        }) => handle_key(app, code, modifiers),
+        }) => match app.mode() {
+            crate::app::Mode::Normal => handle_key_normal(app, code, modifiers),
+            crate::app::Mode::Palette => handle_key_palette(app, code, modifiers),
+        },
         Event::Resize(_, _) => {
             // The next draw call already adapts to the new size.
         }
@@ -80,7 +83,7 @@ fn handle_event(app: &mut App, event: Event) {
     }
 }
 
-fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
         if let KeyCode::Char('c') = code {
             app.quit();
@@ -94,9 +97,50 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Char('g') | KeyCode::Home => app.select_first(),
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
+        KeyCode::Char(':') => app.open_palette(),
         KeyCode::Enter => {
             if let Err(rejection) = app.try_launch_selected() {
                 app.flash = Some(launch_message(rejection));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Ctrl-c always quits.
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+
+    match code {
+        KeyCode::Esc => app.close_palette(),
+        KeyCode::Up | KeyCode::BackTab => {
+            if let Some(p) = app.palette_mut() {
+                p.select_prev();
+            }
+        }
+        KeyCode::Down | KeyCode::Tab => {
+            if let Some(p) = app.palette_mut() {
+                p.select_next();
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(p) = app.palette_mut() {
+                p.pop_char();
+            }
+        }
+        KeyCode::Enter => {
+            if app.confirm_palette() {
+                if let Err(rejection) = app.try_launch_selected() {
+                    app.flash = Some(launch_message(rejection));
+                }
+            }
+        }
+        KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(p) = app.palette_mut() {
+                p.push_char(c);
             }
         }
         _ => {}
@@ -191,7 +235,7 @@ mod tests {
     #[test]
     fn q_quits() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        handle_event(&mut app, press(KeyCode::Char('q')));
+        handle_key_normal(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
         assert!(app.should_quit());
     }
 
@@ -237,5 +281,48 @@ mod tests {
         handle_event(&mut app, press(KeyCode::Char('z')));
         assert_eq!(app.selected_index(), before);
         assert!(!app.should_quit());
+    }
+
+    #[test]
+    fn colon_opens_palette() {
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        handle_event(&mut app, press(KeyCode::Char(':')));
+        assert_eq!(app.mode(), crate::app::Mode::Palette);
+    }
+
+    #[test]
+    fn esc_in_palette_closes_it() {
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        app.open_palette();
+        handle_event(&mut app, press(KeyCode::Esc));
+        assert_eq!(app.mode(), crate::app::Mode::Normal);
+    }
+
+    #[test]
+    fn typing_in_palette_filters() {
+        let mut app =
+            app_with("[command.test]\nrun = \"true\"\n[command.migrate]\nrun = \"true\"\n");
+        app.open_palette();
+        handle_event(&mut app, press(KeyCode::Char('m')));
+        let palette = app.palette().unwrap();
+        let names: Vec<_> = palette
+            .matches()
+            .iter()
+            .map(|m| app.items()[m.item_index].name.clone())
+            .collect();
+        assert!(names.contains(&"migrate".to_string()));
+    }
+
+    #[test]
+    fn enter_in_palette_moves_selection() {
+        let mut app =
+            app_with("[command.test]\nrun = \"true\"\n[command.migrate]\nrun = \"true\"\n");
+        app.open_palette();
+        // Empty input: matches are in original (alphabetical) order:
+        // migrate then test. Move selection to migrate.
+        handle_event(&mut app, press(KeyCode::Enter));
+        // Confirm closes the palette and moves the sidebar selection.
+        assert_eq!(app.mode(), crate::app::Mode::Normal);
+        assert_eq!(app.items()[app.selected_index()].name, "migrate");
     }
 }
