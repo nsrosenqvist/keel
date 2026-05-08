@@ -132,6 +132,54 @@ impl ServicePane {
         drained
     }
 
+    /// Check whether the tail child has exited. If it exited non-zero
+    /// (typical "Cannot connect to the Docker daemon" / "no such
+    /// service" cases) promote the captured buffer into [`tail_error`]
+    /// so the renderer shows it on the padded error path instead of
+    /// the flush log buffer.
+    ///
+    /// On success-exit (e.g. the user stopped the service via
+    /// `compose stop`) we just drop the child reference so a fresh
+    /// `up` will re-attach.
+    pub fn poll_tail(&mut self) {
+        // Drain pending lines first — there may be a few left over from
+        // the child's stderr after it exited but before we noticed.
+        self.drain();
+
+        let Some(child) = self.tail_child.as_mut() else {
+            return;
+        };
+        let exited = match child.try_wait() {
+            Ok(Some(status)) => status,
+            _ => return,
+        };
+        // Take a final pass at the buffer in case the line readers
+        // raced the exit.
+        self.drain();
+        self.tail_child = None;
+
+        if !exited.success() {
+            // Use whatever the child managed to print as the error
+            // payload. The renderer wraps this on the padded path.
+            let combined: String = self
+                .buffer
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<&str>>()
+                .join("  ");
+            self.tail_error = Some(if combined.is_empty() {
+                let code = exited
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into());
+                format!("tail exited {code}")
+            } else {
+                combined
+            });
+            self.buffer.clear();
+        }
+    }
+
     /// Refresh the cached status if the last check is older than the
     /// status-refresh window (2 seconds).
     pub async fn refresh_status(&mut self, backend: &Arc<dyn Backend>) {

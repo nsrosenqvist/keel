@@ -356,11 +356,13 @@ impl App {
         }
     }
 
-    /// Drain output from every service pane. Cheap when nothing has
+    /// Drain output from every service pane and detect any tail
+    /// process that exited non-zero (so the error message gets
+    /// surfaced on the padded error path). Cheap when nothing has
     /// arrived; called on every pre-render hook.
     pub fn drain_services(&mut self) {
         for pane in self.services.values_mut() {
-            pane.drain();
+            pane.poll_tail();
         }
     }
 
