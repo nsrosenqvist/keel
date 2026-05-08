@@ -11,12 +11,15 @@
 
 use crate::env::Env;
 use crate::error::RuntimeError;
+use crate::sink::{InheritSink, OutputSink, OutputStream};
 use scaffl_config::{Config, Recipe, Run, ScriptCommand};
 use scaffl_container::{Backend, ExecOptions, ServiceStatus};
 use std::collections::HashSet;
 use std::path::Path;
 use std::pin::Pin;
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::OnceCell;
 use tracing::{debug, instrument};
@@ -34,6 +37,7 @@ pub struct Executor {
     config: Arc<Config>,
     project_root: Arc<Path>,
     base_env: Arc<OnceCell<Env>>,
+    sink: Arc<dyn OutputSink>,
 }
 
 impl Executor {
@@ -43,7 +47,17 @@ impl Executor {
             config,
             project_root: Arc::from(project_root),
             base_env: Arc::new(OnceCell::new()),
+            sink: Arc::new(InheritSink),
         }
+    }
+
+    /// Return a clone of this executor that uses `sink` for output capture
+    /// instead of inheriting stdio. Useful for the TUI, where each pane's
+    /// output is streamed into a per-pane buffer.
+    pub fn with_sink(&self, sink: Arc<dyn OutputSink>) -> Self {
+        let mut clone = self.clone();
+        clone.sink = sink;
+        clone
     }
 
     /// Resolve and cache the project base env (process + .env + `[env]`).
@@ -304,10 +318,59 @@ impl Executor {
         for (k, v) in env.iter() {
             cmd.env(k, v);
         }
-        let status = cmd
-            .status()
+        self.spawn_host(cmd).await
+    }
+
+    /// Run a [`Command`] on the host, honouring the configured
+    /// [`OutputSink`]: pipe-and-stream when the sink wants capture, or
+    /// inherit-and-await when it doesn't.
+    async fn spawn_host(&self, mut cmd: Command) -> Result<i32, RuntimeError> {
+        if !self.sink.capture() {
+            let status = cmd
+                .status()
+                .await
+                .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+            return Ok(status.code().unwrap_or(-1));
+        }
+
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::null());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let stdout_task = stdout.map(|s| {
+            let sink = Arc::clone(&self.sink);
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(s).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    sink.write_line(OutputStream::Stdout, &line);
+                }
+            })
+        });
+        let stderr_task = stderr.map(|s| {
+            let sink = Arc::clone(&self.sink);
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(s).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    sink.write_line(OutputStream::Stderr, &line);
+                }
+            })
+        });
+
+        let status = child
+            .wait()
             .await
             .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+        if let Some(t) = stdout_task {
+            let _ = t.await;
+        }
+        if let Some(t) = stderr_task {
+            let _ = t.await;
+        }
         Ok(status.code().unwrap_or(-1))
     }
 
@@ -344,11 +407,7 @@ impl Executor {
         for (k, v) in env.iter() {
             cmd.env(k, v);
         }
-        let status = cmd
-            .status()
-            .await
-            .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
-        Ok(status.code().unwrap_or(-1))
+        self.spawn_host(cmd).await
     }
 
     /// Run a passthrough through the backend (e.g. `compose ps`).
@@ -557,6 +616,37 @@ mod tests {
             log[1].1,
             vec!["echo".to_string(), "second".to_string(), "arg".to_string(),]
         );
+    }
+
+    #[tokio::test]
+    async fn host_recipe_with_channel_sink_streams_output() {
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let cfg = cfg(r#"
+            [command.echo]
+            run = "sh -c 'echo hi from stdout; echo oops 1>&2'"
+        "#);
+        let project_root = std::env::current_dir().unwrap();
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            cfg,
+            project_root.as_path(),
+        );
+
+        let (sink, mut rx) = crate::sink::ChannelSink::new_pair();
+        let exec = executor.with_sink(Arc::new(sink));
+        let code = exec.run_recipe("echo", &[]).await.unwrap();
+        assert_eq!(code, 0);
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            match line.stream {
+                crate::sink::OutputStream::Stdout => stdout.push(line.line),
+                crate::sink::OutputStream::Stderr => stderr.push(line.line),
+            }
+        }
+        assert_eq!(stdout, vec!["hi from stdout"]);
+        assert_eq!(stderr, vec!["oops"]);
     }
 
     #[tokio::test]
