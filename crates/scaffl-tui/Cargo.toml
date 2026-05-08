@@ -1,0 +1,20 @@
+[package]
+name = "scaffl-tui"
+description = "Embedded TUI dashboard for scaffl (stub; implementation pending Phase 3)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+scaffl-config = { workspace = true }
+scaffl-runtime = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+nucleo-matcher = { workspace = true }
+thiserror = { workspace = true }

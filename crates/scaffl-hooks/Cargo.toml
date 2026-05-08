@@ -1,0 +1,17 @@
+[package]
+name = "scaffl-hooks"
+description = "Git hook installation and pre-commit-config compatibility (stub; Phase 4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[dependencies]
+scaffl-config = { workspace = true }
+serde = { workspace = true }
+serde_yaml_ng = { workspace = true }
+thiserror = { workspace = true }

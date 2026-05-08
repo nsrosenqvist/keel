@@ -1,0 +1,92 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/scaffl-cli",
+    "crates/scaffl-config",
+    "crates/scaffl-container",
+    "crates/scaffl-runtime",
+    "crates/scaffl-tui",
+    "crates/scaffl-hooks",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Niklas Rosenqvist"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/niklasrosenqvist/scaffl"
+homepage = "https://github.com/niklasrosenqvist/scaffl"
+readme = "README.md"
+
+[workspace.dependencies]
+# Internal crates
+scaffl-config = { path = "crates/scaffl-config", version = "0.0.1" }
+scaffl-container = { path = "crates/scaffl-container", version = "0.0.1" }
+scaffl-runtime = { path = "crates/scaffl-runtime", version = "0.0.1" }
+scaffl-hooks = { path = "crates/scaffl-hooks", version = "0.0.1" }
+scaffl-tui = { path = "crates/scaffl-tui", version = "0.0.1" }
+
+# Errors / utilities
+thiserror = "2"
+anyhow = "1"
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_yaml_ng = "0.10"
+
+# Async
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "io-util",
+    "fs",
+    "signal",
+    "time",
+    "sync",
+] }
+tokio-stream = "0.1"
+async-trait = "0.1"
+futures = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive", "wrap_help"] }
+comfy-table = "7"
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+nucleo-matcher = "0.3"
+
+# Filesystem / discovery
+notify = "7"
+globset = "0.4"
+which = "7"
+shell-escape = "0.1"
+dirs = "5"
+walkdir = "2"
+
+# Tracing / logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Testing
+insta = { version = "1", features = ["yaml"] }
+tempfile = "3"
+pretty_assertions = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
+opt-level = 3
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+# Faster test compiles, with optimizations on heavy deps
+[profile.dev.package."*"]
+opt-level = 1

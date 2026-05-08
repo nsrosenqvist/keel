@@ -1,0 +1,29 @@
+[package]
+name = "scaffl-cli"
+description = "CLI binary for scaffl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+
+[[bin]]
+name = "scaffl"
+path = "src/main.rs"
+
+[dependencies]
+scaffl-config = { workspace = true }
+scaffl-container = { workspace = true }
+scaffl-runtime = { workspace = true }
+scaffl-tui = { workspace = true }
+scaffl-hooks = { workspace = true }
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+comfy-table = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
