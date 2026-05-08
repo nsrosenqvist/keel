@@ -1,0 +1,24 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# scaffl per-developer overrides
+.scaffl/local.toml
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+*.profraw
+tarpaulin-report.html
+
+# Logs
+*.log
