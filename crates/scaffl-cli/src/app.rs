@@ -1,7 +1,12 @@
 //! CLI application wiring.
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use scaffl_config::Config;
+use scaffl_container::{Backend, compose::ComposeBackend};
+use scaffl_runtime::{Executor, Resolution, Resolver, ResolverContext};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -12,19 +17,42 @@ use clap::Parser;
 pub struct Cli {
     /// Path to the project root (default: search upward from cwd).
     #[arg(long, global = true)]
-    pub project: Option<std::path::PathBuf>,
+    pub project: Option<PathBuf>,
 
     /// Print the resolution path without executing.
     #[arg(long, global = true)]
     pub explain: bool,
 
-    /// Subcommand or recipe name. Falls through to runtime dispatch.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    /// Recipe name and args; used when no explicit subcommand is given.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// List available recipes.
+    #[command(alias = "ls")]
+    List,
+    /// Show how a name resolves (recipe, script, compose, service, none).
+    Which { name: String },
+}
+
 pub async fn run(cli: Cli) -> Result<()> {
     init_tracing();
+
+    let project_root = locate_project_root(cli.project.as_deref())?;
+    let config = load_config(&project_root)?;
+    let cfg_arc = Arc::new(config);
+
+    if let Some(sub) = cli.command {
+        return match sub {
+            Command::List => cmd_list(&cfg_arc),
+            Command::Which { name } => cmd_which(&cfg_arc, &name),
+        };
+    }
 
     if cli.args.is_empty() {
         // TODO: open the TUI dashboard once `scaffl-tui` ships its app.
@@ -32,25 +60,118 @@ pub async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    let project_root = locate_project_root(cli.project.as_deref())?;
-    let config_path = project_root.join("scaffl.toml");
+    let (name, rest) = split_args(&cli.args);
 
-    let config = if config_path.exists() {
-        scaffl_config::load_from_path(&config_path)
-            .with_context(|| format!("load {}", config_path.display()))?
-    } else {
-        scaffl_config::Config::default()
-    };
+    let ctx = ResolverContext::default();
+    let resolver = Resolver::new(&cfg_arc, ctx);
+    let resolution = resolver.resolve(name);
 
-    println!(
-        "scaffl: project = {}, recipes = {}",
-        project_root.display(),
-        config.commands.len()
-    );
     if cli.explain {
-        println!("(--explain not yet implemented)");
+        return print_explain(name, &resolution);
+    }
+
+    match resolution {
+        Resolution::Builtin(b) => {
+            anyhow::bail!("built-in `{b}` not yet implemented");
+        }
+        Resolution::Recipe(recipe_name) => {
+            let backend = build_backend(&cfg_arc).await?;
+            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let owned = recipe_name.to_string();
+            let code = executor.run_recipe(&owned, rest).await?;
+            std::process::exit(code);
+        }
+        Resolution::Script(_) => {
+            anyhow::bail!("script-based recipes are pending implementation");
+        }
+        Resolution::ComposePassthrough(sub) => {
+            let backend = build_backend(&cfg_arc).await?;
+            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let mut argv: Vec<&str> = vec![sub];
+            argv.extend(rest.iter().map(String::as_str));
+            let code = executor.passthrough(&argv).await?;
+            std::process::exit(code);
+        }
+        Resolution::ServiceExec(service) => {
+            let backend = build_backend(&cfg_arc).await?;
+            let executor = Executor::new(backend, Arc::clone(&cfg_arc), &project_root);
+            let argv: Vec<&str> = rest.iter().map(String::as_str).collect();
+            let code = executor.service_exec(service, &argv, true).await?;
+            std::process::exit(code);
+        }
+        Resolution::Unknown { suggestion } => {
+            if let Some(s) = suggestion {
+                anyhow::bail!("no such command `{name}` — did you mean `{s}`?");
+            }
+            anyhow::bail!("no such command `{name}`");
+        }
+    }
+}
+
+fn cmd_list(config: &Config) -> Result<()> {
+    use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
+
+    if config.commands.is_empty() {
+        println!("No recipes defined in scaffl.toml.");
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec!["recipe", "in", "description"]);
+    for (name, recipe) in &config.commands {
+        table.add_row(vec![
+            name.clone(),
+            recipe.service.clone().unwrap_or_else(|| "host".into()),
+            recipe.desc.clone().unwrap_or_default(),
+        ]);
+    }
+    println!("{table}");
+    Ok(())
+}
+
+fn cmd_which(config: &Config, name: &str) -> Result<()> {
+    let resolver = Resolver::new(config, ResolverContext::default());
+    print_explain(name, &resolver.resolve(name))
+}
+
+fn print_explain(name: &str, resolution: &Resolution<'_>) -> Result<()> {
+    match resolution {
+        Resolution::Builtin(b) => println!("{name} → built-in `{b}`"),
+        Resolution::Recipe(_) => println!("{name} → recipe in scaffl.toml"),
+        Resolution::Script(_) => println!("{name} → script in .scaffl/commands/"),
+        Resolution::ComposePassthrough(_) => println!("{name} → docker compose passthrough"),
+        Resolution::ServiceExec(_) => println!("{name} → exec into compose service"),
+        Resolution::Unknown {
+            suggestion: Some(s),
+        } => {
+            println!("{name} → unknown (did you mean `{s}`?)")
+        }
+        Resolution::Unknown { suggestion: None } => println!("{name} → unknown"),
     }
     Ok(())
+}
+
+fn split_args(args: &[String]) -> (&str, &[String]) {
+    let (head, tail) = args.split_first().expect("non-empty args");
+    (head.as_str(), tail)
+}
+
+async fn build_backend(_config: &Config) -> Result<Arc<dyn Backend>> {
+    let backend = ComposeBackend::detect()
+        .await
+        .context("detect compose backend")?;
+    Ok(Arc::new(backend))
+}
+
+fn load_config(project_root: &Path) -> Result<Config> {
+    let path = project_root.join("scaffl.toml");
+    if !path.exists() {
+        return Ok(Config::default());
+    }
+    scaffl_config::load_from_path(&path).with_context(|| format!("load {}", path.display()))
 }
 
 fn init_tracing() {
@@ -63,7 +184,7 @@ fn init_tracing() {
         .try_init();
 }
 
-fn locate_project_root(explicit: Option<&std::path::Path>) -> Result<std::path::PathBuf> {
+fn locate_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
@@ -73,7 +194,6 @@ fn locate_project_root(explicit: Option<&std::path::Path>) -> Result<std::path::
             return Ok(cur);
         }
         if !cur.pop() {
-            // No marker found — fall back to the original cwd.
             return Ok(std::env::current_dir()?);
         }
     }
