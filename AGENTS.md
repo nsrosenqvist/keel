@@ -197,7 +197,7 @@ at config-load time). The TUI sidebar tags each row with its
 backend kind; the keymap (`r` / `R` / `s` / `S` / `U` / `D`)
 operates uniformly across all kinds.
 
-`[runtime] backend = "none"` plus only `[[services.systemd]]` /
+`[containers] backend = "none"` plus only `[[services.systemd]]` /
 `[[services.custom]]` declarations is fully supported — useful
 when the project's stack is entirely host-managed.
 

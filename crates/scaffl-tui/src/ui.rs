@@ -577,7 +577,7 @@ fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "set runtime.backend = \"compose\" in scaffl.toml",
+                "set containers.backend = \"compose\" in scaffl.toml",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(

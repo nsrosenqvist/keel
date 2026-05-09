@@ -15,8 +15,12 @@ pub struct Config {
     #[serde(default)]
     pub project: ProjectConfig,
 
+    /// Container-runtime configuration (compose / podman / docker /
+    /// none). Co-exists with `[[services.custom]]` and
+    /// `[[services.systemd]]`; the registry combines them into a
+    /// single backend at runtime.
     #[serde(default)]
-    pub runtime: RuntimeConfig,
+    pub containers: ContainersConfig,
 
     /// Project-level environment variable defaults and resolution rules.
     #[serde(default)]
@@ -277,9 +281,15 @@ pub struct ProjectConfig {
     pub description: Option<String>,
 }
 
+/// Container-runtime configuration: which backend to talk to
+/// (compose / podman / docker / none) plus passthrough toggles.
+/// Renamed from `RuntimeConfig` when the schema grew non-container
+/// service kinds (`services.custom`, `services.systemd`) — the
+/// section now describes container-specific behaviour, not "the
+/// runtime" globally.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct RuntimeConfig {
+pub struct ContainersConfig {
     #[serde(default = "default_backend")]
     pub backend: Backend,
 
@@ -293,7 +303,7 @@ pub struct RuntimeConfig {
     pub service_passthrough: bool,
 }
 
-impl Default for RuntimeConfig {
+impl Default for ContainersConfig {
     fn default() -> Self {
         Self {
             backend: default_backend(),
@@ -918,10 +928,10 @@ mod tests {
     }
 
     #[test]
-    fn defaults_runtime_when_section_missing() {
+    fn defaults_containers_when_section_missing() {
         let cfg: Config = toml::from_str("").unwrap();
-        assert_eq!(cfg.runtime.backend, Backend::Compose);
-        assert!(cfg.runtime.compose_passthrough);
-        assert!(cfg.runtime.service_passthrough);
+        assert_eq!(cfg.containers.backend, Backend::Compose);
+        assert!(cfg.containers.compose_passthrough);
+        assert!(cfg.containers.service_passthrough);
     }
 }

@@ -99,7 +99,7 @@ pub trait Backend: Send + Sync {
     /// [`OutputSink`]: scaffl-runtime::OutputSink
     async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "no container backend configured (set runtime.backend = \"compose\" in scaffl.toml)"
+            "no container backend configured (set containers.backend = \"compose\" in scaffl.toml)"
                 .into(),
         ))
     }
@@ -127,7 +127,7 @@ pub trait Backend: Send + Sync {
         _services: &[&str],
     ) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "no container backend configured (set runtime.backend = \"compose\")".into(),
+            "no container backend configured (set containers.backend = \"compose\")".into(),
         ))
     }
 }

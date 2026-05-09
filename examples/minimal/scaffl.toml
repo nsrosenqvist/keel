@@ -3,7 +3,7 @@
 [project]
 name = "minimal"
 
-[runtime]
+[containers]
 backend = "none"
 
 [command.greet]

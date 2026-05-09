@@ -91,7 +91,7 @@ pub async fn run(config: &Config, project_root: &Path) -> Result<i32> {
 
 async fn check_backend(config: &Config) -> Vec<Finding> {
     use scaffl_config::model::Backend as B;
-    match config.runtime.backend {
+    match config.containers.backend {
         B::None => vec![Finding::ok(
             "backend: none (no container backend configured)",
         )],
@@ -103,7 +103,7 @@ async fn check_backend(config: &Config) -> Vec<Finding> {
         },
         B::Docker | B::Podman => vec![Finding::warn(format!(
             "backend: `{:?}` is configured but only `compose` is implemented in this version",
-            config.runtime.backend
+            config.containers.backend
         ))],
     }
 }
@@ -166,7 +166,10 @@ fn check_dependency_graph(config: &Config) -> Vec<Finding> {
 
 fn check_service_hints(config: &Config) -> Vec<Finding> {
     use scaffl_config::model::Backend as B;
-    if !matches!(config.runtime.backend, B::Compose | B::Docker | B::Podman) {
+    if !matches!(
+        config.containers.backend,
+        B::Compose | B::Docker | B::Podman
+    ) {
         return Vec::new();
     }
     // We can't read docker-compose.yaml here without a YAML parser. So we

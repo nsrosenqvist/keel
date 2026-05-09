@@ -71,7 +71,7 @@ The binary is named `scaffl`.
 [project]
 name = "myapp"
 
-[runtime]
+[containers]
 backend = "compose"
 default_service = "app"
 compose_passthrough = true

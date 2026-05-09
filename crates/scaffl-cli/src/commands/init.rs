@@ -81,7 +81,7 @@ fn render_template(root: &Path, signals: &Signals) -> String {
 
     out.push_str(&format!("[project]\nname = \"{project_name}\"\n\n"));
 
-    out.push_str("[runtime]\n");
+    out.push_str("[containers]\n");
     if signals.compose {
         out.push_str("backend = \"compose\"\n");
         out.push_str("# default_service = \"app\"\n");
@@ -160,7 +160,7 @@ fn laravel_template(name: &str) -> String {
 [project]
 name = "{name}"
 
-[runtime]
+[containers]
 backend             = "compose"
 default_service     = "app"
 compose_passthrough = true
@@ -240,7 +240,7 @@ fn rails_template(name: &str) -> String {
 [project]
 name = "{name}"
 
-[runtime]
+[containers]
 backend             = "compose"
 default_service     = "web"
 compose_passthrough = true
@@ -299,7 +299,7 @@ fn node_template(name: &str) -> String {
 [project]
 name = "{name}"
 
-[runtime]
+[containers]
 backend = "none"
 
 [env_files]
@@ -339,7 +339,7 @@ fn rust_template(name: &str) -> String {
 [project]
 name = "{name}"
 
-[runtime]
+[containers]
 backend = "none"
 
 [command.build]

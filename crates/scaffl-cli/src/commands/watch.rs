@@ -147,7 +147,7 @@ fn format_paths(paths: &[PathBuf]) -> String {
 
 async fn build_backend(config: &Config) -> Arc<dyn Backend> {
     use scaffl_config::model::Backend as B;
-    match config.runtime.backend {
+    match config.containers.backend {
         B::Compose => match ComposeBackend::detect().await {
             Ok(b) => Arc::new(b),
             Err(_) => Arc::new(scaffl_container::null::NullBackend),
