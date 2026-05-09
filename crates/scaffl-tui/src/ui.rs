@@ -235,10 +235,18 @@ fn render_group(
         .map(|item| {
             let glyph = glyph_for(item.kind);
             let glyph_style = item_indicator_style(app, item);
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!("{glyph} "), glyph_style),
                 Span::raw(item.name.clone()),
-            ]))
+            ];
+            if let Some(badge) = service_backend_badge(app, item) {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    badge,
+                    Style::default().fg(Color::DarkGray).dim(),
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -259,6 +267,24 @@ fn render_group(
     let mut state = ListState::default();
     state.select(selected);
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// Returns a tiny tag for service rows whose backend isn't compose,
+/// so the user can see at a glance which lifecycle each service
+/// belongs to. Compose services get no badge — they're the default
+/// and visual noise on the most common case isn't worth it.
+fn service_backend_badge(app: &App, item: &Item) -> Option<&'static str> {
+    if item.kind != ItemKind::Service {
+        return None;
+    }
+    let cfg = app.config();
+    if cfg.services.systemd.iter().any(|s| s.name == item.name) {
+        return Some("systemd");
+    }
+    if cfg.services.custom.iter().any(|s| s.name == item.name) {
+        return Some("custom");
+    }
+    None
 }
 
 fn glyph_for(kind: ItemKind) -> &'static str {

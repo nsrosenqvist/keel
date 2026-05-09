@@ -57,6 +57,7 @@ pub async fn run(config: &Config, project_root: &Path) -> Result<i32> {
     findings.extend(check_env_files(config, project_root));
     findings.extend(check_dependency_graph(config));
     findings.extend(check_service_hints(config));
+    findings.extend(check_custom_services(config).await);
     findings.extend(check_worktree(config, project_root).await);
 
     let mut had_fail = false;
@@ -186,6 +187,76 @@ fn check_service_hints(config: &Config) -> Vec<Finding> {
         vec![Finding::ok(format!(
             "{with_service} command(s) target a container service (verify with `compose ps`)"
         ))]
+    }
+}
+
+/// Probe each declared custom / systemd service: run its status
+/// command (or the systemd `is-active` equivalent) and report the
+/// outcome. We don't fail the project on a stopped service — the
+/// whole point of a status check is "tell me whether it's running"
+/// — but a missing systemctl binary or unknown unit gets surfaced
+/// as a warning so the user has a chance to fix the config.
+async fn check_custom_services(config: &Config) -> Vec<Finding> {
+    use scaffl_runtime::services::{from_custom, from_systemd};
+
+    let mut findings = Vec::new();
+    let mut entries = Vec::new();
+    for svc in &config.services.custom {
+        entries.push(("custom", from_custom(svc)));
+    }
+    for svc in &config.services.systemd {
+        entries.push(("systemd", from_systemd(svc)));
+    }
+    if entries.is_empty() {
+        return findings;
+    }
+
+    for (kind, entry) in &entries {
+        match probe_status(&entry.status_cmd).await {
+            ProbeResult::Running => {
+                findings.push(Finding::ok(format!(
+                    "{kind} service `{}`: running",
+                    entry.name
+                )));
+            }
+            ProbeResult::Stopped(code) => {
+                findings.push(Finding::ok(format!(
+                    "{kind} service `{}`: stopped (status exit {code})",
+                    entry.name
+                )));
+            }
+            ProbeResult::SpawnFailed(msg) => {
+                findings.push(Finding::warn(format!(
+                    "{kind} service `{}`: status command failed to spawn ({msg})",
+                    entry.name
+                )));
+            }
+        }
+    }
+    findings
+}
+
+enum ProbeResult {
+    Running,
+    Stopped(i32),
+    SpawnFailed(String),
+}
+
+async fn probe_status(cmd: &str) -> ProbeResult {
+    use std::process::Stdio;
+    use tokio::process::Command;
+    match Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .status()
+        .await
+    {
+        Ok(s) if s.success() => ProbeResult::Running,
+        Ok(s) => ProbeResult::Stopped(s.code().unwrap_or(-1)),
+        Err(e) => ProbeResult::SpawnFailed(e.to_string()),
     }
 }
 
