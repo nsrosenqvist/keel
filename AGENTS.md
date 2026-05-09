@@ -130,6 +130,41 @@ Use this instead of shell math in `from_command`.
   With `--local`, writes to `.scaffl/local.toml` (per-developer, this
   checkout only).
 
+### Materialising worktree env into `.env`
+
+The `[env]` arithmetic is only visible inside scaffl's process tree.
+Tools invoked outside scaffl (`docker compose up` directly, IDE-launched
+servers, `bin/rails s`, `npm run dev`, …) read `.env` and don't see the
+worktree-derived values.
+
+`scaffl env --write [PATH]` materialises the resolved env into a dotenv
+file as a `# >>> scaffl-managed >>>` block. User content above and
+below the markers is preserved; the block is replaced in place on each
+write.
+
+Wire it to the git lifecycle so it stays in sync with the active
+branch:
+
+```toml
+# scaffl.toml
+[hooks]
+post-checkout = ["env-rewrite"]
+post-merge    = ["env-rewrite"]
+
+[command.env-rewrite]
+desc = "Refresh .env worktree-derived values"
+run  = "scaffl env --write .env"
+```
+
+Then once:
+
+```sh
+scaffl hooks install --stages post-checkout,post-merge
+```
+
+After every branch switch / pull, `.env` carries the right
+`APP_PORT`, `COMPOSE_PROJECT_NAME`, etc. for that worktree.
+
 ## Layout
 
 ```

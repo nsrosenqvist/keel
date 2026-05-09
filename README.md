@@ -41,7 +41,12 @@ whole stack from a built-in TUI.
   = "SCAFFL_WORKTREE_OFFSET"` make ports vary per worktree
   automatically. `COMPOSE_PROJECT_NAME` is auto-set so two checkouts
   of the same project can run side-by-side. Pin specific worktrees
-  with `scaffl worktree assign <slug> <n>`.
+  with `scaffl worktree assign <slug> <n>`. `scaffl env --write .env`
+  materialises the resolved values into dotenv (with a managed block
+  that preserves user content) so non-scaffl tools (IDEs, raw
+  `docker compose up`, `bin/rails s`) see them too — wire it to
+  `post-checkout` / `post-merge` for automatic refresh on branch
+  switch.
 
 ## Install
 

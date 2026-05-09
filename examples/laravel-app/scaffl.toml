@@ -120,7 +120,16 @@ run  = ["check:frontend", "check:backend"]
 # ----- Hooks -----
 
 [hooks]
-pre-commit = ["check"]
+pre-commit    = ["check"]
+# Keep `.env` in sync with the active worktree's offset / slug so any
+# tool reading dotenv (compose, IDEs, rails, …) sees the right values.
+# Install these once with: scaffl hooks install --stages post-checkout,post-merge
+post-checkout = ["env-rewrite"]
+post-merge    = ["env-rewrite"]
+
+[command.env-rewrite]
+desc = "Refresh .env worktree-derived values"
+run  = "scaffl env --write .env"
 
 # ----- TUI panes (Phase 5+ wiring) -----
 
