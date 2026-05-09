@@ -45,6 +45,8 @@ pub enum Mode {
     Palette,
     /// A modal confirmation is open — keys route to its dialog.
     Confirm,
+    /// An args prompt is open for a `forward_args = true` row.
+    ArgsPrompt,
 }
 
 /// Composite key for the per-row run map. Recipe / Script names can
@@ -69,6 +71,15 @@ pub struct ConfirmDialog {
 pub enum ConfirmAction {
     /// Abort the named run and relaunch it.
     KillAndRestart { key: RunKey },
+}
+
+/// Open args prompt for a `forward_args = true` row. Only one is
+/// open at a time; selection is locked while the prompt is up.
+#[derive(Debug, Clone)]
+pub struct ArgsPrompt {
+    pub item_name: String,
+    pub kind: ItemKind,
+    pub input: String,
 }
 
 /// TUI application state.
@@ -107,6 +118,9 @@ pub struct App {
     /// Open confirmation dialog, if any. Routes keys when
     /// `mode == Confirm`.
     confirm: Option<ConfirmDialog>,
+    /// Open args prompt, if any. Routes keys when
+    /// `mode == ArgsPrompt`.
+    args_prompt: Option<ArgsPrompt>,
 }
 
 impl App {
@@ -128,6 +142,7 @@ impl App {
             mode: Mode::Normal,
             palette: None,
             confirm: None,
+            args_prompt: None,
         }
     }
 
@@ -256,12 +271,25 @@ impl App {
         self.lifecycle_run.as_ref()
     }
 
-    /// Try to launch the currently selected item. Returns [`LaunchRejection`]
-    /// when the launch can't proceed; the caller renders the reason as a
-    /// flash message. If the selected item is already running, returns
-    /// [`LaunchRejection::AlreadyRunning`] — the caller is expected to
-    /// open the kill-and-restart confirmation modal in that case.
+    /// Try to launch the currently selected item with no extra args.
+    /// Thin wrapper over [`Self::try_launch_selected_with_args`]; kept
+    /// for callers that don't need to pass anything.
     pub fn try_launch_selected(&mut self) -> Result<(), LaunchRejection> {
+        self.try_launch_selected_with_args(Vec::new())
+    }
+
+    /// Launch the currently selected item, forwarding `args` to it.
+    /// Args reach the recipe / script via the same `forward_args =
+    /// true` mechanism the CLI uses — the engine appends them to the
+    /// argv after `shell_words` parses the run string.
+    ///
+    /// Returns [`LaunchRejection`] when the launch can't proceed.
+    /// [`LaunchRejection::AlreadyRunning`] is the signal to open the
+    /// kill-and-restart confirmation modal.
+    pub fn try_launch_selected_with_args(
+        &mut self,
+        args: Vec<String>,
+    ) -> Result<(), LaunchRejection> {
         let item = self
             .selected_item()
             .ok_or_else(|| LaunchRejection::NotRunnable("no selection".into()))?
@@ -271,11 +299,7 @@ impl App {
         // single-slot `current_run` check. Different rows can run
         // concurrently; only the same row collides with itself.
         let key: RunKey = (item.kind, item.name.clone());
-        if self
-            .runs
-            .get(&key)
-            .is_some_and(|r| !r.is_done())
-        {
+        if self.runs.get(&key).is_some_and(|r| !r.is_done()) {
             return Err(LaunchRejection::AlreadyRunning);
         }
 
@@ -324,7 +348,7 @@ impl App {
             }
         }
 
-        let run = RunState::spawn(&executor, item.name, Vec::new());
+        let run = RunState::spawn(&executor, item.name, args);
         self.runs.insert(key, run);
         self.flash = None;
         Ok(())
@@ -373,18 +397,42 @@ impl App {
         self.palette.as_mut()
     }
 
-    /// Move the sidebar selection to the palette's current match and close
-    /// the palette. Returns true iff there was a match to confirm.
-    pub fn confirm_palette(&mut self) -> bool {
-        let Some(palette) = self.palette.as_ref() else {
-            return false;
-        };
-        let Some(m) = palette.selected_match() else {
-            return false;
-        };
-        self.selected = m.item_index;
+    /// Resolve the palette: select the matched row, close the palette,
+    /// and launch the row with any args parsed from the palette input.
+    /// `:echo-args foo bar` lands as a launch of `echo-args` with
+    /// `["foo", "bar"]`. Returns the launch outcome:
+    ///   - `None` when there was no match to confirm
+    ///   - `Some(Ok(()))` on a clean launch
+    ///   - `Some(Err(rej))` on a rejection the caller should flash
+    ///
+    /// `LaunchRejection::AlreadyRunning` is returned as-is; the caller
+    /// is expected to open the kill-and-restart modal.
+    pub fn confirm_palette(&mut self) -> Option<Result<(), LaunchRejection>> {
+        let palette = self.palette.as_ref()?;
+        let m = palette.selected_match()?;
+        let args = palette.parsed_args();
+        let item_idx = m.item_index;
         self.close_palette();
-        true
+        self.selected = item_idx;
+
+        // Services have their own action wiring (Enter = up). The
+        // palette excludes services from candidates, but we re-check
+        // here as a safety net so a config edit during the palette's
+        // lifetime can't crash the launch path.
+        let item = self.items.get(item_idx).cloned()?;
+        if matches!(item.kind, ItemKind::Service | ItemKind::Watcher) {
+            let kind = match item.kind {
+                ItemKind::Service => "service",
+                ItemKind::Watcher => "watcher",
+                _ => unreachable!(),
+            };
+            return Some(Err(LaunchRejection::NotRunnable(format!(
+                "{kind} `{}` can't be launched from the palette",
+                item.name
+            ))));
+        }
+
+        Some(self.try_launch_selected_with_args(args))
     }
 
     /// Open a kill-and-restart confirmation for the selected row. Sets
@@ -424,6 +472,87 @@ impl App {
     /// user accepted (`accept = true`) or simply dismissing otherwise.
     /// Returns the rejection (if any) from the resulting action so
     /// the caller can flash it.
+    /// Whether the selected row is a `forward_args = true` recipe or
+    /// script. Used by the keymap to decide whether Enter opens the
+    /// args prompt or just launches.
+    pub fn selected_accepts_args(&self) -> bool {
+        let Some(item) = self.selected_item() else {
+            return false;
+        };
+        match item.kind {
+            ItemKind::Recipe => self
+                .config
+                .commands
+                .get(&item.name)
+                .is_some_and(|r| r.forward_args),
+            ItemKind::Script => self
+                .config
+                .scripts
+                .get(&item.name)
+                .is_some_and(|s| s.forward_args),
+            _ => false,
+        }
+    }
+
+    /// Open the args prompt for the selected row. No-op if the row
+    /// doesn't accept args (callers gate via `selected_accepts_args`).
+    pub fn open_args_prompt(&mut self) {
+        let Some(item) = self.selected_item().cloned() else {
+            return;
+        };
+        if !self.selected_accepts_args() {
+            return;
+        }
+        self.args_prompt = Some(ArgsPrompt {
+            item_name: item.name,
+            kind: item.kind,
+            input: String::new(),
+        });
+        self.mode = Mode::ArgsPrompt;
+    }
+
+    pub fn args_prompt(&self) -> Option<&ArgsPrompt> {
+        self.args_prompt.as_ref()
+    }
+
+    pub fn args_prompt_push_char(&mut self, c: char) {
+        if let Some(p) = self.args_prompt.as_mut() {
+            p.input.push(c);
+        }
+    }
+
+    pub fn args_prompt_pop_char(&mut self) {
+        if let Some(p) = self.args_prompt.as_mut() {
+            p.input.pop();
+        }
+    }
+
+    /// Resolve the args prompt: launch the row when `accept = true`,
+    /// dismiss otherwise. Tokenises the input shell-style; returns
+    /// the launch outcome (mirroring [`Self::confirm_palette`]).
+    pub fn args_prompt_resolve(&mut self, accept: bool) -> Option<Result<(), LaunchRejection>> {
+        let prompt = self.args_prompt.take()?;
+        self.mode = Mode::Normal;
+        if !accept {
+            return None;
+        }
+        let args = if prompt.input.trim().is_empty() {
+            Vec::new()
+        } else {
+            shell_words::split(&prompt.input).unwrap_or_default()
+        };
+        // Re-select in case the user navigated mid-prompt (key handler
+        // shouldn't allow it, but defensive).
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|i| i.kind == prompt.kind && i.name == prompt.item_name)
+        {
+            self.selected = idx;
+        }
+        Some(self.try_launch_selected_with_args(args))
+    }
+
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
         let d = self.confirm.take()?;
         self.mode = Mode::Normal;
@@ -435,7 +564,10 @@ impl App {
                 // Re-select the row the dialog was opened for, so
                 // force_relaunch_selected operates on the right one
                 // even if the user navigated mid-dialog.
-                if let Some(idx) = self.items.iter().position(|i| i.kind == key.0 && i.name == key.1)
+                if let Some(idx) = self
+                    .items
+                    .iter()
+                    .position(|i| i.kind == key.0 && i.name == key.1)
                 {
                     self.selected = idx;
                 }

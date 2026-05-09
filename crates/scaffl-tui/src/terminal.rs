@@ -94,6 +94,7 @@ async fn handle_event(app: &mut App, event: Event) {
                 crate::app::Mode::Normal => handle_key_normal(app, code, modifiers).await,
                 crate::app::Mode::Palette => handle_key_palette(app, code, modifiers).await,
                 crate::app::Mode::Confirm => handle_key_confirm(app, code, modifiers),
+                crate::app::Mode::ArgsPrompt => handle_key_args_prompt(app, code, modifiers),
             }
         }
         Event::Resize(_, _) => {
@@ -199,8 +200,8 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Enter => {
             // Enter routing:
             //   service           → up that service via lifecycle action
-            //   recipe / script   → launch its run; if the row is already
-            //                       running, open the kill-and-restart modal
+            //   recipe / script   → either open args prompt (if forward_args
+            //                       and not already running) or launch
             //   watcher           → no-op (watchers fire on file change)
             if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
                 if let Err(rej) = app
@@ -209,6 +210,11 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 {
                     app.flash = Some(launch_message(rej));
                 }
+            } else if app.selected_accepts_args() && !selected_is_running(app) {
+                // Discoverability path: a `forward_args = true` row gets
+                // a prompt so users see they can pass args. Power users
+                // bypass via the palette (`:cmd foo bar`).
+                app.open_args_prompt();
             } else {
                 match app.try_launch_selected() {
                     Ok(()) => {}
@@ -249,9 +255,20 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
                 p.pop_char();
             }
         }
-        KeyCode::Enter if app.confirm_palette() => {
-            if let Err(rejection) = app.try_launch_selected() {
-                app.flash = Some(launch_message(rejection));
+        KeyCode::Enter => {
+            // Palette confirm now drives the launch directly so it can
+            // forward args parsed from the input. The handler returns
+            // None when there's no match (the keypress is ignored — the
+            // palette stays open and the user keeps typing).
+            match app.confirm_palette() {
+                Some(Ok(())) => {}
+                Some(Err(crate::app::LaunchRejection::AlreadyRunning)) => {
+                    app.open_kill_restart_confirm();
+                }
+                Some(Err(rej)) => {
+                    app.flash = Some(launch_message(rej));
+                }
+                None => {}
             }
         }
         KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
@@ -259,6 +276,38 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
                 p.push_char(c);
             }
         }
+        _ => {}
+    }
+}
+
+/// True when the selected row has an in-flight run. Used to decide
+/// whether Enter opens the args prompt (only when not running — the
+/// kill-and-restart modal takes precedence so the user knows the
+/// previous run is being interrupted).
+fn selected_is_running(app: &App) -> bool {
+    app.selected_run().is_some_and(|r| !r.is_done())
+}
+
+fn handle_key_args_prompt(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Ctrl-c always quits, even mid-prompt.
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+    match code {
+        KeyCode::Esc => {
+            app.args_prompt_resolve(false);
+        }
+        KeyCode::Backspace => app.args_prompt_pop_char(),
+        KeyCode::Enter => match app.args_prompt_resolve(true) {
+            Some(Ok(())) => {}
+            Some(Err(crate::app::LaunchRejection::AlreadyRunning)) => {
+                app.open_kill_restart_confirm();
+            }
+            Some(Err(rej)) => app.flash = Some(launch_message(rej)),
+            None => {}
+        },
+        KeyCode::Char(c) => app.args_prompt_push_char(c),
         _ => {}
     }
 }
@@ -284,10 +333,7 @@ fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Enter => {
             // Enter accepts the focused choice — Yes by default;
             // if the user tabbed to No, Enter dismisses.
-            let accept = app
-                .confirm_dialog()
-                .map(|d| d.yes_focused)
-                .unwrap_or(true);
+            let accept = app.confirm_dialog().map(|d| d.yes_focused).unwrap_or(true);
             if let Some(rej) = app.confirm_resolve(accept) {
                 app.flash = Some(launch_message(rej));
             }

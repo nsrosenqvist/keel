@@ -19,6 +19,7 @@ crossterm = { workspace = true }
 tokio = { workspace = true }
 nucleo-matcher = { workspace = true }
 notify = { workspace = true }
+shell-words = { workspace = true }
 globset = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

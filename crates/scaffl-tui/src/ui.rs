@@ -98,6 +98,11 @@ pub fn render(app: &App, frame: &mut Frame) {
     {
         render_confirm_modal(dialog, frame);
     }
+    if app.mode() == Mode::ArgsPrompt
+        && let Some(prompt) = app.args_prompt()
+    {
+        render_args_prompt(prompt, frame);
+    }
 }
 
 // ───────────────────────── top bar ─────────────────────────
@@ -993,6 +998,42 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(body), layout[1]);
 }
 
+fn render_args_prompt(prompt: &crate::app::ArgsPrompt, frame: &mut Frame) {
+    let area = centered_rect(frame.area(), 60, 7);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::new(2, 2, 1, 1))
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                format!("args for `{}`", prompt.item_name),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
+
+    let body = vec![
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(ACCENT)),
+            Span::styled(
+                prompt.input.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            // Block-character cursor at the end so users see where input goes.
+            Span::styled("█", Style::default().fg(ACCENT)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "↵ run · esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(body).block(block), area);
+}
+
 fn render_confirm_modal(dialog: &crate::app::ConfirmDialog, frame: &mut Frame) {
     // Center a fixed-size box. Width is generous enough to fit the
     // longest plausible body line; height is just the four content
@@ -1091,9 +1132,7 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 
     // "Something running" = the selected row's run, or the lifecycle
     // slot. Used to flip the `s` hint between "stop" and "stop run."
-    let running = app
-        .selected_run()
-        .is_some_and(|r| !r.is_done())
+    let running = app.selected_run().is_some_and(|r| !r.is_done())
         || app.lifecycle_run().is_some_and(|r| !r.is_done());
     let mode_palette = app.mode() == Mode::Palette;
     let on_service = app.selected_service().is_some();

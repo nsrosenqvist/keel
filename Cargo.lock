@@ -1080,6 +1080,7 @@ dependencies = [
  "scaffl-config",
  "scaffl-container",
  "scaffl-runtime",
+ "shell-words",
  "tempfile",
  "thiserror",
  "tokio",
