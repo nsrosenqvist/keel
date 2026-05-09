@@ -43,6 +43,11 @@ impl From<OutputLine> for CapturedLine {
 pub struct RunState {
     pub name: String,
     pub started_at: Instant,
+    /// Set the moment a run reaches a terminal state (exit_code or
+    /// error populated). Used for the title's duration suffix on
+    /// completed runs — `started_at.elapsed()` would keep climbing
+    /// after completion.
+    pub finished_at: Option<Instant>,
     pub completion: Option<JoinHandle<Result<i32, RuntimeError>>>,
     pub output_rx: UnboundedReceiver<OutputLine>,
     pub buffer: VecDeque<CapturedLine>,
@@ -111,6 +116,7 @@ impl RunState {
         Self {
             name: label.into(),
             started_at: Instant::now(),
+            finished_at: None,
             completion: Some(completion),
             output_rx,
             buffer: VecDeque::with_capacity(OUTPUT_BUFFER_CAP),
@@ -130,6 +136,7 @@ impl RunState {
         Self {
             name: owned_name,
             started_at: Instant::now(),
+            finished_at: None,
             completion: Some(completion),
             output_rx,
             buffer: VecDeque::with_capacity(OUTPUT_BUFFER_CAP),
@@ -167,6 +174,7 @@ impl RunState {
             Ok(Err(e)) => self.error = Some(format!("{e}")),
             Err(e) => self.error = Some(format!("task panicked: {e}")),
         }
+        self.finished_at = Some(Instant::now());
     }
 
     pub fn is_done(&self) -> bool {
@@ -185,6 +193,17 @@ impl RunState {
             handle.abort();
         }
         self.error = Some("aborted".into());
+        self.finished_at = Some(Instant::now());
+    }
+
+    /// Total wall-clock duration of the run. While running this is
+    /// `now - started_at` (climbs in real time); after completion it
+    /// freezes at `finished_at - started_at`.
+    pub fn duration(&self) -> std::time::Duration {
+        match self.finished_at {
+            Some(t) => t.saturating_duration_since(self.started_at),
+            None => self.started_at.elapsed(),
+        }
     }
 
     /// Status line for the output pane title.

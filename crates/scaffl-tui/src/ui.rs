@@ -579,35 +579,52 @@ fn run_pane_title(run: &RunState) -> Line<'static> {
         ),
         Span::raw("  "),
     ];
+    let duration = format_duration(run.duration());
     if let Some(code) = run.exit_code {
         if code == 0 {
             spans.push(Span::styled(
-                "✓ exit 0 ",
+                format!("✓ exit 0 · {duration} "),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
-                format!("✗ exit {code} "),
+                format!("✗ exit {code} · {duration} "),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ));
         }
     } else if let Some(err) = &run.error {
         spans.push(Span::styled(
-            format!("! {err} "),
+            format!("! {err} · {duration} "),
             Style::default().fg(Color::Red),
         ));
     } else {
-        let secs = run.started_at.elapsed().as_secs_f32();
         spans.push(Span::styled(
-            format!("● running {secs:.1}s "),
+            format!("● running · {duration} "),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ));
     }
     Line::from(spans)
+}
+
+/// Compact duration formatter for run-pane titles. Sub-second times
+/// land in `0.4s` form; ≥10s uses one decimal less; ≥1m switches to
+/// `m m s s` form so titles don't sprawl on long runs.
+fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 10.0 {
+        format!("{secs:.1}s")
+    } else if secs < 60.0 {
+        format!("{secs:.0}s")
+    } else {
+        let total = secs as u64;
+        let m = total / 60;
+        let s = total % 60;
+        format!("{m}m{s:02}s")
+    }
 }
 
 fn render_captured_line(line: &CapturedLine) -> Line<'static> {
