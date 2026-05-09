@@ -35,7 +35,6 @@ use ratatui::{
         Paragraph, Wrap,
     },
 };
-use scaffl_config::Run;
 use scaffl_container::ServiceStatus;
 use scaffl_runtime::OutputStream;
 
@@ -441,16 +440,28 @@ fn render_lifecycle_output(app: &App, frame: &mut Frame, area: Rect) {
 /// already carries that.
 fn render_details(app: &App, frame: &mut Frame, area: Rect) {
     let block = panel_block(" details ");
-    // No `Wrap` here — wrapped continuations don't preserve the kv
-    // indent (ratatui has no hanging-indent mode), so a wrapped
-    // value reads as flush-left noise. Single-line per kv is
-    // predictable; values longer than the panel width clip
-    // cleanly at the right edge.
-    let paragraph = Paragraph::new(build_detail_lines(app)).block(block);
+    // Description gets the panel's full inner width minus the kv
+    // indent (2 cols) and the right border breathing room (1 col).
+    // We pre-wrap it ourselves because ratatui's `Wrap` would
+    // also wrap the kv lines, where it loses the hanging indent.
+    let inner_width = area.width.saturating_sub(2 + 2 + 1) as usize;
+    let paragraph = Paragraph::new(build_detail_lines(app, inner_width)).block(block);
     frame.render_widget(paragraph, area);
 }
 
-fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
+/// New layout (per user feedback):
+///   <name>  <kind>          ← header
+///                           ← blank
+///   <description...>        ← wrapped paragraph, full width, no `desc` label
+///   <continuation...>
+///                           ← blank
+///   in              host    ← kv lines
+///   forward_args    true
+///
+/// `run` is omitted entirely — long run-strings dominated the panel,
+/// and the description should explain intent at a higher level than
+/// the literal command anyway.
+fn build_detail_lines(app: &App, wrap_width: usize) -> Vec<Line<'static>> {
     let Some(item) = app.selected_item() else {
         return vec![Line::from(Span::styled(
             "  No commands defined.",
@@ -474,62 +485,109 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
                 .add_modifier(Modifier::ITALIC),
         ),
     ]));
-    lines.push(Line::from(""));
 
-    if let Some(recipe) = app.selected_recipe() {
-        if let Some(desc) = &recipe.desc {
-            lines.push(kv("desc", desc));
-        }
-        lines.push(kv("in", recipe.service.as_deref().unwrap_or("host")));
-        if recipe.tty {
-            lines.push(kv("tty", "true"));
-        }
-        if recipe.forward_args {
-            lines.push(kv("forward_args", "true"));
-        }
-        if recipe.parallel {
-            lines.push(kv("parallel", "true"));
-        }
-        if !recipe.needs.is_empty() {
-            lines.push(kv("needs", &recipe.needs.join(", ")));
-        }
-        for (k, v) in &recipe.env {
-            lines.push(kv(&format!("env.{k}"), v));
-        }
+    let (desc, kv_lines) = match item.kind {
+        ItemKind::Recipe => app
+            .selected_recipe()
+            .map(|r| (r.desc.clone(), recipe_kv_lines(r)))
+            .unwrap_or_default(),
+        ItemKind::Script => app
+            .selected_script()
+            .map(|s| (s.desc.clone(), script_kv_lines(s)))
+            .unwrap_or_default(),
+        // Services / watchers don't have config-level descriptions.
+        _ => (None, Vec::new()),
+    };
+
+    if let Some(text) = desc {
         lines.push(Line::from(""));
-        lines.extend(render_run(&recipe.run));
-    } else if app.selected_watcher().is_some() {
-        // Watcher detail is rendered by render_watcher when this item
-        // is the selection — render_right_pane picks the watcher path.
-    } else if let Some(script) = app.selected_script() {
-        if let Some(desc) = &script.desc {
-            lines.push(kv("desc", desc));
-        }
-        lines.push(kv("in", script.service.as_deref().unwrap_or("host")));
-        // Scripts always live under `.scaffl/commands/`; the absolute
-        // path is long and useless in the panel — surface the
-        // project-relative form so the line fits without wrapping.
-        let path_display = script
-            .path
-            .file_name()
-            .map(|f| format!(".scaffl/commands/{}", f.to_string_lossy()))
-            .unwrap_or_else(|| script.path.display().to_string());
-        lines.push(kv("path", &path_display));
-        if script.tty {
-            lines.push(kv("tty", "true"));
-        }
-        if script.forward_args {
-            lines.push(kv("forward_args", "true"));
-        }
-        if !script.needs.is_empty() {
-            lines.push(kv("needs", &script.needs.join(", ")));
-        }
-        for (k, v) in &script.env {
-            lines.push(kv(&format!("env.{k}"), v));
+        for chunk in wrap_words(&text, wrap_width) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(chunk, Style::default().fg(Color::Gray)),
+            ]));
         }
     }
 
+    if !kv_lines.is_empty() {
+        lines.push(Line::from(""));
+        lines.extend(kv_lines);
+    }
+
     lines
+}
+
+fn recipe_kv_lines(recipe: &scaffl_config::Recipe) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    out.push(kv("in", recipe.service.as_deref().unwrap_or("host")));
+    if recipe.tty {
+        out.push(kv("tty", "true"));
+    }
+    if recipe.forward_args {
+        out.push(kv("forward_args", "true"));
+    }
+    if recipe.parallel {
+        out.push(kv("parallel", "true"));
+    }
+    if !recipe.needs.is_empty() {
+        out.push(kv("needs", &recipe.needs.join(", ")));
+    }
+    for (k, v) in &recipe.env {
+        out.push(kv(&format!("env.{k}"), v));
+    }
+    out
+}
+
+fn script_kv_lines(script: &scaffl_config::ScriptCommand) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    out.push(kv("in", script.service.as_deref().unwrap_or("host")));
+    let path_display = script
+        .path
+        .file_name()
+        .map(|f| format!(".scaffl/commands/{}", f.to_string_lossy()))
+        .unwrap_or_else(|| script.path.display().to_string());
+    out.push(kv("path", &path_display));
+    if script.tty {
+        out.push(kv("tty", "true"));
+    }
+    if script.forward_args {
+        out.push(kv("forward_args", "true"));
+    }
+    if !script.needs.is_empty() {
+        out.push(kv("needs", &script.needs.join(", ")));
+    }
+    for (k, v) in &script.env {
+        out.push(kv(&format!("env.{k}"), v));
+    }
+    out
+}
+
+/// Word-wrap `text` to lines no wider than `width`. Single words
+/// longer than `width` (rare in human-written descriptions) get
+/// their own line and overflow the bound — we'd rather show them
+/// truncated by ratatui at the panel border than break inside a
+/// word. Empty input → empty output.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 fn kind_label(kind: ItemKind) -> &'static str {
@@ -539,25 +597,6 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Recipe => "recipe",
         ItemKind::Script => "script",
     }
-}
-
-fn render_run(run: &Run) -> Vec<Line<'static>> {
-    let mut out = vec![Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            "run",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-    ])];
-    match run {
-        Run::Single(s) => out.push(Line::from(Span::raw(format!("    {s}")))),
-        Run::Steps(steps) => {
-            for s in steps {
-                out.push(Line::from(Span::raw(format!("    • {s}"))));
-            }
-        }
-    }
-    out
 }
 
 fn kv(key: &str, value: &str) -> Line<'static> {
@@ -1176,6 +1215,33 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(cfg());
         terminal.draw(|f| render(&app, f)).unwrap();
+    }
+
+    #[test]
+    #[test]
+    fn wrap_words_breaks_at_word_boundary() {
+        let out = wrap_words("the quick brown fox jumps", 10);
+        assert_eq!(out, vec!["the quick", "brown fox", "jumps"]);
+    }
+
+    #[test]
+    fn wrap_words_oversize_word_keeps_alone() {
+        // A single word larger than the width gets its own line; we
+        // don't break inside a word.
+        let out = wrap_words("foo supercalifragilistic bar", 8);
+        assert_eq!(out, vec!["foo", "supercalifragilistic", "bar"]);
+    }
+
+    #[test]
+    fn wrap_words_collapses_whitespace() {
+        // Multiple internal spaces become single spaces (split_whitespace).
+        let out = wrap_words("a   b\tc", 10);
+        assert_eq!(out, vec!["a b c"]);
+    }
+
+    #[test]
+    fn wrap_words_empty_input() {
+        assert_eq!(wrap_words("", 10), Vec::<String>::new());
     }
 
     #[test]
