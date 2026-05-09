@@ -44,6 +44,13 @@ pub struct Config {
     #[serde(default)]
     pub worktrees: WorktreesConfig,
 
+    /// Non-container services scaffl tracks alongside whatever the
+    /// container backend manages (compose, podman, etc.). Lets the
+    /// TUI and the lifecycle keymap operate on a system Postgres,
+    /// a `tunnel` daemon, etc. as if they were compose services.
+    #[serde(default)]
+    pub services: ServicesConfig,
+
     /// Scripts discovered under `.scaffl/commands/`. Populated by
     /// [`crate::loader::load_project`]; never serialized.
     #[serde(skip)]
@@ -127,6 +134,118 @@ impl Config {
         }
         self.project.name.as_deref().unwrap_or("")
     }
+
+    /// Structural validation. Catches issues that pure deserialization
+    /// can't (cross-field invariants, name collisions). Backend-aware
+    /// checks (e.g. "this name also exists in compose") happen later
+    /// against a live backend; this is the I/O-free layer.
+    pub fn validate(&self) -> Result<(), String> {
+        // Service-name uniqueness across `services.custom` and
+        // `services.systemd`. Compose-discovered names join the union
+        // at runtime (the registry handles that collision separately).
+        let mut seen: std::collections::HashMap<&str, &'static str> =
+            std::collections::HashMap::new();
+        for svc in &self.services.custom {
+            if let Some(prev) = seen.insert(svc.name.as_str(), "services.custom") {
+                return Err(format!(
+                    "duplicate service name `{}` (previously declared in {prev})",
+                    svc.name
+                ));
+            }
+        }
+        for svc in &self.services.systemd {
+            if let Some(prev) = seen.insert(svc.name.as_str(), "services.systemd") {
+                return Err(format!(
+                    "duplicate service name `{}` (previously declared in {prev})",
+                    svc.name
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CustomService {
+    /// Resolve the four lifecycle commands plus the optional log
+    /// command. `restart` falls back to `<stop> && <start>` when the
+    /// user didn't supply one explicitly. Returned by reference to
+    /// avoid allocating per-call; the synthesised restart is held in
+    /// a `Cow` so the caller doesn't have to care.
+    pub fn restart_cmd(&self) -> std::borrow::Cow<'_, str> {
+        match &self.restart {
+            Some(r) => std::borrow::Cow::Borrowed(r.as_str()),
+            None => std::borrow::Cow::Owned(format!("{} && {}", self.stop, self.start)),
+        }
+    }
+}
+
+/// Non-container services declared in `[[services.custom]]` and
+/// `[[services.systemd]]`. Both feed a single `CustomBackend` at
+/// runtime; `systemd` is just schema sugar (a unit name + scope
+/// expand to start/stop/restart/status/logs commands).
+///
+/// Both arrays default to empty — a project that only uses compose
+/// pays nothing for this.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ServicesConfig {
+    #[serde(default)]
+    pub custom: Vec<CustomService>,
+    #[serde(default)]
+    pub systemd: Vec<SystemdService>,
+}
+
+/// Generic service: the user supplies the shell commands scaffl runs
+/// for each lifecycle action. `status` is required because the TUI
+/// needs to render running/stopped state; `start` and `stop` are
+/// required because every keymap action needs a target. The rest are
+/// optional with sensible fallbacks (see [`CustomService::actions`]).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CustomService {
+    pub name: String,
+    #[serde(default)]
+    pub desc: Option<String>,
+    /// Exit code 0 = `Running`; non-zero = `Stopped`. Stdout / stderr
+    /// are not parsed — exit code is the contract.
+    pub status: String,
+    pub start: String,
+    pub stop: String,
+    /// Defaults to `<stop> && <start>` when absent.
+    #[serde(default)]
+    pub restart: Option<String>,
+    /// Long-running command whose stdout / stderr is streamed into
+    /// the TUI service pane. Absent → the pane shows "no log source".
+    #[serde(default)]
+    pub logs: Option<String>,
+}
+
+/// Systemd-controlled service: schema sugar that compiles down to a
+/// `CustomService` at backend-construction time. We keep the surface
+/// minimal — anything more elaborate (custom systemctl flags, drop-in
+/// envs, etc.) belongs in `services.custom`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SystemdService {
+    pub name: String,
+    #[serde(default)]
+    pub desc: Option<String>,
+    /// The systemd unit name, e.g. `postgresql.service`. The `.service`
+    /// suffix is conventional but optional — systemctl accepts both.
+    pub unit: String,
+    #[serde(default)]
+    pub scope: SystemdScope,
+}
+
+/// Whether a systemd service runs in the user or system instance.
+/// Defaults to `User` because dev-loop services are almost always
+/// per-user — a shared Postgres on `system` is the exception.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SystemdScope {
+    #[default]
+    User,
+    System,
 }
 
 /// Native scaffl hook configuration. Keyed by stage name.
@@ -658,6 +777,132 @@ mod tests {
         );
         assert_eq!(cfg.hooks.for_stage("pre-push"), &["test"]);
         assert!(cfg.hooks.for_stage("post-commit").is_empty());
+    }
+
+    #[test]
+    fn services_default_to_empty() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.services.custom.is_empty());
+        assert!(cfg.services.systemd.is_empty());
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_custom_service_minimal() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.custom]]
+            name   = "ngrok"
+            status = "pgrep -x ngrok"
+            start  = "ngrok http 8080"
+            stop   = "pkill -x ngrok"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.services.custom.len(), 1);
+        let svc = &cfg.services.custom[0];
+        assert_eq!(svc.name, "ngrok");
+        assert_eq!(svc.status, "pgrep -x ngrok");
+        assert!(svc.restart.is_none());
+        assert!(svc.logs.is_none());
+        // Synthesised restart command falls back to stop && start.
+        assert_eq!(svc.restart_cmd(), "pkill -x ngrok && ngrok http 8080");
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_custom_service_with_restart_and_logs() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.custom]]
+            name    = "tunnel"
+            status  = "true"
+            start   = "true"
+            stop    = "true"
+            restart = "kill -HUP $(pgrep tunnel)"
+            logs    = "tail -f /tmp/tunnel.log"
+        "#,
+        )
+        .unwrap();
+        let svc = &cfg.services.custom[0];
+        assert_eq!(svc.restart_cmd(), "kill -HUP $(pgrep tunnel)");
+        assert_eq!(svc.logs.as_deref(), Some("tail -f /tmp/tunnel.log"));
+    }
+
+    #[test]
+    fn parses_systemd_service_with_default_scope() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.systemd]]
+            name = "postgres"
+            unit = "postgresql.service"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.services.systemd.len(), 1);
+        let svc = &cfg.services.systemd[0];
+        assert_eq!(svc.name, "postgres");
+        assert_eq!(svc.unit, "postgresql.service");
+        assert_eq!(svc.scope, SystemdScope::User);
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_systemd_service_with_explicit_system_scope() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.systemd]]
+            name  = "shared-db"
+            unit  = "postgresql.service"
+            scope = "system"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.services.systemd[0].scope, SystemdScope::System);
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_custom_names() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.custom]]
+            name = "x"
+            status = "true"
+            start  = "true"
+            stop   = "true"
+
+            [[services.custom]]
+            name = "x"
+            status = "true"
+            start  = "true"
+            stop   = "true"
+        "#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("duplicate service name `x`"));
+        assert!(err.contains("services.custom"));
+    }
+
+    #[test]
+    fn validate_rejects_name_collision_across_custom_and_systemd() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[services.custom]]
+            name = "postgres"
+            status = "true"
+            start  = "true"
+            stop   = "true"
+
+            [[services.systemd]]
+            name = "postgres"
+            unit = "postgresql.service"
+        "#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("duplicate service name `postgres`"));
+        assert!(err.contains("services.custom"));
     }
 
     #[test]

@@ -11,10 +11,12 @@ use std::path::Path;
 
 /// Parse a [`Config`] from a TOML source string.
 pub fn parse_str(source: &str) -> Result<Config, ConfigError> {
-    toml::from_str(source).map_err(|source| ConfigError::Parse {
+    let config: Config = toml::from_str(source).map_err(|source| ConfigError::Parse {
         path: Path::new("<inline>").to_path_buf(),
         source,
-    })
+    })?;
+    config.validate().map_err(ConfigError::Invalid)?;
+    Ok(config)
 }
 
 /// Read a `scaffl.toml` (or other TOML file) from disk and parse it.
@@ -23,10 +25,12 @@ pub fn load_from_path(path: &Path) -> Result<Config, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    toml::from_str(&raw).map_err(|source| ConfigError::Parse {
+    let config: Config = toml::from_str(&raw).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    config.validate().map_err(ConfigError::Invalid)?;
+    Ok(config)
 }
 
 /// Load the full project configuration without applying a worktree
@@ -92,6 +96,7 @@ pub fn load_project_with_slug(
     if scripts_dir.is_dir() {
         config.scripts = discover_scripts(&scripts_dir)?;
     }
+    config.validate().map_err(ConfigError::Invalid)?;
     Ok(config)
 }
 
