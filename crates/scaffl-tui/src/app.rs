@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// What kind of thing a sidebar item points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ItemKind {
     Service,
     Watcher,
@@ -43,6 +43,32 @@ pub enum LaunchRejection {
 pub enum Mode {
     Normal,
     Palette,
+    /// A modal confirmation is open — keys route to its dialog.
+    Confirm,
+}
+
+/// Composite key for the per-row run map. Recipe / Script names can
+/// theoretically collide with service / watcher names, so the kind
+/// is part of the key.
+pub type RunKey = (ItemKind, String);
+
+/// Pending decision when the user tries to launch a running command.
+/// Kept simple: only one in-flight question at a time, only one kind
+/// of question (kill-and-restart). New question shapes get added here
+/// when they arrive.
+#[derive(Debug, Clone)]
+pub struct ConfirmDialog {
+    pub title: String,
+    pub body: String,
+    /// Currently-focused choice. `true` = Yes (the default).
+    pub yes_focused: bool,
+    pub action: ConfirmAction,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConfirmAction {
+    /// Abort the named run and relaunch it.
+    KillAndRestart { key: RunKey },
 }
 
 /// TUI application state.
@@ -53,7 +79,19 @@ pub struct App {
     quit: bool,
     executor: Option<Executor>,
     backend: Option<Arc<dyn Backend>>,
-    current_run: Option<RunState>,
+    /// Per-row run state for recipe + script launches. Each entry
+    /// owns its persistent output buffer; navigating the sidebar
+    /// switches which buffer the right pane shows. A run remains in
+    /// the map after completion so the user can scroll through its
+    /// output until they explicitly relaunch (which replaces the
+    /// entry).
+    runs: BTreeMap<RunKey, RunState>,
+    /// Most recent compose lifecycle action (`U` / `D` / `R` / `S`).
+    /// Held separately because lifecycle actions don't have a
+    /// per-row identity — they target the whole project. Output
+    /// streams into the right pane via an overlay split when in
+    /// flight; goes idle and stays inspectable when done.
+    lifecycle_run: Option<RunState>,
     /// Service pane state, keyed by service name. Populated for every
     /// `[[ui.pane]] type = "service"` declaration in the config.
     services: BTreeMap<String, ServicePane>,
@@ -66,6 +104,9 @@ pub struct App {
     pub flash: Option<String>,
     mode: Mode,
     palette: Option<Palette>,
+    /// Open confirmation dialog, if any. Routes keys when
+    /// `mode == Confirm`.
+    confirm: Option<ConfirmDialog>,
 }
 
 impl App {
@@ -79,12 +120,14 @@ impl App {
             quit: false,
             executor: None,
             backend: None,
-            current_run: None,
+            runs: BTreeMap::new(),
+            lifecycle_run: None,
             services,
             watchers: BTreeMap::new(),
             flash: None,
             mode: Mode::Normal,
             palette: None,
+            confirm: None,
         }
     }
 
@@ -191,36 +234,61 @@ impl App {
         self.config.scripts.get(&item.name)
     }
 
-    pub fn current_run(&self) -> Option<&RunState> {
-        self.current_run.as_ref()
+    /// Run state for a specific recipe / script row, if one exists.
+    /// Returns `None` for services and watchers (which carry their
+    /// own pane state) and for commands that have never been run.
+    pub fn run_for(&self, kind: ItemKind, name: &str) -> Option<&RunState> {
+        self.runs.get(&(kind, name.to_string()))
     }
 
-    pub fn current_run_mut(&mut self) -> Option<&mut RunState> {
-        self.current_run.as_mut()
+    /// Run state for the currently-selected sidebar row, if any.
+    /// Used by the renderer to paint the output pane.
+    pub fn selected_run(&self) -> Option<&RunState> {
+        let item = self.selected_item()?;
+        self.run_for(item.kind, &item.name)
+    }
+
+    /// The compose-lifecycle run, if a `U` / `D` / `R` / `S` action
+    /// has been triggered. Output streams here regardless of which
+    /// sidebar row is selected — lifecycle actions are project-wide
+    /// and don't have a row of their own.
+    pub fn lifecycle_run(&self) -> Option<&RunState> {
+        self.lifecycle_run.as_ref()
     }
 
     /// Try to launch the currently selected item. Returns [`LaunchRejection`]
     /// when the launch can't proceed; the caller renders the reason as a
-    /// flash message.
+    /// flash message. If the selected item is already running, returns
+    /// [`LaunchRejection::AlreadyRunning`] — the caller is expected to
+    /// open the kill-and-restart confirmation modal in that case.
     pub fn try_launch_selected(&mut self) -> Result<(), LaunchRejection> {
-        if self.current_run.as_ref().is_some_and(|r| !r.is_done()) {
+        let item = self
+            .selected_item()
+            .ok_or_else(|| LaunchRejection::NotRunnable("no selection".into()))?
+            .clone();
+
+        // Per-row "is this already running?" gate replaces the old
+        // single-slot `current_run` check. Different rows can run
+        // concurrently; only the same row collides with itself.
+        let key: RunKey = (item.kind, item.name.clone());
+        if self
+            .runs
+            .get(&key)
+            .is_some_and(|r| !r.is_done())
+        {
             return Err(LaunchRejection::AlreadyRunning);
         }
+
         let executor = self
             .executor
             .as_ref()
             .ok_or(LaunchRejection::NoExecutor)?
             .clone();
 
-        let item = self
-            .selected_item()
-            .ok_or_else(|| LaunchRejection::NotRunnable("no selection".into()))?
-            .clone();
-
         match item.kind {
             ItemKind::Service => {
                 return Err(LaunchRejection::NotRunnable(
-                    "service panes show logs; press q to quit or navigate to a recipe".into(),
+                    "service panes show logs; press enter to up the service".into(),
                 ));
             }
             ItemKind::Watcher => {
@@ -257,9 +325,30 @@ impl App {
         }
 
         let run = RunState::spawn(&executor, item.name, Vec::new());
-        self.current_run = Some(run);
+        self.runs.insert(key, run);
         self.flash = None;
         Ok(())
+    }
+
+    /// Force-relaunch the selected row even if a previous run is in
+    /// flight: aborts the existing one, drops its buffer, and spawns
+    /// a fresh `RunState`. Called by the kill-and-restart confirmation
+    /// path after the user says yes.
+    pub fn force_relaunch_selected(&mut self) -> Result<(), LaunchRejection> {
+        let item = self
+            .selected_item()
+            .ok_or_else(|| LaunchRejection::NotRunnable("no selection".into()))?
+            .clone();
+        let key: RunKey = (item.kind, item.name.clone());
+        if let Some(run) = self.runs.get_mut(&key)
+            && !run.is_done()
+        {
+            run.abort();
+        }
+        // Drop the old entry so the buffer starts fresh; try_launch_selected
+        // would skip the spawn otherwise.
+        self.runs.remove(&key);
+        self.try_launch_selected()
     }
 
     pub fn mode(&self) -> Mode {
@@ -298,16 +387,98 @@ impl App {
         true
     }
 
-    pub fn drain_run(&mut self) {
-        if let Some(run) = self.current_run.as_mut() {
+    /// Open a kill-and-restart confirmation for the selected row. Sets
+    /// `mode = Confirm` so the keymap routes to the modal handler. Body
+    /// text references the run by name so users see *which* row they're
+    /// interrupting (matters when the same key was pressed elsewhere).
+    pub fn open_kill_restart_confirm(&mut self) {
+        let Some(item) = self.selected_item().cloned() else {
+            return;
+        };
+        let key: RunKey = (item.kind, item.name.clone());
+        // No-op if the row isn't actually running; saves a confused
+        // dialog for users with a stale keypress.
+        if self.runs.get(&key).is_none_or(|r| r.is_done()) {
+            return;
+        }
+        self.confirm = Some(ConfirmDialog {
+            title: format!("`{}` is running", item.name),
+            body: "Kill and restart?".into(),
+            yes_focused: true,
+            action: ConfirmAction::KillAndRestart { key },
+        });
+        self.mode = Mode::Confirm;
+    }
+
+    pub fn confirm_dialog(&self) -> Option<&ConfirmDialog> {
+        self.confirm.as_ref()
+    }
+
+    pub fn confirm_toggle_focus(&mut self) {
+        if let Some(c) = self.confirm.as_mut() {
+            c.yes_focused = !c.yes_focused;
+        }
+    }
+
+    /// Resolve the open confirmation, applying its action when the
+    /// user accepted (`accept = true`) or simply dismissing otherwise.
+    /// Returns the rejection (if any) from the resulting action so
+    /// the caller can flash it.
+    pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
+        let d = self.confirm.take()?;
+        self.mode = Mode::Normal;
+        if !accept {
+            return None;
+        }
+        match d.action {
+            ConfirmAction::KillAndRestart { key } => {
+                // Re-select the row the dialog was opened for, so
+                // force_relaunch_selected operates on the right one
+                // even if the user navigated mid-dialog.
+                if let Some(idx) = self.items.iter().position(|i| i.kind == key.0 && i.name == key.1)
+                {
+                    self.selected = idx;
+                }
+                self.force_relaunch_selected().err()
+            }
+        }
+    }
+
+    /// Drain output for every active run plus the lifecycle slot.
+    /// Cheap when nothing has arrived; called on every pre-render
+    /// hook so navigation reveals up-to-date buffers.
+    pub fn drain_runs(&mut self) {
+        for run in self.runs.values_mut() {
+            run.drain();
+        }
+        if let Some(run) = self.lifecycle_run.as_mut() {
             run.drain();
         }
     }
 
-    /// Abort the current run, if any is in flight. Returns true when an
-    /// abort was issued (so the caller can flash a status message).
-    pub fn abort_current_run(&mut self) -> bool {
-        match self.current_run.as_mut() {
+    /// Abort the run on the selected row, if it's in flight. Returns
+    /// true when an abort was issued. With per-row runs, `s` no
+    /// longer needs to know "is *anything* running" — only "is the
+    /// thing I'm focused on running."
+    pub fn abort_selected_run(&mut self) -> bool {
+        let Some(item) = self.selected_item().cloned() else {
+            return false;
+        };
+        let key: RunKey = (item.kind, item.name);
+        match self.runs.get_mut(&key) {
+            Some(run) if !run.is_done() => {
+                run.abort();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Abort the lifecycle run if one is in flight. Used by `s` /
+    /// `S` when no per-row run is active — keeps the "stop the
+    /// noisy thing" muscle memory working.
+    pub fn abort_lifecycle_run(&mut self) -> bool {
+        match self.lifecycle_run.as_mut() {
             Some(run) if !run.is_done() => {
                 run.abort();
                 true
@@ -318,17 +489,19 @@ impl App {
 
     /// Run a backend lifecycle action (up / down / stop / restart)
     /// against the given services. An empty slice means "all services".
-    /// The Child is wrapped as a [`RunState`] so output streams into
-    /// the right pane like a recipe run.
+    /// Output streams into the lifecycle slot independent of which
+    /// sidebar row is selected; the renderer overlays it as a split
+    /// view when in flight.
     ///
-    /// Returns `Err` describing the rejection when no backend is
-    /// configured or a run is already in flight.
+    /// Returns `Err` if no backend is configured or another lifecycle
+    /// action is already running. Per-row recipe / script runs do not
+    /// block lifecycle actions.
     pub async fn run_service_action(
         &mut self,
         action: &'static str,
         services: &[&str],
     ) -> Result<(), LaunchRejection> {
-        if self.current_run.as_ref().is_some_and(|r| !r.is_done()) {
+        if self.lifecycle_run.as_ref().is_some_and(|r| !r.is_done()) {
             return Err(LaunchRejection::AlreadyRunning);
         }
         let backend = self
@@ -343,15 +516,20 @@ impl App {
                 } else {
                     format!("compose {action} {}", services.join(" "))
                 };
-                self.current_run = Some(RunState::spawn_child(label, child));
+                self.lifecycle_run = Some(RunState::spawn_child(label, child));
                 Ok(())
             }
             Err(e) => Err(LaunchRejection::NotRunnable(format!("{e}"))),
         }
     }
 
-    pub async fn poll_run(&mut self) {
-        if let Some(run) = self.current_run.as_mut() {
+    /// Poll completion for every active run plus the lifecycle slot.
+    /// Each `RunState` short-circuits on already-done.
+    pub async fn poll_runs(&mut self) {
+        for run in self.runs.values_mut() {
+            run.poll_completion().await;
+        }
+        if let Some(run) = self.lifecycle_run.as_mut() {
             run.poll_completion().await;
         }
     }

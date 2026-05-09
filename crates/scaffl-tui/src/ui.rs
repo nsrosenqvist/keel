@@ -42,6 +42,10 @@ use scaffl_runtime::OutputStream;
 const SIDEBAR_RATIO: u16 = 28;
 const TOP_BAR_HEIGHT: u16 = 1;
 const STATUS_BAR_HEIGHT: u16 = 1;
+/// Fixed height of the details panel under the sidebar list. Big
+/// enough for the kind tag, desc, in, and run line; smaller details
+/// (env, needs) wrap or get cut by the panel border.
+const DETAILS_HEIGHT: u16 = 12;
 
 /// Accent colour used for active highlights and key hints.
 const ACCENT: Color = Color::Cyan;
@@ -66,7 +70,22 @@ pub fn render(app: &App, frame: &mut Frame) {
         ])
         .split(outer[1]);
 
-    render_sidebar(app, frame, body[0]);
+    // Left column: list on top, static details panel below.
+    // Details panel is fixed-height — the list absorbs the rest.
+    // Hidden entirely when there's no item to describe.
+    let left = if app.selected_item().is_some() {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(DETAILS_HEIGHT)])
+            .split(body[0])
+    } else {
+        std::rc::Rc::from([body[0]])
+    };
+    render_sidebar(app, frame, left[0]);
+    if left.len() > 1 {
+        render_details(app, frame, left[1]);
+    }
+
     render_right_pane(app, frame, body[1]);
     render_status(app, frame, outer[2]);
 
@@ -74,6 +93,11 @@ pub fn render(app: &App, frame: &mut Frame) {
         && let Some(palette) = app.palette()
     {
         render_palette(app, palette, frame);
+    }
+    if app.mode() == Mode::Confirm
+        && let Some(dialog) = app.confirm_dialog()
+    {
+        render_confirm_modal(dialog, frame);
     }
 }
 
@@ -309,33 +333,113 @@ fn item_indicator_style(app: &App, item: &Item) -> Style {
 // ─────────────────────── right pane ───────────────────────
 
 fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
-    let has_run = app.current_run().is_some();
-    if has_run {
-        // Always split when a run is in progress / completed, no matter
-        // what's selected, so action output (compose up / down /
-        // recipe runs) is visible alongside the focused item's pane.
+    // Right pane is the per-row buffer view. Lifecycle actions
+    // (compose up / down / etc.) overlay as a bottom split when in
+    // flight — they're project-wide and don't have a row of their
+    // own. When idle (no lifecycle run), the pane is full-height.
+    if app.lifecycle_run().is_some() {
         let split = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(area);
-        render_focused_item(app, frame, split[0]);
-        render_output(app, frame, split[1]);
+        render_focused_buffer(app, frame, split[0]);
+        render_lifecycle_output(app, frame, split[1]);
     } else {
-        render_focused_item(app, frame, area);
+        render_focused_buffer(app, frame, area);
     }
 }
 
-fn render_focused_item(app: &App, frame: &mut Frame, area: Rect) {
+/// Paint the buffer for whatever's selected. Each kind has its own
+/// source: services tail through their pane, watchers carry a buffer
+/// from their last fire, recipes / scripts have their own RunState
+/// in the runs map. The "tmux session per row" model.
+fn render_focused_buffer(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(service) = app.selected_service() {
         render_service_logs(service, frame, area);
     } else if let Some(watcher) = app.selected_watcher() {
         render_watcher(watcher, frame, area);
+    } else if let Some(run) = app.selected_run() {
+        render_run_buffer(run, frame, area);
+    } else if let Some(item) = app.selected_item() {
+        render_idle_buffer(item, frame, area);
     } else {
-        render_detail(app, frame, area);
+        let block = panel_block(" output ");
+        frame.render_widget(block, area);
     }
 }
 
-fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
+/// Placeholder for a recipe / script that's never been launched in
+/// this session. Tells the user how to start it without leaving the
+/// pane empty.
+fn render_idle_buffer(item: &Item, frame: &mut Frame, area: Rect) {
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            item.name.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  not yet run".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let body = Paragraph::new(Line::from(Span::styled(
+        "press enter to run",
+        Style::default().fg(Color::DarkGray),
+    )))
+    .block(block);
+    frame.render_widget(body, area);
+}
+
+fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
+    let title = run_pane_title(run);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let max_lines = area.height.saturating_sub(2) as usize;
+    let total = run.buffer.len();
+    let start = total.saturating_sub(max_lines);
+    let lines: Vec<Line<'static>> = run
+        .buffer
+        .iter()
+        .skip(start)
+        .map(render_captured_line)
+        .collect();
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_lifecycle_output(app: &App, frame: &mut Frame, area: Rect) {
+    let Some(run) = app.lifecycle_run() else {
+        return;
+    };
+    let title = run_pane_title(run);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let max_lines = area.height.saturating_sub(2) as usize;
+    let total = run.buffer.len();
+    let start = total.saturating_sub(max_lines);
+    let lines: Vec<Line<'static>> = run
+        .buffer
+        .iter()
+        .skip(start)
+        .map(render_captured_line)
+        .collect();
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+// ─────────────────────── details panel ───────────────────────
+
+/// The static "what is this" box that lives under the sidebar list.
+/// Mirrors the data the old right-pane "details" view rendered, but
+/// limited to recipe / script / service / watcher metadata — no
+/// dynamic state (timing / exit code), since the output pane title
+/// already carries that.
+fn render_details(app: &App, frame: &mut Frame, area: Rect) {
     let block = panel_block(" details ");
     let lines = build_detail_lines(app);
     let paragraph = Paragraph::new(lines)
@@ -454,37 +558,7 @@ fn kv(key: &str, value: &str) -> Line<'static> {
     ])
 }
 
-// ─────────────────────── output / service / watcher ───────────────────────
-
-fn render_output(app: &App, frame: &mut Frame, area: Rect) {
-    let Some(run) = app.current_run() else {
-        return;
-    };
-
-    let title = run_pane_title(run);
-    // Captured output is arbitrary command stdout — no leading-space
-    // hack like the kv detail lines, no inherent indent. Apply the
-    // same gutter the error path uses (2 left, 1 right, 1 top) so
-    // output and wrapped continuation lines sit inset from both the
-    // title border and the body sides — matching the detail pane's
-    // top-of-content blank line.
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
-
-    let max_lines = area.height.saturating_sub(2) as usize;
-    let total = run.buffer.len();
-    let start = total.saturating_sub(max_lines);
-    let lines: Vec<Line<'static>> = run
-        .buffer
-        .iter()
-        .skip(start)
-        .map(render_captured_line)
-        .collect();
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
-}
+// ─────────────────────── service / watcher panes ───────────────────────
 
 fn run_pane_title(run: &RunState) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![
@@ -861,6 +935,58 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(body), layout[1]);
 }
 
+fn render_confirm_modal(dialog: &crate::app::ConfirmDialog, frame: &mut Frame) {
+    // Center a fixed-size box. Width is generous enough to fit the
+    // longest plausible body line; height is just the four content
+    // rows + borders. Anything narrower than ~60 cols falls back to
+    // the area width to avoid clipping.
+    let area = centered_rect(frame.area(), 50, 7);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::new(2, 2, 1, 1))
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                dialog.title.clone(),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
+
+    let yes_style = if dialog.yes_focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let no_style = if !dialog.yes_focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let body = vec![
+        Line::from(Span::raw(dialog.body.clone())),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Yes ", yes_style),
+            Span::raw("    "),
+            Span::styled(" No ", no_style),
+        ]),
+    ];
+
+    // Clear behind the modal so the underlying content doesn't bleed
+    // through the rounded corners.
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(body).block(block), area);
+}
+
 fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
     let h = height.min(area.height);
     let v = Layout::default()
@@ -905,7 +1031,12 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    let running = app.current_run().is_some_and(|r| !r.is_done());
+    // "Something running" = the selected row's run, or the lifecycle
+    // slot. Used to flip the `s` hint between "stop" and "stop run."
+    let running = app
+        .selected_run()
+        .is_some_and(|r| !r.is_done())
+        || app.lifecycle_run().is_some_and(|r| !r.is_done());
     let mode_palette = app.mode() == Mode::Palette;
     let on_service = app.selected_service().is_some();
 

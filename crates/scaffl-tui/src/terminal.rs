@@ -56,8 +56,8 @@ async fn drive(
     let mut events = spawn_event_reader();
     loop {
         // Pre-render hooks: drain queued output and advance run state.
-        app.drain_run();
-        app.poll_run().await;
+        app.drain_runs();
+        app.poll_runs().await;
         app.drain_services();
         app.refresh_service_status().await;
         app.tick_watchers().await;
@@ -93,6 +93,7 @@ async fn handle_event(app: &mut App, event: Event) {
             match app.mode() {
                 crate::app::Mode::Normal => handle_key_normal(app, code, modifiers).await,
                 crate::app::Mode::Palette => handle_key_palette(app, code, modifiers).await,
+                crate::app::Mode::Confirm => handle_key_confirm(app, code, modifiers),
             }
         }
         Event::Resize(_, _) => {
@@ -129,8 +130,13 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         // in flight, "stop the noisy thing" is more useful than the
         // literal stop semantics.
         KeyCode::Char('s') => {
-            if app.abort_current_run() {
-                app.flash = Some("aborted current run".into());
+            // Priority: stop the thing the user is looking at first
+            // (selected row's run), then a lifecycle run if any, then
+            // fall through to compose stop on the selected service.
+            if app.abort_selected_run() {
+                app.flash = Some("aborted run".into());
+            } else if app.abort_lifecycle_run() {
+                app.flash = Some("aborted lifecycle run".into());
             } else if let Some(service) = app.selected_service().map(|s| s.name.clone())
                 && let Err(rej) = app
                     .run_service_action(scaffl_container::service_action::STOP, &[service.as_str()])
@@ -140,8 +146,8 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             }
         }
         KeyCode::Char('S') => {
-            if app.abort_current_run() {
-                app.flash = Some("aborted current run".into());
+            if app.abort_lifecycle_run() {
+                app.flash = Some("aborted lifecycle run".into());
             } else if let Err(rej) = app
                 .run_service_action(scaffl_container::service_action::STOP, &[])
                 .await
@@ -191,8 +197,11 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             }
         }
         KeyCode::Enter => {
-            // Enter on a service: bring it up. Enter on a recipe /
-            // script: launch it (existing).
+            // Enter routing:
+            //   service           → up that service via lifecycle action
+            //   recipe / script   → launch its run; if the row is already
+            //                       running, open the kill-and-restart modal
+            //   watcher           → no-op (watchers fire on file change)
             if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
                 if let Err(rej) = app
                     .run_service_action(scaffl_container::service_action::UP, &[service.as_str()])
@@ -200,8 +209,16 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 {
                     app.flash = Some(launch_message(rej));
                 }
-            } else if let Err(rejection) = app.try_launch_selected() {
-                app.flash = Some(launch_message(rejection));
+            } else {
+                match app.try_launch_selected() {
+                    Ok(()) => {}
+                    Err(crate::app::LaunchRejection::AlreadyRunning) => {
+                        app.open_kill_restart_confirm();
+                    }
+                    Err(rej) => {
+                        app.flash = Some(launch_message(rej));
+                    }
+                }
             }
         }
         _ => {}
@@ -240,6 +257,39 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
         KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(p) = app.palette_mut() {
                 p.push_char(c);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Ctrl-c always quits even from a modal.
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+    match code {
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.confirm_resolve(false);
+        }
+        KeyCode::Tab | KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l') => {
+            app.confirm_toggle_focus();
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let Some(rej) = app.confirm_resolve(true) {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        KeyCode::Enter => {
+            // Enter accepts the focused choice — Yes by default;
+            // if the user tabbed to No, Enter dismisses.
+            let accept = app
+                .confirm_dialog()
+                .map(|d| d.yes_focused)
+                .unwrap_or(true);
+            if let Some(rej) = app.confirm_resolve(accept) {
+                app.flash = Some(launch_message(rej));
             }
         }
         _ => {}
