@@ -205,17 +205,25 @@ fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
     // preserves the iteration order of `app.items()` within the
     // commands group, which is recipes (alphabetical) then scripts
     // (alphabetical) — natural enough for browsing.
+    let mut container = Vec::new();
     let mut services = Vec::new();
     let mut watchers = Vec::new();
     let mut commands = Vec::new();
     for item in app.items() {
         match item.kind {
+            ItemKind::Container => container.push(item),
             ItemKind::Service => services.push(item),
             ItemKind::Watcher => watchers.push(item),
             ItemKind::Recipe | ItemKind::Script => commands.push(item),
         }
     }
     let mut out = Vec::new();
+    if !container.is_empty() {
+        out.push(SidebarGroup {
+            label: "container",
+            items: container,
+        });
+    }
     if !services.is_empty() {
         out.push(SidebarGroup {
             label: "services",
@@ -317,7 +325,9 @@ fn service_backend_badge(app: &App, item: &Item) -> Option<&'static str> {
 
 fn glyph_for(kind: ItemKind) -> &'static str {
     match kind {
-        ItemKind::Service => "●",
+        // Container reuses the service dot — same "is this thing
+        // alive" mental model.
+        ItemKind::Container | ItemKind::Service => "●",
         ItemKind::Watcher => "◇",
         // Same glyph for recipes and scripts — they share the
         // "commands" sidebar group. Kind is still distinguishable in
@@ -328,48 +338,95 @@ fn glyph_for(kind: ItemKind) -> &'static str {
 
 fn item_indicator_style(app: &App, item: &Item) -> Style {
     match item.kind {
+        ItemKind::Container => container_indicator_style(app),
         ItemKind::Service => service_indicator_style(app, &item.name),
         ItemKind::Watcher => watcher_indicator_style(app, &item.name),
         _ => Style::default().fg(Color::DarkGray),
     }
 }
 
-// ─────────────────────── right pane ───────────────────────
-
-fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
-    // Right pane is the per-row buffer view. Lifecycle actions
-    // (compose up / down / etc.) overlay as a bottom split when in
-    // flight — they're project-wide and don't have a row of their
-    // own. When idle (no lifecycle run), the pane is full-height.
-    if app.lifecycle_run().is_some() {
-        let split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(area);
-        render_focused_buffer(app, frame, split[0]);
-        render_lifecycle_output(app, frame, split[1]);
-    } else {
-        render_focused_buffer(app, frame, area);
+/// Indicator colour for the container row. Mirrors the run-state
+/// palette used elsewhere: yellow while a lifecycle action is in
+/// flight, green on a clean exit, red on failure / abort, grey
+/// when nothing has happened yet.
+fn container_indicator_style(app: &App) -> Style {
+    match app.lifecycle_run() {
+        None => Style::default().fg(Color::DarkGray),
+        Some(run) if !run.is_done() => Style::default().fg(Color::Yellow),
+        Some(run) => match run.exit_code {
+            Some(0) => Style::default().fg(Color::Green),
+            _ => Style::default().fg(Color::Red),
+        },
     }
 }
 
+// ─────────────────────── right pane ───────────────────────
+
+fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
+    // Right pane is purely selection-driven: services tail their
+    // pane, watchers their buffer, recipes / scripts their RunState,
+    // and the synthetic container row hosts compose lifecycle output.
+    // No bottom split — the lifecycle output lives in its own row
+    // now, navigated to like anything else.
+    render_focused_buffer(app, frame, area);
+}
+
 /// Paint the buffer for whatever's selected. Each kind has its own
-/// source: services tail through their pane, watchers carry a buffer
-/// from their last fire, recipes / scripts have their own RunState
-/// in the runs map. The "tmux session per row" model.
+/// source.
 fn render_focused_buffer(app: &App, frame: &mut Frame, area: Rect) {
-    if let Some(service) = app.selected_service() {
-        render_service_logs(service, frame, area);
-    } else if let Some(watcher) = app.selected_watcher() {
-        render_watcher(watcher, frame, area);
-    } else if let Some(run) = app.selected_run() {
-        render_run_buffer(run, frame, area);
-    } else if let Some(item) = app.selected_item() {
-        render_idle_buffer(item, frame, area);
-    } else {
+    let Some(item) = app.selected_item() else {
         let block = panel_block(" output ");
         frame.render_widget(block, area);
+        return;
+    };
+    match item.kind {
+        ItemKind::Container => match app.lifecycle_run() {
+            Some(run) => render_run_buffer(run, frame, area),
+            None => render_idle_container(item, frame, area),
+        },
+        ItemKind::Service => {
+            if let Some(service) = app.selected_service() {
+                render_service_logs(service, frame, area);
+            }
+        }
+        ItemKind::Watcher => {
+            if let Some(watcher) = app.selected_watcher() {
+                render_watcher(watcher, frame, area);
+            }
+        }
+        ItemKind::Recipe | ItemKind::Script => match app.selected_run() {
+            Some(run) => render_run_buffer(run, frame, area),
+            None => render_idle_buffer(item, frame, area),
+        },
     }
+}
+
+/// Placeholder for the container row when no lifecycle action has
+/// run yet. Tells the user how to wake the row up.
+fn render_idle_container(item: &Item, frame: &mut Frame, area: Rect) {
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            item.name.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  idle".to_string(), Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let body = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "no lifecycle action has run yet",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "U up all · D down all · R restart all · S stop all",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+    .block(block);
+    frame.render_widget(body, area);
 }
 
 /// Placeholder for a recipe / script that's never been launched in
@@ -398,27 +455,6 @@ fn render_idle_buffer(item: &Item, frame: &mut Frame, area: Rect) {
 }
 
 fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
-    let title = run_pane_title(run);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
-    let max_lines = area.height.saturating_sub(2) as usize;
-    let total = run.buffer.len();
-    let start = total.saturating_sub(max_lines);
-    let lines: Vec<Line<'static>> = run
-        .buffer
-        .iter()
-        .skip(start)
-        .map(render_captured_line)
-        .collect();
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
-}
-
-fn render_lifecycle_output(app: &App, frame: &mut Frame, area: Rect) {
-    let Some(run) = app.lifecycle_run() else {
-        return;
-    };
     let title = run_pane_title(run);
     let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
     let max_lines = area.height.saturating_sub(2) as usize;
@@ -597,6 +633,7 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 
 fn kind_label(kind: ItemKind) -> &'static str {
     match kind {
+        ItemKind::Container => "container",
         ItemKind::Service => "service",
         ItemKind::Watcher => "watcher",
         ItemKind::Recipe => "recipe",

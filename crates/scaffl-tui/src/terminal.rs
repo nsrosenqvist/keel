@@ -199,11 +199,22 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         }
         KeyCode::Enter => {
             // Enter routing:
+            //   container         → up all (same as `U`)
             //   service           → up that service via lifecycle action
             //   recipe / script   → either open args prompt (if forward_args
             //                       and not already running) or launch
             //   watcher           → no-op (watchers fire on file change)
-            if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
+            if matches!(
+                app.selected_item().map(|i| i.kind),
+                Some(crate::app::ItemKind::Container)
+            ) {
+                if let Err(rej) = app
+                    .run_service_action(scaffl_container::service_action::UP, &[])
+                    .await
+                {
+                    app.flash = Some(launch_message(rej));
+                }
+            } else if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
                 if let Err(rej) = app
                     .run_service_action(scaffl_container::service_action::UP, &[service.as_str()])
                     .await
@@ -442,7 +453,18 @@ mod tests {
     }
 
     fn app_with(toml: &str) -> App {
-        App::new(Arc::new(scaffl_config::parse_str(toml).unwrap()))
+        // Disable the container backend by default so the synthetic
+        // container row doesn't shift item indices in tests whose
+        // subject is unrelated. Tests that *do* want a container row
+        // pass their own `[containers]` block.
+        let prefix = if toml.contains("[containers]") {
+            String::new()
+        } else {
+            String::from("[containers]\nbackend = \"none\"\n")
+        };
+        App::new(Arc::new(
+            scaffl_config::parse_str(&format!("{prefix}{toml}")).unwrap(),
+        ))
     }
 
     #[tokio::test]

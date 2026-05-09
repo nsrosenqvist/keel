@@ -17,6 +17,10 @@ use std::time::Duration;
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ItemKind {
+    /// The container backend itself — a single synthetic row that
+    /// hosts compose lifecycle output (`U` / `D` / `R` / `S`). One
+    /// such row exists when the configured backend is non-`none`.
+    Container,
     Service,
     Watcher,
     Recipe,
@@ -310,6 +314,11 @@ impl App {
             .clone();
 
         match item.kind {
+            ItemKind::Container => {
+                return Err(LaunchRejection::NotRunnable(
+                    "container row shows lifecycle output; use U / D / R / S".into(),
+                ));
+            }
             ItemKind::Service => {
                 return Err(LaunchRejection::NotRunnable(
                     "service panes show logs; press enter to up the service".into(),
@@ -649,6 +658,17 @@ impl App {
                     format!("compose {action} {}", services.join(" "))
                 };
                 self.lifecycle_run = Some(RunState::spawn_child(label, child));
+                // Auto-jump to the container row so the user sees the
+                // action's output immediately. They can navigate away
+                // mid-stream; the buffer stays in the row until the
+                // next lifecycle action replaces it.
+                if let Some(idx) = self
+                    .items
+                    .iter()
+                    .position(|i| i.kind == ItemKind::Container)
+                {
+                    self.selected = idx;
+                }
                 Ok(())
             }
             Err(e) => Err(LaunchRejection::NotRunnable(format!("{e}"))),
@@ -784,15 +804,41 @@ fn build_items(config: &Config) -> Vec<Item> {
     build_items_from(config, &collect_service_panes(config), &BTreeMap::new())
 }
 
+/// Returns the row label for the container backend, or `None` when
+/// no container backend is configured (`backend = "none"`). The row
+/// label is the backend name the user typed in `[containers]
+/// backend = "..."` so the sidebar mirrors their config.
+fn container_row_label(config: &Config) -> Option<&'static str> {
+    use scaffl_config::model::Backend as B;
+    match config.containers.backend {
+        B::None => None,
+        B::Compose => Some("compose"),
+        B::Docker => Some("docker"),
+        B::Podman => Some("podman"),
+    }
+}
+
 /// Reconstruct the sidebar item list from live state. The order is
-/// stable: services (declared first in scaffl.toml order, then any
-/// auto-discovered ones), watchers, recipes, scripts.
+/// stable: container (when configured), services (declared first in
+/// scaffl.toml order, then any auto-discovered ones), watchers,
+/// recipes, scripts.
 fn build_items_from(
     config: &Config,
     services: &BTreeMap<String, ServicePane>,
     watchers: &BTreeMap<String, WatcherPane>,
 ) -> Vec<Item> {
     let mut items = Vec::new();
+
+    // Container row first (when a backend is configured) — this is
+    // the canonical home for compose lifecycle output (`U` / `D` /
+    // `R` / `S`). One row, fixed name, top of the sidebar.
+    if let Some(name) = container_row_label(config) {
+        items.push(Item {
+            name: name.to_string(),
+            kind: ItemKind::Container,
+        });
+    }
+
     let mut emitted_services: std::collections::BTreeSet<&str> = Default::default();
 
     // Declared services first, in scaffl.toml [[ui.pane]] order.
@@ -850,10 +896,16 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    /// Test cfg with no container backend, so the synthetic container
+    /// row doesn't pollute item-count / index assertions for tests
+    /// whose subject is unrelated.
     fn cfg() -> Arc<Config> {
         Arc::new(
             scaffl_config::parse_str(
                 r#"
+                [containers]
+                backend = "none"
+
                 [command.up]
                 run = "true"
                 [command.test]
@@ -870,6 +922,9 @@ mod tests {
         let cfg = Arc::new(
             scaffl_config::parse_str(
                 r#"
+                [containers]
+                backend = "none"
+
                 [command.up]
                 run = "true"
 
@@ -885,6 +940,42 @@ mod tests {
         assert_eq!(app.items()[0].kind, ItemKind::Service);
         assert_eq!(app.items()[0].name, "app");
         assert_eq!(app.items()[1].kind, ItemKind::Recipe);
+    }
+
+    #[test]
+    fn container_row_appears_when_backend_configured() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [containers]
+                backend = "compose"
+
+                [command.up]
+                run = "true"
+            "#,
+            )
+            .unwrap(),
+        );
+        let app = App::new(cfg);
+        assert_eq!(app.items()[0].kind, ItemKind::Container);
+        assert_eq!(app.items()[0].name, "compose");
+    }
+
+    #[test]
+    fn no_container_row_when_backend_none() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [containers]
+                backend = "none"
+                [command.up]
+                run = "true"
+            "#,
+            )
+            .unwrap(),
+        );
+        let app = App::new(cfg);
+        assert!(app.items().iter().all(|i| i.kind != ItemKind::Container));
     }
 
     #[test]
@@ -912,6 +1003,9 @@ mod tests {
         let cfg = Arc::new(
             scaffl_config::parse_str(
                 r#"
+                [containers]
+                backend = "none"
+
                 [[ui.pane]]
                 type = "service"
                 service = "app"
@@ -954,8 +1048,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_config_has_no_items() {
-        let cfg = Arc::new(scaffl_config::Config::default());
+    fn truly_empty_config_has_no_items() {
+        // Default Config has backend = compose, which produces a
+        // container row. To exercise the genuinely-empty path we
+        // explicitly disable the backend.
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"[containers]
+                backend = "none""#,
+            )
+            .unwrap(),
+        );
         let app = App::new(cfg);
         assert_eq!(app.items().len(), 0);
         assert!(app.selected_item().is_none());
@@ -973,6 +1076,9 @@ mod tests {
         let cfg = Arc::new(
             scaffl_config::parse_str(
                 r#"
+                [containers]
+                backend = "none"
+
                 [command.shell]
                 in = "app"
                 run = "/bin/sh"
