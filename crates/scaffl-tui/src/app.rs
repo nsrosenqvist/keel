@@ -10,7 +10,7 @@ use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
 use scaffl_container::Backend;
 use scaffl_runtime::Executor;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,6 +51,9 @@ pub enum Mode {
     Confirm,
     /// An args prompt is open for a `forward_args = true` row.
     ArgsPrompt,
+    /// The worktree switcher is open — keys navigate the list or
+    /// edit the new-worktree form when active.
+    WorktreeSwitcher,
 }
 
 /// Composite key for the per-row run map. Recipe / Script names can
@@ -84,6 +87,61 @@ pub struct ArgsPrompt {
     pub item_name: String,
     pub kind: ItemKind,
     pub input: String,
+}
+
+/// One row in the worktree switcher list. Slug is computed by the
+/// runtime crate; `is_current` flags the worktree scaffl is
+/// currently bound to so we can render it differently.
+#[derive(Debug, Clone)]
+pub struct WorktreeRow {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub slug: String,
+    pub is_current: bool,
+}
+
+/// Sub-state for the "create new worktree" flow inside the
+/// switcher modal.
+#[derive(Debug, Clone)]
+pub struct NewWorktreeForm {
+    /// Path where the new worktree directory will be created.
+    /// Prefilled with `<parent-of-current>/<branch-input>` so
+    /// the user only really needs to type the branch.
+    pub path_input: String,
+    /// Branch to attach. Empty + path naming an existing branch
+    /// → use existing; non-empty → `git worktree add -b <branch>`.
+    pub branch_input: String,
+    pub focus: NewFormField,
+    /// Last error from `git worktree add`, if any. Surfaces as a
+    /// hint inside the modal so the user can fix and retry without
+    /// the modal closing.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewFormField {
+    Path,
+    Branch,
+}
+
+/// Whole switcher state. The list always has a sentinel "+ new
+/// worktree" row at the end; selecting it opens `creating`.
+#[derive(Debug, Clone)]
+pub struct WorktreeSwitcher {
+    pub entries: Vec<WorktreeRow>,
+    pub selected: usize,
+    pub creating: Option<NewWorktreeForm>,
+}
+
+impl WorktreeSwitcher {
+    /// Index of the synthetic "+ new worktree" row — always last.
+    pub fn new_row_index(&self) -> usize {
+        self.entries.len()
+    }
+    /// Total rows including the new-worktree sentinel.
+    pub fn total_rows(&self) -> usize {
+        self.entries.len() + 1
+    }
 }
 
 /// TUI application state.
@@ -125,6 +183,16 @@ pub struct App {
     /// Open args prompt, if any. Routes keys when
     /// `mode == ArgsPrompt`.
     args_prompt: Option<ArgsPrompt>,
+    /// Open worktree switcher, if any. Routes keys when
+    /// `mode == WorktreeSwitcher`.
+    switcher: Option<WorktreeSwitcher>,
+    /// Path the event loop should hot-reload into. When set, `drive`
+    /// returns `DriveOutcome::SwitchWorktree(path)` and the outer
+    /// loop tears the App down and rebuilds it.
+    pub pending_switch: Option<PathBuf>,
+    /// Cached project root so the switcher can prefill its path
+    /// input with the current parent dir.
+    project_root: PathBuf,
 }
 
 impl App {
@@ -147,7 +215,22 @@ impl App {
             palette: None,
             confirm: None,
             args_prompt: None,
+            switcher: None,
+            pending_switch: None,
+            project_root: PathBuf::from("."),
         }
+    }
+
+    /// Set the project root the App is bound to. Required for the
+    /// worktree switcher to know where to enumerate worktrees from
+    /// and what parent directory to prefill the new-form's path with.
+    pub fn with_project_root(mut self, project_root: &Path) -> Self {
+        self.project_root = project_root.to_path_buf();
+        self
+    }
+
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
     }
 
     pub fn with_executor(mut self, executor: Executor) -> Self {
@@ -560,6 +643,154 @@ impl App {
             self.selected = idx;
         }
         Some(self.try_launch_selected_with_args(args))
+    }
+
+    /// Open the worktree switcher with `entries` (typically the
+    /// output of `list_worktrees(project_root)`). The current row
+    /// is auto-flagged so the user sees where they are.
+    pub fn open_worktree_switcher(&mut self, entries: Vec<WorktreeRow>) {
+        let selected = entries.iter().position(|e| e.is_current).unwrap_or(0);
+        self.switcher = Some(WorktreeSwitcher {
+            entries,
+            selected,
+            creating: None,
+        });
+        self.mode = Mode::WorktreeSwitcher;
+    }
+
+    pub fn switcher(&self) -> Option<&WorktreeSwitcher> {
+        self.switcher.as_ref()
+    }
+
+    /// Close the switcher without acting.
+    pub fn close_switcher(&mut self) {
+        self.switcher = None;
+        self.mode = Mode::Normal;
+    }
+
+    pub fn switcher_select_next(&mut self) {
+        if let Some(s) = self.switcher.as_mut() {
+            let total = s.total_rows();
+            if total > 0 {
+                s.selected = (s.selected + 1).min(total - 1);
+            }
+        }
+    }
+
+    pub fn switcher_select_prev(&mut self) {
+        if let Some(s) = self.switcher.as_mut() {
+            s.selected = s.selected.saturating_sub(1);
+        }
+    }
+
+    /// Resolve the switcher: if the selected row is an existing
+    /// worktree, queue a hot-reload to its path and close the modal;
+    /// if it's the synthetic "+ new worktree" row, open the
+    /// create-form sub-state instead. Returns true if the switcher
+    /// was acted on (so the caller knows whether to absorb the key).
+    pub fn switcher_confirm(&mut self) -> bool {
+        let Some(s) = self.switcher.as_ref() else {
+            return false;
+        };
+        if s.selected == s.new_row_index() {
+            // Open the create form, prefilled.
+            let parent = self
+                .project_root
+                .parent()
+                .unwrap_or(self.project_root.as_path());
+            let mut form = NewWorktreeForm {
+                path_input: format!("{}/", parent.display()),
+                branch_input: String::new(),
+                focus: NewFormField::Branch,
+                error: None,
+            };
+            // If we know the current branch, default the path to a
+            // sibling dir named after a placeholder so users see
+            // the shape and only need to type the new branch name.
+            form.path_input = parent.join("").display().to_string();
+            self.switcher.as_mut().unwrap().creating = Some(form);
+            return true;
+        }
+        // Existing worktree row → queue switch.
+        let row = s.entries[s.selected].clone();
+        if !row.is_current {
+            self.pending_switch = Some(row.path);
+        }
+        self.close_switcher();
+        true
+    }
+
+    /// Mutate the open new-worktree form. Caller dispatches keys to
+    /// these helpers from the switcher key handler.
+    pub fn switcher_form_push_char(&mut self, c: char) {
+        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+            match form.focus {
+                NewFormField::Path => form.path_input.push(c),
+                NewFormField::Branch => form.branch_input.push(c),
+            }
+            form.error = None;
+        }
+    }
+
+    pub fn switcher_form_pop_char(&mut self) {
+        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+            match form.focus {
+                NewFormField::Path => {
+                    form.path_input.pop();
+                }
+                NewFormField::Branch => {
+                    form.branch_input.pop();
+                }
+            }
+            form.error = None;
+        }
+    }
+
+    pub fn switcher_form_toggle_focus(&mut self) {
+        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+            form.focus = match form.focus {
+                NewFormField::Path => NewFormField::Branch,
+                NewFormField::Branch => NewFormField::Path,
+            };
+        }
+    }
+
+    pub fn switcher_form_cancel(&mut self) {
+        if let Some(s) = self.switcher.as_mut() {
+            s.creating = None;
+        }
+    }
+
+    /// Snapshot the current form state without taking ownership;
+    /// the caller invokes git from this data and reports back via
+    /// [`Self::switcher_form_finish`].
+    pub fn switcher_form_snapshot(&self) -> Option<NewWorktreeForm> {
+        self.switcher.as_ref().and_then(|s| s.creating.clone())
+    }
+
+    /// Resolve the form after a `git worktree add` attempt. On Ok,
+    /// queues a switch to the freshly-created path and closes the
+    /// modal. On Err, surfaces the message inside the form so the
+    /// user can fix and retry.
+    pub fn switcher_form_finish(&mut self, result: Result<PathBuf, String>) {
+        match result {
+            Ok(path) => {
+                self.pending_switch = Some(path);
+                self.close_switcher();
+            }
+            Err(msg) => {
+                if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+                    form.error = Some(msg);
+                }
+            }
+        }
+    }
+
+    /// Take the queued worktree switch path, if any. Called by the
+    /// event loop after `drive` returns; the path drives a full App
+    /// rebuild against the new project root.
+    pub fn take_pending_switch(&mut self) -> Option<PathBuf> {
+        self.pending_switch.take()
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
@@ -1095,5 +1326,119 @@ mod tests {
             LaunchRejection::NotRunnable(msg) => assert!(msg.contains("in-container")),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    fn rows() -> Vec<WorktreeRow> {
+        vec![
+            WorktreeRow {
+                path: PathBuf::from("/repo"),
+                branch: Some("main".into()),
+                slug: "main".into(),
+                is_current: true,
+            },
+            WorktreeRow {
+                path: PathBuf::from("/repo-feature"),
+                branch: Some("feature".into()),
+                slug: "feature".into(),
+                is_current: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn switcher_open_preselects_current_row() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        assert_eq!(app.mode(), Mode::WorktreeSwitcher);
+        let s = app.switcher().unwrap();
+        // Current row is index 0, so selected starts at 0.
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn switcher_confirm_on_current_row_no_pending_switch() {
+        // Selecting the current worktree → no-op (no pending switch).
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        let acted = app.switcher_confirm();
+        assert!(acted);
+        assert!(app.pending_switch.is_none());
+        assert_eq!(app.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn switcher_confirm_on_other_row_queues_switch() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        let acted = app.switcher_confirm();
+        assert!(acted);
+        assert_eq!(
+            app.take_pending_switch(),
+            Some(PathBuf::from("/repo-feature"))
+        );
+    }
+
+    #[test]
+    fn switcher_navigation_extends_to_new_row_sentinel() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        // 2 entries + 1 sentinel = 3 rows. Down × 2 reaches the
+        // sentinel; another Down clamps.
+        app.switcher_select_next();
+        app.switcher_select_next();
+        assert_eq!(app.switcher().unwrap().selected, 2);
+        app.switcher_select_next();
+        assert_eq!(app.switcher().unwrap().selected, 2);
+    }
+
+    #[test]
+    fn switcher_confirm_on_new_row_opens_form() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        // Modal stays open with the form populated.
+        assert_eq!(app.mode(), Mode::WorktreeSwitcher);
+        assert!(app.switcher().unwrap().creating.is_some());
+    }
+
+    #[test]
+    fn switcher_form_finish_ok_queues_switch() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        app.switcher_form_finish(Ok(PathBuf::from("/repo-new")));
+        assert_eq!(app.take_pending_switch(), Some(PathBuf::from("/repo-new")));
+        assert_eq!(app.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn switcher_form_finish_err_keeps_form_open_with_error() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        app.switcher_form_finish(Err("git: branch already exists".into()));
+        assert_eq!(app.mode(), Mode::WorktreeSwitcher);
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.error.as_deref(), Some("git: branch already exists"));
+    }
+
+    #[test]
+    fn switcher_form_focus_toggles_between_path_and_branch() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        let initial = app.switcher().unwrap().creating.as_ref().unwrap().focus;
+        app.switcher_form_toggle_focus();
+        let toggled = app.switcher().unwrap().creating.as_ref().unwrap().focus;
+        assert_ne!(initial, toggled);
     }
 }

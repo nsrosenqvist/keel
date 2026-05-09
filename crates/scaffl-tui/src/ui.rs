@@ -103,6 +103,11 @@ pub fn render(app: &App, frame: &mut Frame) {
     {
         render_args_prompt(prompt, frame);
     }
+    if app.mode() == Mode::WorktreeSwitcher
+        && let Some(switcher) = app.switcher()
+    {
+        render_worktree_switcher(switcher, frame);
+    }
 }
 
 // ───────────────────────── top bar ─────────────────────────
@@ -1034,6 +1039,163 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
         lines
     };
     frame.render_widget(Paragraph::new(body), layout[1]);
+}
+
+fn render_worktree_switcher(switcher: &crate::app::WorktreeSwitcher, frame: &mut Frame) {
+    // Two sub-views: list (default) and the create form. They share
+    // the same outer block; the form is taller because it has two
+    // input rows plus a hint and an error line.
+    if let Some(form) = switcher.creating.as_ref() {
+        render_switcher_form(form, frame);
+    } else {
+        render_switcher_list(switcher, frame);
+    }
+}
+
+fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Frame) {
+    let total_rows = switcher.total_rows();
+    let height = (total_rows as u16 + 4).min(20);
+    let area = centered_rect(frame.area(), 60, height);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::new(2, 2, 1, 1))
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                "switch worktree",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(total_rows + 2);
+    for (idx, row) in switcher.entries.iter().enumerate() {
+        let prefix = if idx == switcher.selected {
+            "▶ "
+        } else {
+            "  "
+        };
+        let row_style = if idx == switcher.selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let current_marker = if row.is_current {
+            Span::styled(" ●", Style::default().fg(Color::Green))
+        } else {
+            Span::raw("  ")
+        };
+        let branch_label = row
+            .branch
+            .clone()
+            .unwrap_or_else(|| "<detached>".to_string());
+        lines.push(Line::from(vec![
+            Span::styled(prefix.to_string(), row_style),
+            Span::styled(format!("{branch_label:<24}"), row_style),
+            current_marker,
+            Span::raw("  "),
+            Span::styled(
+                row.path.display().to_string(),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+    // Sentinel "+ new worktree" row.
+    let new_idx = switcher.new_row_index();
+    let prefix = if switcher.selected == new_idx {
+        "▶ "
+    } else {
+        "  "
+    };
+    let row_style = if switcher.selected == new_idx {
+        Style::default()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ACCENT)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(prefix.to_string(), row_style),
+        Span::styled("+ new worktree".to_string(), row_style),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑↓ nav · enter switch · esc cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_switcher_form(form: &crate::app::NewWorktreeForm, frame: &mut Frame) {
+    use crate::app::NewFormField;
+    let height = if form.error.is_some() { 11 } else { 9 };
+    let area = centered_rect(frame.area(), 60, height);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::new(2, 2, 1, 1))
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                "new worktree",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
+
+    let path_focus = matches!(form.focus, NewFormField::Path);
+    let branch_focus = matches!(form.focus, NewFormField::Branch);
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
+    lines.push(field_row("path", &form.path_input, path_focus));
+    lines.push(field_row("branch", &form.branch_input, branch_focus));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "tab toggle · enter create · esc back",
+        Style::default().fg(Color::DarkGray),
+    )));
+    if let Some(err) = form.error.as_ref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn field_row(label: &'static str, value: &str, focused: bool) -> Line<'static> {
+    let label_style = if focused {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let value_style = if focused {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let cursor_span = if focused {
+        Span::styled("█", Style::default().fg(ACCENT))
+    } else {
+        Span::raw("")
+    };
+    Line::from(vec![
+        Span::styled(format!("{label:<8}"), label_style),
+        Span::styled(value.to_string(), value_style),
+        cursor_span,
+    ])
 }
 
 fn render_args_prompt(prompt: &crate::app::ArgsPrompt, frame: &mut Frame) {

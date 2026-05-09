@@ -14,10 +14,9 @@
 use anyhow::{Context, Result};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 use scaffl_config::{Config, EnvSpec};
-use scaffl_runtime::worktree::{BaseRef, Identity, offset_for};
+use scaffl_runtime::worktree::{BaseRef, Identity, WorktreeListEntry, list_worktrees, offset_for};
 use std::collections::BTreeSet;
 use std::path::Path;
-use tokio::process::Command;
 
 pub async fn status(config: &Config, identity: &Identity) -> Result<()> {
     println!("slug:       {}", display_slug(&identity.slug));
@@ -81,7 +80,7 @@ pub async fn status(config: &Config, identity: &Identity) -> Result<()> {
 }
 
 pub async fn list(config: &Config, project_root: &Path) -> Result<()> {
-    let entries = git_worktrees(project_root).await;
+    let entries = list_worktrees(project_root).await;
     if entries.is_empty() {
         println!("No git worktrees detected (run from inside a git repo).");
         return Ok(());
@@ -189,19 +188,11 @@ fn display_slug(slug: &str) -> &str {
     if slug.is_empty() { "<empty>" } else { slug }
 }
 
-#[derive(Debug, Clone)]
-struct WorktreeEntry {
-    path: String,
-    branch: Option<String>,
-    detached: bool,
-}
-
-fn derive_slug(entry: &WorktreeEntry) -> String {
+fn derive_slug(entry: &WorktreeListEntry) -> String {
     if let Some(branch) = entry.branch.as_deref() {
         return scaffl_runtime::worktree::slugify(branch);
     }
     if entry.detached {
-        // Use last 7 chars of the worktree dir path as a fallback handle.
         return scaffl_runtime::worktree::slugify(
             std::path::Path::new(&entry.path)
                 .file_name()
@@ -212,97 +203,13 @@ fn derive_slug(entry: &WorktreeEntry) -> String {
     String::new()
 }
 
-/// Parse `git worktree list --porcelain` output. Returns one entry per
-/// worktree.
-async fn git_worktrees(project_root: &Path) -> Vec<WorktreeEntry> {
-    let Ok(output) = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(project_root)
-        .output()
-        .await
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    let stdout = match String::from_utf8(output.stdout) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-    parse_worktree_porcelain(&stdout)
-}
-
-fn parse_worktree_porcelain(input: &str) -> Vec<WorktreeEntry> {
-    let mut out = Vec::new();
-    let mut path: Option<String> = None;
-    let mut branch: Option<String> = None;
-    let mut detached = false;
-    for line in input.lines() {
-        if line.is_empty() {
-            if let Some(p) = path.take() {
-                out.push(WorktreeEntry {
-                    path: p,
-                    branch: branch.take(),
-                    detached: std::mem::take(&mut detached),
-                });
-            }
-            continue;
-        }
-        if let Some(p) = line.strip_prefix("worktree ") {
-            path = Some(p.to_string());
-        } else if let Some(b) = line.strip_prefix("branch ") {
-            // `branch refs/heads/feature/x` → strip the prefix.
-            branch = Some(b.trim_start_matches("refs/heads/").to_string());
-        } else if line == "detached" {
-            detached = true;
-        }
-    }
-    if let Some(p) = path {
-        out.push(WorktreeEntry {
-            path: p,
-            branch,
-            detached,
-        });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn parses_worktree_porcelain_minimal() {
-        let input = "\
-worktree /home/me/proj
-HEAD abcd1234
-branch refs/heads/main
-
-worktree /home/me/proj-feature
-HEAD ef567890
-branch refs/heads/feature/x
-";
-        let entries = parse_worktree_porcelain(input);
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].path, "/home/me/proj");
-        assert_eq!(entries[0].branch.as_deref(), Some("main"));
-        assert!(!entries[0].detached);
-        assert_eq!(entries[1].branch.as_deref(), Some("feature/x"));
-    }
-
-    #[test]
-    fn parses_detached_entry() {
-        let input = "\
-worktree /home/me/proj-detached
-HEAD abcd1234
-detached
-";
-        let entries = parse_worktree_porcelain(input);
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].detached);
-        assert!(entries[0].branch.is_none());
-    }
+    // Porcelain-parsing tests live in scaffl-runtime now (single
+    // owner of the parser); only the assign / list-rendering paths
+    // are tested from this crate.
 
     #[test]
     fn assign_writes_new_entry() {

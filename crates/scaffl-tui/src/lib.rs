@@ -42,16 +42,25 @@ pub enum TuiError {
     Io(#[from] std::io::Error),
 }
 
-/// Open the TUI dashboard. Returns when the user quits.
+/// Outcome from one TUI session. The CLI's outer loop rebuilds
+/// against the new project root when the user picks a worktree from
+/// the switcher; otherwise the session ends.
+pub use terminal::DriveOutcome;
+
+/// Open the TUI dashboard. Returns when the user quits or signals a
+/// worktree switch. The caller's job to rebuild the App against the
+/// new root and call `run` again — that keeps the TUI crate
+/// independent of how config / backend / executor are constructed.
 pub async fn run(
     config: Arc<Config>,
     executor: Executor,
     backend: Arc<dyn Backend>,
     project_root: &Path,
-) -> Result<(), TuiError> {
+) -> Result<DriveOutcome, TuiError> {
     let mut app = App::new(config)
         .with_executor(executor)
-        .with_backend(backend);
+        .with_backend(backend)
+        .with_project_root(project_root);
     // Order matters: discover before watchers so the sidebar sections
     // populate in one rebuild rather than two flickers.
     app.discover_services().await;

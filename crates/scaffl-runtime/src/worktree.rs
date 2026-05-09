@@ -206,10 +206,122 @@ pub fn slugify(input: &str) -> String {
     out
 }
 
+/// One worktree from `git worktree list --porcelain`.
+///
+/// `branch` is normalised to the short form (`feature/x`, not
+/// `refs/heads/feature/x`); `None` means a detached HEAD.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeListEntry {
+    pub path: String,
+    pub branch: Option<String>,
+    pub detached: bool,
+}
+
+/// List worktrees by shelling out to `git worktree list --porcelain`.
+/// Returns an empty Vec on any failure (not a git repo, git missing,
+/// non-utf8 output) — callers treat "no worktrees" identically to
+/// "no git", which is the right UX for the worktree switcher.
+pub async fn list_worktrees(project_root: &Path) -> Vec<WorktreeListEntry> {
+    let Ok(output) = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let Ok(stdout) = String::from_utf8(output.stdout) else {
+        return Vec::new();
+    };
+    parse_worktree_porcelain(&stdout)
+}
+
+/// Parse `git worktree list --porcelain` output. One blank line
+/// separates each worktree's stanza. Public for tests and reuse.
+pub fn parse_worktree_porcelain(input: &str) -> Vec<WorktreeListEntry> {
+    let mut out = Vec::new();
+    let mut path: Option<String> = None;
+    let mut branch: Option<String> = None;
+    let mut detached = false;
+    for line in input.lines() {
+        if line.is_empty() {
+            if let Some(p) = path.take() {
+                out.push(WorktreeListEntry {
+                    path: p,
+                    branch: branch.take(),
+                    detached: std::mem::take(&mut detached),
+                });
+            }
+            continue;
+        }
+        if let Some(p) = line.strip_prefix("worktree ") {
+            path = Some(p.to_string());
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            // `branch refs/heads/feature/x` → strip the prefix.
+            branch = Some(b.trim_start_matches("refs/heads/").to_string());
+        } else if line == "detached" {
+            detached = true;
+        }
+    }
+    if let Some(p) = path {
+        out.push(WorktreeListEntry {
+            path: p,
+            branch,
+            detached,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn parse_porcelain_minimal_two_worktrees() {
+        let input = "\
+worktree /home/me/proj
+HEAD abcd1234
+branch refs/heads/main
+
+worktree /home/me/proj-feature
+HEAD ef567890
+branch refs/heads/feature/x
+";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "/home/me/proj");
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert!(!entries[0].detached);
+        assert_eq!(entries[1].branch.as_deref(), Some("feature/x"));
+    }
+
+    #[test]
+    fn parse_porcelain_detached_entry() {
+        let input = "\
+worktree /home/me/proj-detached
+HEAD abcd1234
+detached
+";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].detached);
+        assert!(entries[0].branch.is_none());
+    }
+
+    #[test]
+    fn parse_porcelain_handles_trailing_no_blank_line() {
+        // Real-world git output sometimes lacks a trailing blank line
+        // on the last stanza. Make sure we still emit the final entry.
+        let input = "worktree /a\nHEAD aaa\nbranch refs/heads/main";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "/a");
+    }
 
     #[test]
     fn slugify_lowercases_and_dashifies() {

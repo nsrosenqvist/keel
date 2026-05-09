@@ -404,22 +404,55 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     )))
 }
 
-async fn run_tui(config: Arc<Config>, project_root: &Path) -> Result<()> {
-    // Pick the configured backend, falling back to a NullBackend-only
-    // registry on detection failure so the TUI is still browseable
-    // on systems without compose.
-    let backend: Arc<dyn Backend> = match build_backend(&config).await {
-        Ok(b) => b,
-        Err(_) => Arc::new(scaffl_container::registry::ServiceRegistry::new(
-            Some(Arc::new(scaffl_container::null::NullBackend)),
-            None,
-        )),
-    };
-    let executor =
-        scaffl_runtime::Executor::new(Arc::clone(&backend), Arc::clone(&config), project_root);
-    scaffl_tui::run(config, executor, backend, project_root)
+async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()> {
+    // Outer loop: each iteration is one TUI session. The user can
+    // switch worktrees from inside the TUI (`W` modal) → we drop
+    // out of `scaffl_tui::run`, rebuild config / backend / executor
+    // against the new root, and re-enter. `Quit` ends the loop.
+    let mut current_root = initial_root.to_path_buf();
+    let mut current_config = initial_config;
+    loop {
+        let backend: Arc<dyn Backend> = match build_backend(&current_config).await {
+            Ok(b) => b,
+            Err(_) => Arc::new(scaffl_container::registry::ServiceRegistry::new(
+                Some(Arc::new(scaffl_container::null::NullBackend)),
+                None,
+            )),
+        };
+        let executor = scaffl_runtime::Executor::new(
+            Arc::clone(&backend),
+            Arc::clone(&current_config),
+            &current_root,
+        );
+        let outcome = scaffl_tui::run(
+            Arc::clone(&current_config),
+            executor,
+            backend,
+            &current_root,
+        )
         .await
-        .context("run TUI")
+        .context("run TUI")?;
+        match outcome {
+            scaffl_tui::DriveOutcome::Quit => return Ok(()),
+            scaffl_tui::DriveOutcome::SwitchWorktree(new_root) => {
+                // Reload config from the new root. Slug detection
+                // happens during config load via the same bootstrap
+                // pass `run` does on first start.
+                let bootstrap_cfg = scaffl_config::load_project_with_slug(&new_root, None)
+                    .with_context(|| format!("load project at {}", new_root.display()))?;
+                let identity = scaffl_runtime::Identity::detect(&new_root, &bootstrap_cfg).await;
+                let slug_for_overlay = if identity.is_isolated() {
+                    Some(identity.slug.as_str())
+                } else {
+                    None
+                };
+                let new_cfg = scaffl_config::load_project_with_slug(&new_root, slug_for_overlay)
+                    .with_context(|| format!("load project at {}", new_root.display()))?;
+                current_root = new_root;
+                current_config = Arc::new(new_cfg);
+            }
+        }
+    }
 }
 
 fn init_tracing() {

@@ -26,7 +26,16 @@ use tracing::warn;
 const POLL_INTERVAL_MS: u64 = 100;
 const TICK_INTERVAL_MS: u64 = 250;
 
-pub async fn run_event_loop(app: &mut App) -> Result<(), TuiError> {
+/// Outcome of one drive of the event loop. `Quit` ends the session;
+/// `SwitchWorktree` signals a hot-reload — the CLI's outer loop
+/// rebuilds the App against the new root and re-enters drive.
+#[derive(Debug)]
+pub enum DriveOutcome {
+    Quit,
+    SwitchWorktree(std::path::PathBuf),
+}
+
+pub async fn run_event_loop(app: &mut App) -> Result<DriveOutcome, TuiError> {
     let title = terminal_title(app);
     let mut terminal = enter_terminal(&title)?;
     let result = drive(&mut terminal, app).await;
@@ -47,7 +56,7 @@ fn terminal_title(app: &App) -> String {
 async fn drive(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
-) -> Result<(), TuiError> {
+) -> Result<DriveOutcome, TuiError> {
     // Spawn long-lived tail processes once, before the event loop. Any
     // tail that fails to spawn surfaces in the pane's tail_error and the
     // others continue.
@@ -64,12 +73,15 @@ async fn drive(
 
         terminal.draw(|f| ui::render(app, f))?;
         if app.should_quit() {
-            return Ok(());
+            return Ok(DriveOutcome::Quit);
+        }
+        if let Some(path) = app.take_pending_switch() {
+            return Ok(DriveOutcome::SwitchWorktree(path));
         }
         tokio::select! {
             biased;
             ev = events.recv() => {
-                let Some(ev) = ev else { return Ok(()) };
+                let Some(ev) = ev else { return Ok(DriveOutcome::Quit) };
                 handle_event(app, ev).await;
             }
             _ = tokio::time::sleep(Duration::from_millis(TICK_INTERVAL_MS)) => {
@@ -95,6 +107,9 @@ async fn handle_event(app: &mut App, event: Event) {
                 crate::app::Mode::Palette => handle_key_palette(app, code, modifiers).await,
                 crate::app::Mode::Confirm => handle_key_confirm(app, code, modifiers),
                 crate::app::Mode::ArgsPrompt => handle_key_args_prompt(app, code, modifiers),
+                crate::app::Mode::WorktreeSwitcher => {
+                    handle_key_switcher(app, code, modifiers).await
+                }
             }
         }
         Event::Resize(_, _) => {
@@ -185,6 +200,11 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             {
                 app.flash = Some(launch_message(rej));
             }
+        }
+        // `W`: open the worktree switcher modal.
+        KeyCode::Char('W') => {
+            let entries = build_worktree_rows(app).await;
+            app.open_worktree_switcher(entries);
         }
         // `D`: down all. No lowercase counterpart — compose's `down` is
         // intrinsically project-wide; the per-service equivalent is
@@ -297,6 +317,127 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
 /// previous run is being interrupted).
 fn selected_is_running(app: &App) -> bool {
     app.selected_run().is_some_and(|r| !r.is_done())
+}
+
+/// Build worktree-switcher rows for the current project. The current
+/// worktree (matched by canonicalised path) is flagged so the modal
+/// can render it differently and pre-select it.
+async fn build_worktree_rows(app: &App) -> Vec<crate::app::WorktreeRow> {
+    let project_root = app.project_root().to_path_buf();
+    let entries = scaffl_runtime::worktree::list_worktrees(&project_root).await;
+    let current = std::fs::canonicalize(&project_root).unwrap_or(project_root);
+    entries
+        .into_iter()
+        .map(|e| {
+            let path_buf = std::path::PathBuf::from(&e.path);
+            let canonical = std::fs::canonicalize(&path_buf).unwrap_or_else(|_| path_buf.clone());
+            let slug = derive_slug_from_entry(&e);
+            crate::app::WorktreeRow {
+                path: path_buf,
+                branch: e.branch.clone(),
+                slug,
+                is_current: canonical == current,
+            }
+        })
+        .collect()
+}
+
+fn derive_slug_from_entry(e: &scaffl_runtime::WorktreeListEntry) -> String {
+    if let Some(branch) = e.branch.as_deref() {
+        return scaffl_runtime::worktree::slugify(branch);
+    }
+    if e.detached {
+        return scaffl_runtime::worktree::slugify(
+            std::path::Path::new(&e.path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(""),
+        );
+    }
+    String::new()
+}
+
+async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+    // Two sub-modes inside this modal: list-of-worktrees (default)
+    // and the new-worktree create form. The form takes over key
+    // dispatch when active.
+    if app.switcher().and_then(|s| s.creating.as_ref()).is_some() {
+        handle_key_switcher_form(app, code).await;
+        return;
+    }
+    match code {
+        KeyCode::Esc => app.close_switcher(),
+        KeyCode::Up | KeyCode::Char('k') => app.switcher_select_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.switcher_select_next(),
+        KeyCode::Enter => {
+            app.switcher_confirm();
+        }
+        _ => {}
+    }
+}
+
+async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => app.switcher_form_cancel(),
+        KeyCode::Tab => app.switcher_form_toggle_focus(),
+        KeyCode::Backspace => app.switcher_form_pop_char(),
+        KeyCode::Enter => {
+            // Snapshot, run git worktree add, report back via finish().
+            let Some(form) = app.switcher_form_snapshot() else {
+                return;
+            };
+            let project_root = app.project_root().to_path_buf();
+            let result = create_worktree(&project_root, &form.path_input, &form.branch_input).await;
+            app.switcher_form_finish(result);
+        }
+        KeyCode::Char(c) => app.switcher_form_push_char(c),
+        _ => {}
+    }
+}
+
+/// Run `git worktree add` for the user's form input. On success
+/// returns the canonicalised path of the new worktree (so the App
+/// rebuild has a stable, absolute target). On failure returns the
+/// trimmed git stderr so the modal can render it.
+async fn create_worktree(
+    project_root: &std::path::Path,
+    path: &str,
+    branch: &str,
+) -> Result<std::path::PathBuf, String> {
+    let path = path.trim();
+    let branch = branch.trim();
+    if path.is_empty() {
+        return Err("path is required".into());
+    }
+    let mut argv: Vec<&str> = vec!["worktree", "add"];
+    if !branch.is_empty() {
+        argv.push("-b");
+        argv.push(branch);
+    }
+    argv.push(path);
+    let output = tokio::process::Command::new("git")
+        .args(&argv)
+        .current_dir(project_root)
+        .output()
+        .await
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "git worktree add failed (exit {})",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            stderr
+        });
+    }
+    let pb = std::path::PathBuf::from(path);
+    Ok(std::fs::canonicalize(&pb).unwrap_or(pb))
 }
 
 fn handle_key_args_prompt(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
