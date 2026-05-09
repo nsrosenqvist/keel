@@ -7,6 +7,7 @@
 //! runtime.
 
 pub mod compose;
+pub mod custom;
 pub mod error;
 pub mod null;
 
