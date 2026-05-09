@@ -166,6 +166,45 @@ For the explicit / one-shot form, `scaffl env --write [PATH]` writes
 the same block ad-hoc — useful in CI scripts or when you don't want
 the every-invocation auto-write.
 
+## Non-container services
+
+Some projects mix compose-managed containers with services
+controlled some other way (a system Postgres, a brew-installed
+Redis, a tunnel daemon). scaffl handles them through two config
+shapes that compile down to the same internal `CustomBackend`:
+
+```toml
+# Generic — you describe how to control it.
+[[services.custom]]
+name   = "ngrok"
+status = "pgrep -x ngrok"          # exit 0 = Running; non-zero = Stopped
+start  = "ngrok http 8080 > /tmp/ngrok.log 2>&1 &"
+stop   = "pkill -x ngrok"
+restart = "..."                    # optional; defaults to stop && start
+logs    = "tail -f /tmp/ngrok.log" # optional; absent → no log tailing
+desc    = "Public tunnel"          # optional; shown in the TUI
+
+# Sugar — fills in start/stop/restart/status/logs from systemctl.
+[[services.systemd]]
+name  = "postgres"
+unit  = "postgresql.service"
+scope = "user"                     # "user" (default) | "system"
+```
+
+Service names must be unique across `services.custom`,
+`services.systemd`, and the compose project (collisions error
+at config-load time). The TUI sidebar tags each row with its
+backend kind; the keymap (`r` / `R` / `s` / `S` / `U` / `D`)
+operates uniformly across all kinds.
+
+`[runtime] backend = "none"` plus only `[[services.systemd]]` /
+`[[services.custom]]` declarations is fully supported — useful
+when the project's stack is entirely host-managed.
+
+`scaffl doctor` probes each declared service's status command and
+reports running / stopped per entry, so you can verify the
+declarations are correct before opening the TUI.
+
 ## Layout
 
 ```

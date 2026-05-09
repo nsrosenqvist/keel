@@ -124,6 +124,29 @@ run  = "composer check"
 desc = "All quality checks"
 run  = ["check:frontend", "check:backend"]
 
+# ----- Non-container services -----
+
+# Example: a system Postgres run by systemd that we want to track
+# alongside our compose containers in the TUI. Uncomment if your
+# host has a systemd-managed Postgres (or change `unit` to whatever
+# you actually run).
+#
+# [[services.systemd]]
+# name  = "postgres-host"
+# unit  = "postgresql.service"
+# scope = "user"               # or "system" for system-wide units
+
+# Example: a generic shell-controlled service (e.g. an ngrok tunnel
+# you want to bring up alongside the dev stack).
+#
+# [[services.custom]]
+# name   = "ngrok"
+# desc   = "Public tunnel for webhook testing"
+# status = "pgrep -x ngrok"
+# start  = "ngrok http ${APP_PORT} > /tmp/ngrok.log 2>&1 &"
+# stop   = "pkill -x ngrok"
+# logs   = "tail -F /tmp/ngrok.log"
+
 # ----- Hooks -----
 
 [hooks]

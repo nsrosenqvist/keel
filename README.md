@@ -36,6 +36,13 @@ whole stack from a built-in TUI.
 - **Doctor + init.** `scaffl init` scaffolds a starter `scaffl.toml`
   with detection hints (compose / .env / package.json / composer.json).
   `scaffl doctor` validates backend, env files, and dependency graph.
+- **Non-container services alongside compose.** Declare a system
+  Postgres or any shell-controllable daemon with
+  `[[services.systemd]]` (sugar over `unit` + `scope`) or
+  `[[services.custom]]` (you supply status / start / stop /
+  restart / logs). They appear in the TUI sidebar with a small
+  `systemd` / `custom` badge and respond to the same r / R / s /
+  S / U / D keymap as compose services.
 - **Worktree-aware envs.** Each git worktree gets a deterministic
   slug + integer offset. `[env]` entries with `base = "8080", offset
   = "SCAFFL_WORKTREE_OFFSET"` make ports vary per worktree
