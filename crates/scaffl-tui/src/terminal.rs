@@ -78,6 +78,20 @@ async fn drive(
         if let Some(path) = app.take_pending_switch() {
             return Ok(DriveOutcome::SwitchWorktree(path));
         }
+        if let Some(req) = app.take_pending_attach() {
+            // Yield the terminal to tmux. Drop the events reader
+            // first so its blocking poll thread doesn't fight tmux
+            // for input, leave alternate screen / cooked mode, run
+            // tmux attach (it inherits stdin/stdout/stderr from us),
+            // then re-enter the TUI when the user detaches.
+            drop(events);
+            leave_terminal(terminal)?;
+            attach_tmux(&req).await;
+            *terminal = enter_terminal(&terminal_title(app))?;
+            terminal.clear()?;
+            events = spawn_event_reader();
+            continue;
+        }
         tokio::select! {
             biased;
             ev = events.recv() => {
@@ -89,6 +103,53 @@ async fn drive(
             }
         }
     }
+}
+
+/// Run the tmux attach (creating the window if needed). The child
+/// inherits our stdio so tmux owns the screen. Returns when the
+/// user detaches (`ctrl+b d`) or tmux exits for any reason.
+async fn attach_tmux(req: &crate::app::AttachRequest) {
+    use tokio::process::Command;
+    // Ensure session exists. `tmux has-session` returns 0 if it
+    // does. If not, create it detached with the first window.
+    let has_session = Command::new("tmux")
+        .args(["has-session", "-t", &req.session])
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !has_session {
+        let mut cmd = Command::new("tmux");
+        cmd.args(["new-session", "-d", "-s", &req.session]);
+        if let Some(create) = req.create_with.as_deref() {
+            cmd.args(["-n", &req.window, create]);
+        } else {
+            cmd.args(["-n", &req.window]);
+        }
+        // Best-effort. If this fails, the attach below will surface
+        // the error to the user via tmux's own message.
+        let _ = cmd.status().await;
+    } else if let Some(create) = req.create_with.as_deref() {
+        // Session exists; create the window only if it isn't there.
+        let target = format!("{}:{}", req.session, req.window);
+        let has_window = Command::new("tmux")
+            .args(["has-session", "-t", &target])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !has_window {
+            let _ = Command::new("tmux")
+                .args(["new-window", "-t", &req.session, "-n", &req.window, create])
+                .status()
+                .await;
+        }
+    }
+    // Attach. Inherits stdio.
+    let _ = Command::new("tmux")
+        .args(["attach", "-t", &format!("{}:{}", req.session, req.window)])
+        .status()
+        .await;
 }
 
 async fn handle_event(app: &mut App, event: Event) {
@@ -139,6 +200,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     match code {
         KeyCode::Char('T') => {
             app.switch_view(crate::app::View::Terminals);
+            ensure_tmux_probed(app).await;
             return;
         }
         KeyCode::Char('g') => {
@@ -150,6 +212,21 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             return;
         }
         _ => {}
+    }
+
+    // Per-view keymap: while in Terminals or Diff, only the global
+    // keys above + a tiny per-view dispatch apply. Control center
+    // keeps its full keymap below.
+    if app.view() == crate::app::View::Terminals {
+        handle_key_terminals(app, code, modifiers).await;
+        return;
+    }
+    if app.view() == crate::app::View::Diff {
+        // Phase 4 takes over; for now diff has no keys of its own.
+        if matches!(code, KeyCode::Char('q') | KeyCode::Esc) {
+            app.quit();
+        }
+        return;
     }
 
     match code {
@@ -338,6 +415,56 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
 /// previous run is being interrupted).
 fn selected_is_running(app: &App) -> bool {
     app.selected_run().is_some_and(|r| !r.is_done())
+}
+
+/// Probe `tmux -V` once and cache the result on the App. The
+/// terminals view falls back to a placeholder when tmux isn't
+/// present.
+async fn ensure_tmux_probed(app: &mut App) {
+    if app.terminals().tmux_available.is_some() {
+        return;
+    }
+    let ok = tokio::process::Command::new("tmux")
+        .arg("-V")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    app.set_tmux_available(ok);
+}
+
+async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+    // Form takes precedence when open.
+    if app.terminals().creating.is_some() {
+        handle_key_terminals_form(app, code).await;
+        return;
+    }
+    match code {
+        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
+        KeyCode::Down | KeyCode::Char('j') => app.terminals_select_next(),
+        KeyCode::Up | KeyCode::Char('k') => app.terminals_select_prev(),
+        KeyCode::Char('d') => app.terminals_delete_selected(),
+        KeyCode::Enter => app.terminals_confirm(),
+        _ => {}
+    }
+}
+
+async fn handle_key_terminals_form(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => app.terminals_form_cancel(),
+        KeyCode::Tab => app.terminals_form_toggle_focus(),
+        KeyCode::Backspace => app.terminals_form_pop_char(),
+        KeyCode::Enter => app.terminals_form_submit(),
+        KeyCode::Char(c) => app.terminals_form_push_char(c),
+        _ => {}
+    }
 }
 
 /// Build worktree-switcher rows for the current project. The current

@@ -121,24 +121,290 @@ fn render_control_center(app: &App, frame: &mut Frame, area: Rect) {
     render_right_pane(app, frame, body[1]);
 }
 
-/// Placeholder body for the terminals view. Phase 3 replaces with
-/// the real tmux-backed sidebar + attach affordance.
-fn render_terminals_placeholder(_app: &App, frame: &mut Frame, area: Rect) {
+/// Real Terminals body: tmux-backed sidebar + info panel.
+fn render_terminals_placeholder(app: &App, frame: &mut Frame, area: Rect) {
+    if let Some(false) = app.terminals().tmux_available {
+        render_tmux_missing(frame, area);
+        return;
+    }
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(SIDEBAR_RATIO),
+            Constraint::Percentage(100 - SIDEBAR_RATIO),
+        ])
+        .split(area);
+    render_terminals_sidebar(app, frame, body[0]);
+    render_terminals_info(app, frame, body[1]);
+
+    // The new-terminal form rides on top as a modal overlay so it
+    // doesn't lose the user's view of the existing list.
+    if let Some(form) = app.terminals().creating.as_ref() {
+        render_terminals_form(form, frame);
+    }
+}
+
+fn render_tmux_missing(frame: &mut Frame, area: Rect) {
     let block = panel_block(" terminals ");
     let body = Paragraph::new(vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  tmux-backed terminal sessions — coming soon",
-            Style::default().fg(Color::DarkGray),
+            "  tmux is required for the terminals view",
+            Style::default().fg(Color::Red),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  press c to return to the control center",
+            "  install it (`brew install tmux` / `apt install tmux`),",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "  then press T again or restart scaffl.",
             Style::default().fg(Color::DarkGray),
         )),
     ])
     .block(block);
     frame.render_widget(body, area);
+}
+
+fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
+    let rows = app.terminals_rows();
+    let selected = app.terminals().selected.min(rows.len().saturating_sub(1));
+
+    // Split the sidebar into two stacked groups: services on top,
+    // terminals + sentinel below. Group sizing mirrors the control
+    // center's per-group constraints.
+    let services_count = rows
+        .iter()
+        .filter(|r| matches!(r, crate::app::TerminalsRow::Service(_)))
+        .count();
+    let terminals_total = rows.len() - services_count;
+    let constraints: Vec<Constraint> = if services_count > 0 {
+        vec![
+            Constraint::Length((services_count as u16).saturating_add(2)),
+            Constraint::Min((terminals_total as u16).saturating_add(2)),
+        ]
+    } else {
+        vec![Constraint::Min(1)]
+    };
+    let areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    // Services group
+    if services_count > 0 {
+        let mut svc_items: Vec<ListItem> = Vec::new();
+        for (idx, row) in rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, crate::app::TerminalsRow::Service(_)))
+        {
+            let crate::app::TerminalsRow::Service(name) = row else {
+                continue;
+            };
+            let glyph_style = service_indicator_style(app, name);
+            let row_style = if idx == selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            svc_items.push(ListItem::new(Line::from(vec![
+                Span::styled("● ", glyph_style),
+                Span::styled(name.clone(), row_style),
+            ])));
+        }
+        let title = Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                "services",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" ({services_count}) "),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]);
+        let list = List::new(svc_items)
+            .block(panel_block_titled(title))
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_widget(list, areas[0]);
+    }
+
+    // Terminals + sentinel group
+    let mut term_items: Vec<ListItem> = Vec::new();
+    for (idx, row) in rows.iter().enumerate() {
+        let style = if idx == selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        match row {
+            crate::app::TerminalsRow::Service(_) => continue,
+            crate::app::TerminalsRow::Terminal(t) => {
+                term_items.push(ListItem::new(Line::from(vec![
+                    Span::styled("◇ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(t.name.clone(), style),
+                ])));
+            }
+            crate::app::TerminalsRow::NewSentinel => {
+                let new_style = if idx == selected {
+                    style
+                } else {
+                    Style::default().fg(ACCENT)
+                };
+                term_items.push(ListItem::new(Line::from(vec![Span::styled(
+                    "+ new terminal".to_string(),
+                    new_style,
+                )])));
+            }
+        }
+    }
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "terminals",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" ({}) ", terminals_total - 1),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    let area_for_terms = if services_count > 0 {
+        areas[1]
+    } else {
+        areas[0]
+    };
+    frame.render_widget(
+        List::new(term_items)
+            .block(panel_block_titled(title))
+            .highlight_spacing(HighlightSpacing::Always),
+        area_for_terms,
+    );
+}
+
+fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
+    let rows = app.terminals_rows();
+    let selected_row = rows.get(app.terminals().selected);
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "tmux".to_string(),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  session: {}", app.terminals().session_name),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let detach_hint = "ctrl+b d returns to scaffl";
+    match selected_row {
+        Some(crate::app::TerminalsRow::Service(name)) => {
+            lines.push(Line::from(Span::styled(
+                format!("attach into service `{name}`"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("→ docker compose exec -it {name} $SHELL"),
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                detach_hint,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(crate::app::TerminalsRow::Terminal(t)) => {
+            lines.push(Line::from(Span::styled(
+                format!("attach into terminal `{}`", t.name),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            let cmd = match &t.kind {
+                crate::app::TerminalKind::Shell => {
+                    format!("→ cd {} && exec $SHELL", app.project_root().display())
+                }
+                crate::app::TerminalKind::Custom { command } => format!("→ {command}"),
+                crate::app::TerminalKind::ServiceShell { service } => {
+                    format!("→ docker compose exec -it {service} $SHELL")
+                }
+            };
+            lines.push(Line::from(Span::styled(
+                cmd,
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                detach_hint,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(crate::app::TerminalsRow::NewSentinel) => {
+            lines.push(Line::from(Span::styled(
+                "create a new terminal",
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "press enter to open the form",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        None => {}
+    }
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_terminals_form(form: &crate::app::NewTerminalForm, frame: &mut Frame) {
+    let height = if form.error.is_some() { 11 } else { 9 };
+    let area = centered_rect(frame.area(), 60, height);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::new(2, 2, 1, 1))
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                "new terminal",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
+
+    let name_focus = matches!(form.focus, crate::app::NewTerminalField::Name);
+    let cmd_focus = matches!(form.focus, crate::app::NewTerminalField::Command);
+
+    let mut lines: Vec<Line<'static>> = vec![
+        field_row("name", &form.name_input, name_focus),
+        field_row("cmd", &form.command_input, cmd_focus),
+        Line::from(""),
+        Line::from(Span::styled(
+            "tab toggle · enter create · esc back · empty cmd → host shell",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    if let Some(err) = form.error.as_ref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Placeholder body for the diff view. Phase 4 replaces with the
@@ -1376,9 +1642,15 @@ fn window(selected: usize, visible: usize, total: usize) -> (usize, usize) {
 fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.view() {
         crate::app::View::ControlCenter => control_center_hints(app),
-        crate::app::View::Terminals | crate::app::View::Diff => {
-            vec![("c", "control center"), ("W", "worktree"), ("q", "quit")]
-        }
+        crate::app::View::Terminals => vec![
+            ("↑↓", "nav"),
+            ("enter", "attach"),
+            ("d", "delete"),
+            ("c", "control"),
+            ("W", "worktree"),
+            ("q", "quit"),
+        ],
+        crate::app::View::Diff => vec![("c", "control center"), ("W", "worktree"), ("q", "quit")],
     }
 }
 

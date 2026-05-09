@@ -126,6 +126,121 @@ pub struct WorktreeRow {
     pub is_current: bool,
 }
 
+/// State for the Terminals view (`T`). Tmux-backed; one session per
+/// worktree, plus arbitrary user-named windows.
+#[derive(Debug, Clone)]
+pub struct TerminalsState {
+    /// `None` until probed; `Some(false)` when tmux is missing.
+    pub tmux_available: Option<bool>,
+    /// `scaffl-<project>-<slug>` — stable per worktree.
+    pub session_name: String,
+    /// User-defined terminals in this session. Service-attach rows
+    /// don't live here; they're synthesised from `App::services` at
+    /// render time so they always reflect the current service list.
+    pub terminals: Vec<TerminalRow>,
+    /// Selected index across the (services + terminals + sentinel)
+    /// concatenation that the renderer / keymap iterate.
+    pub selected: usize,
+    /// Open new-terminal form, if any.
+    pub creating: Option<NewTerminalForm>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalRow {
+    pub name: String,
+    pub kind: TerminalKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum TerminalKind {
+    /// Plain host shell; opens `cd <project> && exec $SHELL` in the
+    /// tmux window.
+    Shell,
+    /// `docker compose exec -it <svc> $SHELL` inside the named
+    /// service. Synthetic — only constructed for the attach action,
+    /// not stored in `terminals`.
+    ServiceShell { service: String },
+    /// User-defined window with a custom command line.
+    Custom { command: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct NewTerminalForm {
+    pub name_input: String,
+    pub command_input: String,
+    pub focus: NewTerminalField,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewTerminalField {
+    Name,
+    Command,
+}
+
+/// One visible row in the Terminals view's sidebar. The view
+/// renders services first, then custom terminals, then the
+/// `+ new` sentinel.
+#[derive(Debug, Clone)]
+pub enum TerminalsRow {
+    Service(String),
+    Terminal(TerminalRow),
+    NewSentinel,
+}
+
+/// Single-quote a path for safe shell embedding (tmux send-window
+/// commands run through `sh -c`).
+fn shell_escape(s: String) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str(r"'\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+impl TerminalsState {
+    /// Build initial state for a project. Pre-populates a single
+    /// `shell` terminal so the view always has at least one row to
+    /// attach to. Session name is derived from the project name +
+    /// any worktree slug — but slug-aware naming requires the
+    /// runtime identity, so we accept just the project name here
+    /// and the App caller patches the session name in
+    /// [`App::with_project_root`] when more is known.
+    pub fn default_for(config: &Config) -> Self {
+        let project = config.project.name.as_deref().unwrap_or("scaffl");
+        Self {
+            tmux_available: None,
+            session_name: format!("scaffl-{project}"),
+            terminals: vec![TerminalRow {
+                name: "shell".into(),
+                kind: TerminalKind::Shell,
+            }],
+            selected: 0,
+            creating: None,
+        }
+    }
+}
+
+/// One-shot signal from the Terminals view to the event loop:
+/// "leave the alternate screen, attach to this tmux window, come
+/// back when the user detaches." Created (or, if needed, sent
+/// alongside a window-creation command) when the user hits enter
+/// on a terminal row.
+#[derive(Debug, Clone)]
+pub struct AttachRequest {
+    pub session: String,
+    pub window: String,
+    /// When set, the attach handler runs this shell command first
+    /// to create the window. `None` means the window already exists.
+    pub create_with: Option<String>,
+}
+
 /// Sub-state for the "create new worktree" flow inside the
 /// switcher modal.
 #[derive(Debug, Clone)]
@@ -222,12 +337,21 @@ pub struct App {
     /// Active top-level view. Switched via the `T` / `g` / `c`
     /// global keybinds.
     view: View,
+    /// Terminals view state (lazily initialised — empty Vec until
+    /// the user first opens the view; the session name + tmux probe
+    /// happen on first switch).
+    terminals: TerminalsState,
+    /// Pending attach request from the Terminals view. The event
+    /// loop drains this between ticks: drops the events reader,
+    /// leaves alternate screen, runs tmux attach, re-enters.
+    pub pending_attach: Option<AttachRequest>,
 }
 
 impl App {
     pub fn new(config: Arc<Config>) -> Self {
         let items = build_items(&config);
         let services = collect_service_panes(&config);
+        let terminals = TerminalsState::default_for(&config);
         Self {
             config,
             items,
@@ -248,6 +372,8 @@ impl App {
             pending_switch: None,
             project_root: PathBuf::from("."),
             view: View::ControlCenter,
+            terminals,
+            pending_attach: None,
         }
     }
 
@@ -829,6 +955,181 @@ impl App {
     /// rebuild against the new project root.
     pub fn take_pending_switch(&mut self) -> Option<PathBuf> {
         self.pending_switch.take()
+    }
+
+    pub fn terminals(&self) -> &TerminalsState {
+        &self.terminals
+    }
+
+    pub fn terminals_mut(&mut self) -> &mut TerminalsState {
+        &mut self.terminals
+    }
+
+    pub fn set_tmux_available(&mut self, available: bool) {
+        self.terminals.tmux_available = Some(available);
+    }
+
+    /// Stable list of rows the Terminals view shows: every service
+    /// (whether running or not — caller renders status indicators),
+    /// then every custom terminal, then a sentinel "+ new" row.
+    /// Indexes returned here align with `TerminalsState::selected`.
+    pub fn terminals_rows(&self) -> Vec<TerminalsRow> {
+        let mut rows = Vec::new();
+        for name in self.services.keys() {
+            rows.push(TerminalsRow::Service(name.clone()));
+        }
+        for t in &self.terminals.terminals {
+            rows.push(TerminalsRow::Terminal(t.clone()));
+        }
+        rows.push(TerminalsRow::NewSentinel);
+        rows
+    }
+
+    pub fn terminals_select_next(&mut self) {
+        let total = self.terminals_rows().len();
+        if total > 0 {
+            self.terminals.selected = (self.terminals.selected + 1).min(total - 1);
+        }
+    }
+
+    pub fn terminals_select_prev(&mut self) {
+        self.terminals.selected = self.terminals.selected.saturating_sub(1);
+    }
+
+    /// Resolve the selected row in the Terminals view: queue an
+    /// attach for service / custom rows; open the create form for
+    /// the sentinel.
+    pub fn terminals_confirm(&mut self) {
+        let rows = self.terminals_rows();
+        let Some(row) = rows.get(self.terminals.selected).cloned() else {
+            return;
+        };
+        match row {
+            TerminalsRow::Service(name) => {
+                let session = self.terminals.session_name.clone();
+                let window = format!("svc:{name}");
+                let create_with = Some(format!(
+                    "docker compose exec -it {name} sh -c 'exec ${{SHELL:-/bin/sh}}'"
+                ));
+                self.pending_attach = Some(AttachRequest {
+                    session,
+                    window,
+                    create_with,
+                });
+            }
+            TerminalsRow::Terminal(term) => {
+                let session = self.terminals.session_name.clone();
+                let window = term.name.clone();
+                let create_with = match &term.kind {
+                    TerminalKind::Shell => Some(format!(
+                        "cd {} && exec ${{SHELL:-/bin/sh}}",
+                        shell_escape(self.project_root.display().to_string())
+                    )),
+                    TerminalKind::Custom { command } => Some(command.clone()),
+                    TerminalKind::ServiceShell { .. } => None, // unreachable — services come via Service variant
+                };
+                self.pending_attach = Some(AttachRequest {
+                    session,
+                    window,
+                    create_with,
+                });
+            }
+            TerminalsRow::NewSentinel => {
+                self.terminals.creating = Some(NewTerminalForm {
+                    name_input: String::new(),
+                    command_input: String::new(),
+                    focus: NewTerminalField::Name,
+                    error: None,
+                });
+            }
+        }
+    }
+
+    /// Delete the selected custom terminal. Services and the
+    /// sentinel are not deletable; this no-ops on those.
+    pub fn terminals_delete_selected(&mut self) {
+        let rows = self.terminals_rows();
+        let Some(row) = rows.get(self.terminals.selected) else {
+            return;
+        };
+        let TerminalsRow::Terminal(target) = row else {
+            return;
+        };
+        let target_name = target.name.clone();
+        self.terminals.terminals.retain(|t| t.name != target_name);
+        // Clamp selection so we don't point past the end after the
+        // shrink.
+        let new_total = self.terminals_rows().len();
+        if self.terminals.selected >= new_total && new_total > 0 {
+            self.terminals.selected = new_total - 1;
+        }
+    }
+
+    pub fn terminals_form_push_char(&mut self, c: char) {
+        if let Some(form) = self.terminals.creating.as_mut() {
+            match form.focus {
+                NewTerminalField::Name => form.name_input.push(c),
+                NewTerminalField::Command => form.command_input.push(c),
+            }
+            form.error = None;
+        }
+    }
+
+    pub fn terminals_form_pop_char(&mut self) {
+        if let Some(form) = self.terminals.creating.as_mut() {
+            match form.focus {
+                NewTerminalField::Name => {
+                    form.name_input.pop();
+                }
+                NewTerminalField::Command => {
+                    form.command_input.pop();
+                }
+            }
+            form.error = None;
+        }
+    }
+
+    pub fn terminals_form_toggle_focus(&mut self) {
+        if let Some(form) = self.terminals.creating.as_mut() {
+            form.focus = match form.focus {
+                NewTerminalField::Name => NewTerminalField::Command,
+                NewTerminalField::Command => NewTerminalField::Name,
+            };
+        }
+    }
+
+    pub fn terminals_form_cancel(&mut self) {
+        self.terminals.creating = None;
+    }
+
+    /// Save the form into a new TerminalRow. Empty name is rejected
+    /// inline; empty command falls back to `Shell` in the project root.
+    pub fn terminals_form_submit(&mut self) {
+        let Some(form) = self.terminals.creating.as_mut() else {
+            return;
+        };
+        let name = form.name_input.trim().to_string();
+        if name.is_empty() {
+            form.error = Some("name is required".into());
+            return;
+        }
+        if self.terminals.terminals.iter().any(|t| t.name == name) {
+            form.error = Some(format!("`{name}` already exists"));
+            return;
+        }
+        let kind = if form.command_input.trim().is_empty() {
+            TerminalKind::Shell
+        } else {
+            TerminalKind::Custom {
+                command: form.command_input.trim().to_string(),
+            }
+        };
+        self.terminals.terminals.push(TerminalRow { name, kind });
+        self.terminals.creating = None;
+    }
+
+    pub fn take_pending_attach(&mut self) -> Option<AttachRequest> {
+        self.pending_attach.take()
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
@@ -1465,6 +1766,103 @@ mod tests {
         assert_eq!(app.mode(), Mode::WorktreeSwitcher);
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert_eq!(form.error.as_deref(), Some("git: branch already exists"));
+    }
+
+    #[test]
+    fn terminals_default_has_one_shell_row() {
+        let app = App::new(cfg());
+        assert_eq!(app.terminals().terminals.len(), 1);
+        assert_eq!(app.terminals().terminals[0].name, "shell");
+    }
+
+    #[test]
+    fn terminals_form_submit_adds_row() {
+        let mut app = App::new(cfg());
+        // Open the form by jumping to the sentinel (last row).
+        let total = app.terminals_rows().len();
+        for _ in 0..total {
+            app.terminals_select_next();
+        }
+        app.terminals_confirm();
+        // Type "build" + cmd "make".
+        for c in "build".chars() {
+            app.terminals_form_push_char(c);
+        }
+        app.terminals_form_toggle_focus();
+        for c in "make".chars() {
+            app.terminals_form_push_char(c);
+        }
+        app.terminals_form_submit();
+        assert!(app.terminals().creating.is_none());
+        assert!(app.terminals().terminals.iter().any(|t| t.name == "build"));
+    }
+
+    #[test]
+    fn terminals_form_rejects_empty_name() {
+        let mut app = App::new(cfg());
+        let total = app.terminals_rows().len();
+        for _ in 0..total {
+            app.terminals_select_next();
+        }
+        app.terminals_confirm();
+        app.terminals_form_submit();
+        let form = app.terminals().creating.as_ref().unwrap();
+        assert_eq!(form.error.as_deref(), Some("name is required"));
+    }
+
+    #[test]
+    fn terminals_form_rejects_duplicate_name() {
+        let mut app = App::new(cfg());
+        let total = app.terminals_rows().len();
+        for _ in 0..total {
+            app.terminals_select_next();
+        }
+        app.terminals_confirm();
+        for c in "shell".chars() {
+            app.terminals_form_push_char(c);
+        }
+        app.terminals_form_submit();
+        let form = app.terminals().creating.as_ref().unwrap();
+        assert!(form.error.as_deref().unwrap().contains("already exists"));
+    }
+
+    #[test]
+    fn terminals_delete_removes_only_custom_rows() {
+        let mut app = App::new(cfg());
+        // Add a custom row first via the form.
+        let total = app.terminals_rows().len();
+        for _ in 0..total {
+            app.terminals_select_next();
+        }
+        app.terminals_confirm();
+        for c in "extra".chars() {
+            app.terminals_form_push_char(c);
+        }
+        app.terminals_form_submit();
+        // Now select the new row (it lands before sentinel).
+        let rows = app.terminals_rows();
+        let idx = rows
+            .iter()
+            .position(|r| matches!(r, crate::app::TerminalsRow::Terminal(t) if t.name == "extra"))
+            .unwrap();
+        app.terminals.selected = idx;
+        app.terminals_delete_selected();
+        assert!(!app.terminals().terminals.iter().any(|t| t.name == "extra"));
+        // Default `shell` row stays.
+        assert!(app.terminals().terminals.iter().any(|t| t.name == "shell"));
+    }
+
+    #[test]
+    fn terminals_confirm_on_shell_row_queues_attach() {
+        let mut app = App::new(cfg());
+        // First terminal row in the default state is "shell" (no
+        // services in this fixture).
+        app.terminals.selected = 0;
+        app.terminals_confirm();
+        let req = app.take_pending_attach().unwrap();
+        assert!(req.session.starts_with("scaffl-"));
+        assert_eq!(req.window, "shell");
+        assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
     }
 
     #[test]
