@@ -12,6 +12,7 @@ pub mod scripts;
 pub use error::ConfigError;
 pub use loader::{load_from_path, load_project, load_project_with_slug, parse_str};
 pub use model::{
-    Config, EnvSpec, HooksConfig, Recipe, RecipeProfile, Run, RuntimeConfig, WorktreesConfig,
+    Config, CustomService, EnvSpec, HooksConfig, Recipe, RecipeProfile, Run, RuntimeConfig,
+    ServicesConfig, SystemdScope, SystemdService, WorktreesConfig,
 };
 pub use scripts::ScriptCommand;

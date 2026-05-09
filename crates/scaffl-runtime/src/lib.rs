@@ -9,6 +9,7 @@ pub mod env;
 pub mod error;
 pub mod executor;
 pub mod resolver;
+pub mod services;
 pub mod sink;
 pub mod worktree;
 
