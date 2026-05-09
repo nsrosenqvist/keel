@@ -107,6 +107,21 @@ impl Executor {
             .await
     }
 
+    /// The env handed to a single spawn: cached base env + per-step
+    /// overrides. Single place every spawn path goes through, so the
+    /// merge rule (recipe/script-level `env = {...}` overrides win
+    /// over the base) is asserted in exactly one location.
+    async fn effective_env(
+        &self,
+        overrides: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Result<Env, RuntimeError> {
+        let env = self.base_env().await?.clone();
+        match overrides {
+            Some(o) => Ok(env.with_overrides(o.iter().map(|(k, v)| (k.as_str(), v.as_str())))),
+            None => Ok(env),
+        }
+    }
+
     /// Run a recipe by name. `args` are forwarded to the recipe's `run` if
     /// `forward_args = true`.
     pub async fn run_recipe(&self, name: &str, args: &[String]) -> Result<i32, RuntimeError> {
@@ -315,11 +330,7 @@ impl Executor {
             }
         }
 
-        let env = self
-            .base_env()
-            .await?
-            .clone()
-            .with_overrides(recipe.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let env = self.effective_env(Some(&recipe.env)).await?;
 
         let mut argv = shell_words::split(step).map_err(|e| RuntimeError::ArgvParse {
             input: step.into(),
@@ -351,10 +362,7 @@ impl Executor {
         let mut cmd = Command::new(program);
         cmd.args(rest);
         cmd.current_dir(self.project_root.as_ref());
-        cmd.env_clear();
-        for (k, v) in env.iter() {
-            cmd.env(k, v);
-        }
+        env.apply_to(&mut cmd);
         self.spawn_host(cmd).await
     }
 
@@ -420,11 +428,7 @@ impl Executor {
         script: &ScriptCommand,
         args: &[String],
     ) -> Result<i32, RuntimeError> {
-        let env = self
-            .base_env()
-            .await?
-            .clone()
-            .with_overrides(script.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let env = self.effective_env(Some(&script.env)).await?;
 
         // In-container script: pipe the script body to
         // `<interpreter> -s -- <args>` over the backend's stdin-piped
@@ -468,10 +472,7 @@ impl Executor {
             cmd.args(args);
         }
         cmd.current_dir(self.project_root.as_ref());
-        cmd.env_clear();
-        for (k, v) in env.iter() {
-            cmd.env(k, v);
-        }
+        env.apply_to(&mut cmd);
         self.spawn_host(cmd).await
     }
 
@@ -487,7 +488,7 @@ impl Executor {
         argv: &[&str],
         tty: bool,
     ) -> Result<i32, RuntimeError> {
-        let env = self.base_env().await?.clone();
+        let env = self.effective_env(None).await?;
         let opts = ExecOptions {
             tty,
             env: env.into_map(),

@@ -122,6 +122,18 @@ impl Env {
         self.vars
     }
 
+    /// Apply this env to `cmd`, replacing the inherited process
+    /// environment with exactly the resolved set. Single source of
+    /// truth for the rule "scaffl-spawned host processes see exactly
+    /// the resolved env, never the parent shell's leakage" — every
+    /// host-side spawn in `Executor` goes through here.
+    pub fn apply_to(&self, cmd: &mut Command) {
+        cmd.env_clear();
+        for (k, v) in self.iter() {
+            cmd.env(k, v);
+        }
+    }
+
     /// Number of resolved variables.
     pub fn len(&self) -> usize {
         self.vars.len()
@@ -438,6 +450,36 @@ mod tests {
         unsafe {
             std::env::remove_var("SCAFFL_TEST_VAR");
         }
+    }
+
+    #[tokio::test]
+    async fn apply_to_clears_then_injects() {
+        // Set a marker var in the parent the child should NOT see.
+        // SAFETY: env mutation is fine here — these tests run in-process
+        // sequentially via tokio's single-thread test runtime.
+        unsafe {
+            std::env::set_var("SCAFFL_APPLY_TO_MARKER", "leaked");
+        }
+        let env = Env::new().with_overrides([("FOO", "bar"), ("BAZ", "qux")]);
+
+        let mut cmd = Command::new("sh");
+        // -i prints empty for unset; we look for the literal "<unset>".
+        cmd.arg("-c")
+            .arg(r#"echo FOO=$FOO; echo BAZ=$BAZ; echo MARKER=${SCAFFL_APPLY_TO_MARKER:-<unset>}"#);
+        env.apply_to(&mut cmd);
+
+        let out = cmd.output().await.unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        unsafe {
+            std::env::remove_var("SCAFFL_APPLY_TO_MARKER");
+        }
+
+        assert!(text.contains("FOO=bar"), "FOO injected: {text}");
+        assert!(text.contains("BAZ=qux"), "BAZ injected: {text}");
+        assert!(
+            text.contains("MARKER=<unset>"),
+            "parent env stripped: {text}"
+        );
     }
 
     #[tokio::test]
