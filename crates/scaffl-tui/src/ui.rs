@@ -338,22 +338,30 @@ fn glyph_for(kind: ItemKind) -> &'static str {
 
 fn item_indicator_style(app: &App, item: &Item) -> Style {
     match item.kind {
-        ItemKind::Container => container_indicator_style(app),
+        ItemKind::Container => run_indicator_style(app.lifecycle_run()),
         ItemKind::Service => service_indicator_style(app, &item.name),
         ItemKind::Watcher => watcher_indicator_style(app, &item.name),
-        _ => Style::default().fg(Color::DarkGray),
+        ItemKind::Recipe | ItemKind::Script => {
+            run_indicator_style(app.run_for(item.kind, &item.name))
+        }
     }
 }
 
-/// Indicator colour for the container row. Mirrors the run-state
-/// palette used elsewhere: yellow while a lifecycle action is in
-/// flight, green on a clean exit, red on failure / abort, grey
-/// when nothing has happened yet.
-fn container_indicator_style(app: &App) -> Style {
-    match app.lifecycle_run() {
+/// Standard run-state palette for sidebar glyphs:
+///   never run         → dark grey
+///   running           → yellow
+///   exit 0            → green
+///   non-zero / aborted → red
+///
+/// Used for the container row, recipe rows, and script rows — any
+/// sidebar entry whose state is a `RunState`. Services and watchers
+/// have their own indicator paths because their lifecycle isn't a
+/// `RunState` (services tail logs; watchers debounce).
+fn run_indicator_style(run: Option<&RunState>) -> Style {
+    match run {
         None => Style::default().fg(Color::DarkGray),
-        Some(run) if !run.is_done() => Style::default().fg(Color::Yellow),
-        Some(run) => match run.exit_code {
+        Some(r) if !r.is_done() => Style::default().fg(Color::Yellow),
+        Some(r) => match r.exit_code {
             Some(0) => Style::default().fg(Color::Green),
             _ => Style::default().fg(Color::Red),
         },
