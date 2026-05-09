@@ -361,11 +361,18 @@ fn split_args(args: &[String]) -> (&str, &[String]) {
     (head.as_str(), tail)
 }
 
+/// Build a single `Arc<dyn Backend>` that combines the configured
+/// container backend with any `services.custom` / `services.systemd`
+/// declarations. The result is always a `ServiceRegistry`, even when
+/// only compose is configured — registry-of-one is the uniform
+/// shape, no special-case at the call sites.
 async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     use scaffl_config::model::Backend as B;
-    match config.runtime.backend {
-        B::None => Ok(Arc::new(scaffl_container::null::NullBackend)),
-        B::Compose => Ok(Arc::new(
+
+    // Container slot (compose / none / future docker / podman).
+    let container: Option<Arc<dyn Backend>> = match config.runtime.backend {
+        B::None => None,
+        B::Compose => Some(Arc::new(
             ComposeBackend::detect()
                 .await
                 .context("detect compose backend")?,
@@ -374,15 +381,39 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
             "backend `{:?}` is configured but not yet implemented; use `compose` or `none`",
             config.runtime.backend
         ),
+    };
+
+    // Custom slot (services.custom + services.systemd, translated into
+    // CustomEntry values by scaffl-runtime).
+    let mut entries: Vec<scaffl_container::custom::CustomEntry> =
+        Vec::with_capacity(config.services.custom.len() + config.services.systemd.len());
+    for svc in &config.services.custom {
+        entries.push(scaffl_runtime::services::from_custom(svc));
     }
+    for svc in &config.services.systemd {
+        entries.push(scaffl_runtime::services::from_systemd(svc));
+    }
+    let custom = if entries.is_empty() {
+        None
+    } else {
+        Some(scaffl_container::custom::CustomBackend::new(entries))
+    };
+
+    Ok(Arc::new(scaffl_container::registry::ServiceRegistry::new(
+        container, custom,
+    )))
 }
 
 async fn run_tui(config: Arc<Config>, project_root: &Path) -> Result<()> {
-    // Pick the configured backend, falling back to NullBackend on detection
-    // failure so the TUI is still browseable on systems without compose.
+    // Pick the configured backend, falling back to a NullBackend-only
+    // registry on detection failure so the TUI is still browseable
+    // on systems without compose.
     let backend: Arc<dyn Backend> = match build_backend(&config).await {
         Ok(b) => b,
-        Err(_) => Arc::new(scaffl_container::null::NullBackend),
+        Err(_) => Arc::new(scaffl_container::registry::ServiceRegistry::new(
+            Some(Arc::new(scaffl_container::null::NullBackend)),
+            None,
+        )),
     };
     let executor =
         scaffl_runtime::Executor::new(Arc::clone(&backend), Arc::clone(&config), project_root);
