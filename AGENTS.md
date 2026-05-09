@@ -205,6 +205,28 @@ when the project's stack is entirely host-managed.
 reports running / stopped per entry, so you can verify the
 declarations are correct before opening the TUI.
 
+## TUI service panes
+
+Two paths populate the service rows in the TUI sidebar:
+
+1. **Auto-discovery** — at startup, scaffl asks the active backend
+   for its service list (`docker compose config --services` for
+   compose). Every name shows up as a service row in alphabetical
+   order. Most projects need nothing else.
+
+2. **Explicit `[[ui.pane]] type = "service"`** — only worth adding
+   when you want one of:
+   - A pinned ordering (declared services come first in scaffl.toml
+     order; auto-discovered services follow alphabetically).
+   - A `key = "1"` shortcut for direct focus.
+   - A row that exists *before* compose detection runs (useful on
+     slow setups or when compose detection might fail and you still
+     want the row visible).
+
+Without one of those reasons, omit the block — auto-discovery does
+the same job and the redundant declarations rot when the
+docker-compose.yml service list changes.
+
 ## Layout
 
 ```

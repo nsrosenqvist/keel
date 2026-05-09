@@ -156,7 +156,12 @@ pre-commit = ["check"]
 # `post-merge` so `.env` stays fresh after branch switches even
 # when you run docker compose directly. No extra recipe needed.
 
-# ----- TUI panes (Phase 5+ wiring) -----
+# ----- TUI panes -----
+#
+# `app` and `worker` are auto-discovered from docker-compose.yml; we
+# declare them here only to bind `key = "1"` / `"2"` shortcuts and pin
+# them above any other compose services. Drop these blocks if you
+# don't need the keys.
 
 [[ui.pane]]
 type    = "service"
