@@ -441,10 +441,12 @@ fn render_lifecycle_output(app: &App, frame: &mut Frame, area: Rect) {
 /// already carries that.
 fn render_details(app: &App, frame: &mut Frame, area: Rect) {
     let block = panel_block(" details ");
-    let lines = build_detail_lines(app);
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    // No `Wrap` here — wrapped continuations don't preserve the kv
+    // indent (ratatui has no hanging-indent mode), so a wrapped
+    // value reads as flush-left noise. Single-line per kv is
+    // predictable; values longer than the panel width clip
+    // cleanly at the right edge.
+    let paragraph = Paragraph::new(build_detail_lines(app)).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -504,7 +506,15 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
             lines.push(kv("desc", desc));
         }
         lines.push(kv("in", script.service.as_deref().unwrap_or("host")));
-        lines.push(kv("path", &script.path.display().to_string()));
+        // Scripts always live under `.scaffl/commands/`; the absolute
+        // path is long and useless in the panel — surface the
+        // project-relative form so the line fits without wrapping.
+        let path_display = script
+            .path
+            .file_name()
+            .map(|f| format!(".scaffl/commands/{}", f.to_string_lossy()))
+            .unwrap_or_else(|| script.path.display().to_string());
+        lines.push(kv("path", &path_display));
         if script.tty {
             lines.push(kv("tty", "true"));
         }
