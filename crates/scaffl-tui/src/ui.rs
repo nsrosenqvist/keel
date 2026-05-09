@@ -888,16 +888,22 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         if on_service {
             hints.push(("enter", "up"));
             hints.push(("r", "restart"));
+            if running {
+                hints.push(("s", "stop run"));
+            } else {
+                hints.push(("s", "stop"));
+            }
         } else {
             hints.push(("enter", "run"));
+            if running {
+                hints.push(("s", "stop run"));
+            }
         }
-    }
-    hints.push(("u", "up"));
-    hints.push(("d", "down"));
-    if running {
-        hints.push(("s", "stop run"));
-    } else if on_service {
-        hints.push(("s", "stop svc"));
+        // Project-wide service ops. Single rule: shift = act on all.
+        hints.push(("U", "up all"));
+        hints.push(("R", "restart all"));
+        hints.push(("S", "stop all"));
+        hints.push(("D", "down all"));
     }
     hints.push(("/  :", "palette"));
     hints.push(("q", "quit"));

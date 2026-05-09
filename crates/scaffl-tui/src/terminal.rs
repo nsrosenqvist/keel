@@ -122,9 +122,12 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
         // Palette: `:` (vim-style), `/` (fuzzy-search-style).
         KeyCode::Char(':') | KeyCode::Char('/') => app.open_palette(),
-        // `s` is overloaded:
-        //   1. abort the current run if one is in flight
-        //   2. else stop the selected service (compose stop <name>)
+        // Service controls follow a single rule:
+        //   lowercase = act on the selected service
+        //   uppercase = act on every service
+        // `s`/`S` are also the abort-current-run shortcut: when a run is
+        // in flight, "stop the noisy thing" is more useful than the
+        // literal stop semantics.
         KeyCode::Char('s') => {
             if app.abort_current_run() {
                 app.flash = Some("aborted current run".into());
@@ -136,28 +139,16 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 app.flash = Some(launch_message(rej));
             }
         }
-        // `u`: up — selected service if highlighted, else all services.
-        KeyCode::Char('u') => {
-            let target = app.selected_service().map(|s| s.name.clone());
-            let services: Vec<&str> = target.as_deref().into_iter().collect();
-            if let Err(rej) = app
-                .run_service_action(scaffl_container::service_action::UP, &services)
+        KeyCode::Char('S') => {
+            if app.abort_current_run() {
+                app.flash = Some("aborted current run".into());
+            } else if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::STOP, &[])
                 .await
             {
                 app.flash = Some(launch_message(rej));
             }
         }
-        // `d`: compose down (always all services — `down` doesn't make
-        // sense per-service in compose's model).
-        KeyCode::Char('d') => {
-            if let Err(rej) = app
-                .run_service_action(scaffl_container::service_action::DOWN, &[])
-                .await
-            {
-                app.flash = Some(launch_message(rej));
-            }
-        }
-        // `r`: restart selected service (no-op when not on a service).
         KeyCode::Char('r') => {
             if let Some(service) = app.selected_service().map(|s| s.name.clone())
                 && let Err(rej) = app
@@ -166,6 +157,35 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                         &[service.as_str()],
                     )
                     .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        KeyCode::Char('R') => {
+            if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::RESTART, &[])
+                .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        // `U`: up all. No lowercase counterpart — `enter` ups the
+        // selected service, so a separate `u` would be redundant.
+        KeyCode::Char('U') => {
+            if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::UP, &[])
+                .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
+        // `D`: down all. No lowercase counterpart — compose's `down` is
+        // intrinsically project-wide; the per-service equivalent is
+        // `stop` (bound to `s`).
+        KeyCode::Char('D') => {
+            if let Err(rej) = app
+                .run_service_action(scaffl_container::service_action::DOWN, &[])
+                .await
             {
                 app.flash = Some(launch_message(rej));
             }
