@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 pub const SCAFFL_HOOK_MARKER: &str = "# managed by scaffl";
 
-/// Stages we know how to install. Other stages can be supported in the
-/// future without code changes — these are just the ones we surface in
-/// `scaffl hooks install` by default.
+/// Stages we know how to install. Other stages can be supported by
+/// passing them explicitly to `install` — this list only governs which
+/// stages `uninstall` cleans up by default.
 pub const KNOWN_STAGES: &[&str] = &[
     "pre-commit",
     "pre-push",
@@ -21,6 +21,10 @@ pub const KNOWN_STAGES: &[&str] = &[
     "post-commit",
     "pre-merge-commit",
     "pre-rebase",
+    // post-checkout / post-merge are how the env-rewrite flow keeps
+    // `.env` in sync with the active worktree's offset / slug.
+    "post-checkout",
+    "post-merge",
 ];
 
 /// Install shims for `stages` under the git repo containing `project_root`.
