@@ -59,6 +59,14 @@ impl CustomBackend {
         self.by_name.contains_key(name)
     }
 
+    /// Synchronous iteration of declared service names. Mirrors what
+    /// the async [`Backend::list_services`] returns, but available
+    /// without async context — the registry uses this at construction
+    /// time to seed its routing table.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|e| e.name.as_str())
+    }
+
     fn lookup(&self, name: &str) -> Result<&CustomEntry, BackendError> {
         self.by_name
             .get(name)
