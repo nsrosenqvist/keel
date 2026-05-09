@@ -428,7 +428,30 @@ impl Executor {
         script: &ScriptCommand,
         args: &[String],
     ) -> Result<i32, RuntimeError> {
-        let env = self.effective_env(Some(&script.env)).await?;
+        // Scripts get two extra env vars on top of the base resolution
+        // chain: SCAFFL_PROJECT_DIR (worktree project root) and
+        // SCAFFL_SCRIPT_DIR (the script file's parent directory).
+        // They land *between* the base env and the script's own
+        // `env = {...}`, so user overrides still win — but the
+        // common case of "I just want to know where my script
+        // lives" works without `dirname "$0"` boilerplate. Both
+        // values are host-side paths even for in-container scripts;
+        // ignore them inside the container if irrelevant.
+        let project_dir = self.project_root.display().to_string();
+        let script_dir = script
+            .path
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| project_dir.clone());
+        let env = self
+            .base_env()
+            .await?
+            .clone()
+            .with_overrides([
+                ("SCAFFL_PROJECT_DIR", project_dir.as_str()),
+                ("SCAFFL_SCRIPT_DIR", script_dir.as_str()),
+            ])
+            .with_overrides(script.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
 
         // In-container script: pipe the script body to
         // `<interpreter> -s -- <args>` over the backend's stdin-piped
@@ -783,6 +806,126 @@ mod tests {
         }
         assert_eq!(stdout, vec!["hi from stdout"]);
         assert_eq!(stderr, vec!["oops"]);
+    }
+
+    #[tokio::test]
+    async fn host_script_gets_scaffl_project_and_script_dirs() {
+        // Build a host script that prints SCAFFL_PROJECT_DIR and
+        // SCAFFL_SCRIPT_DIR to stdout. After running, the captured
+        // output should contain both paths in the canonical form.
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let project_dir = tempfile::TempDir::new().unwrap();
+        let scripts_subdir = project_dir.path().join(".scaffl/commands");
+        std::fs::create_dir_all(&scripts_subdir).unwrap();
+        let script_path = scripts_subdir.join("probe");
+        std::fs::write(
+            &script_path,
+            "#!/bin/sh\necho SCAFFL_PROJECT_DIR=$SCAFFL_PROJECT_DIR\necho SCAFFL_SCRIPT_DIR=$SCAFFL_SCRIPT_DIR\n",
+        )
+        .unwrap();
+        // Make it executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&script_path).unwrap().permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perm).unwrap();
+        }
+
+        let mut cfg_inner = scaffl_config::Config::default();
+        cfg_inner.scripts.insert(
+            "probe".into(),
+            scaffl_config::ScriptCommand {
+                name: "probe".into(),
+                path: script_path.clone(),
+                desc: None,
+                service: None,
+                tty: false,
+                env: Default::default(),
+                needs: Vec::new(),
+                forward_args: false,
+            },
+        );
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            Arc::new(cfg_inner),
+            project_dir.path(),
+        );
+        let (sink, mut rx) = crate::sink::ChannelSink::new_pair();
+        let exec = executor.with_sink(Arc::new(sink));
+        let code = exec.run_script("probe", &[]).await.unwrap();
+        assert_eq!(code, 0);
+
+        let mut lines = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            lines.push(line.line);
+        }
+        let project_str = project_dir.path().display().to_string();
+        let script_dir_str = scripts_subdir.display().to_string();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == &format!("SCAFFL_PROJECT_DIR={project_str}")),
+            "lines: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == &format!("SCAFFL_SCRIPT_DIR={script_dir_str}")),
+            "lines: {lines:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn script_env_overrides_scaffl_project_dir() {
+        // A script that explicitly sets SCAFFL_PROJECT_DIR in its
+        // `env = {...}` block should win over the default — sacred
+        // vars stay overridable, no surprise lock-out.
+        let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
+        let project_dir = tempfile::TempDir::new().unwrap();
+        let script_path = project_dir.path().join("probe");
+        std::fs::write(&script_path, "#!/bin/sh\necho VAL=$SCAFFL_PROJECT_DIR\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&script_path).unwrap().permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perm).unwrap();
+        }
+
+        let mut cfg_inner = scaffl_config::Config::default();
+        let mut env_overrides = std::collections::BTreeMap::new();
+        env_overrides.insert("SCAFFL_PROJECT_DIR".into(), "OVERRIDDEN".into());
+        cfg_inner.scripts.insert(
+            "probe".into(),
+            scaffl_config::ScriptCommand {
+                name: "probe".into(),
+                path: script_path.clone(),
+                desc: None,
+                service: None,
+                tty: false,
+                env: env_overrides,
+                needs: Vec::new(),
+                forward_args: false,
+            },
+        );
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            Arc::new(cfg_inner),
+            project_dir.path(),
+        );
+        let (sink, mut rx) = crate::sink::ChannelSink::new_pair();
+        let exec = executor.with_sink(Arc::new(sink));
+        let code = exec.run_script("probe", &[]).await.unwrap();
+        assert_eq!(code, 0);
+        let mut lines = Vec::new();
+        while let Ok(line) = rx.try_recv() {
+            lines.push(line.line);
+        }
+        assert!(
+            lines.iter().any(|l| l == "VAL=OVERRIDDEN"),
+            "lines: {lines:?}"
+        );
     }
 
     #[tokio::test]
