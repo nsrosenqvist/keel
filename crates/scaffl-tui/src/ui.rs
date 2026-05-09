@@ -544,7 +544,11 @@ fn build_detail_lines(app: &App, wrap_width: usize) -> Vec<Line<'static>> {
             .selected_script()
             .map(|s| (s.desc.clone(), script_kv_lines(s)))
             .unwrap_or_default(),
-        // Services / watchers don't have config-level descriptions.
+        ItemKind::Watcher => app
+            .selected_watcher()
+            .map(|w| (None, watcher_kv_lines(w)))
+            .unwrap_or_default(),
+        // Container / services don't have config-level descriptions.
         _ => (None, Vec::new()),
     };
 
@@ -584,6 +588,17 @@ fn recipe_kv_lines(recipe: &scaffl_config::Recipe) -> Vec<Line<'static>> {
     for (k, v) in &recipe.env {
         out.push(kv(&format!("env.{k}"), v));
     }
+    out
+}
+
+fn watcher_kv_lines(watcher: &WatcherPane) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    out.push(kv("recipe", &watcher.recipe));
+    out.push(kv("globs", &watcher.globs.join(", ")));
+    out.push(kv(
+        "debounce",
+        &format!("{} ms", watcher.debounce.as_millis()),
+    ));
     out
 }
 
@@ -817,64 +832,42 @@ fn service_pane_title(service: &ServicePane) -> Line<'static> {
 }
 
 fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
+    // Watcher meta (recipe / globs / debounce) lives in the details
+    // panel under the sidebar. The output pane is purely the buffer
+    // from the most recent run, with a placeholder when nothing has
+    // run yet — matching the recipe / script / lifecycle pane shape.
     let title = watcher_pane_title(watcher);
-    let block = panel_block_titled(title);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(1)])
-        .split(inner);
-
-    let mut header_lines: Vec<Line<'static>> = Vec::new();
-    header_lines.push(Line::from(""));
-    header_lines.push(kv("recipe", &watcher.recipe));
-    header_lines.push(kv("globs", &watcher.globs.join(", ")));
-    header_lines.push(kv(
-        "debounce",
-        &format!("{} ms", watcher.debounce.as_millis()),
-    ));
-    if let Some(c) = watcher.last_exit_code {
-        header_lines.push(kv("last_exit", &c.to_string()));
-    }
-    frame.render_widget(Paragraph::new(header_lines), layout[0]);
-
-    let max_lines = layout[1].height as usize;
+    let max_lines = area.height.saturating_sub(2) as usize;
     let total = watcher.buffer.len();
     let start = total.saturating_sub(max_lines);
-    let lines: Vec<Line<'static>> = watcher
+    let captured: Vec<Line<'static>> = watcher
         .buffer
         .iter()
         .skip(start)
         .map(render_captured_line)
         .collect();
 
-    let body = if lines.is_empty() {
+    let body = if captured.is_empty() {
         let placeholder = match watcher.state {
             WatcherState::Idle if watcher.last_exit_code.is_none() => {
-                "(no run yet — edit a watched file)".to_string()
+                "no run yet — edit a watched file"
             }
-            WatcherState::Idle => "(idle — buffer cleared on next run)".into(),
-            WatcherState::Debouncing => "(cooldown…)".into(),
-            WatcherState::Running => "(starting…)".into(),
+            WatcherState::Idle => "idle — buffer cleared on next run",
+            WatcherState::Debouncing => "cooldown…",
+            WatcherState::Running => "starting…",
         };
         vec![Line::from(Span::styled(
-            placeholder,
+            placeholder.to_string(),
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        lines
+        captured
     };
-    // Borderless inner block solely to add the same gutter the run
-    // output uses. Keeps captured recipe stdout off the border
-    // without affecting the kv-style header above. The 1-row top
-    // padding gives the body breathing room from the header.
-    let body_block = Block::default().padding(Padding::new(2, 1, 1, 0));
-    let paragraph = Paragraph::new(body)
-        .block(body_block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, layout[1]);
+
+    let paragraph = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
 }
 
 fn watcher_pane_title(watcher: &WatcherPane) -> Line<'static> {
