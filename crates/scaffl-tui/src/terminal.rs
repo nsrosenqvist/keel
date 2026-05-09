@@ -131,11 +131,32 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         return;
     }
 
+    // Top-level view switches. Apply before per-view dispatch so a
+    // view's own keymap can't shadow them. `g` is dedicated to the
+    // diff view; users wanting "jump to first row" use `Home`
+    // (vim's `gg` would conflict with the chord-less single-press
+    // model the rest of the keymap uses).
+    match code {
+        KeyCode::Char('T') => {
+            app.switch_view(crate::app::View::Terminals);
+            return;
+        }
+        KeyCode::Char('g') => {
+            app.switch_view(crate::app::View::Diff);
+            return;
+        }
+        KeyCode::Char('c') if app.view() != crate::app::View::ControlCenter => {
+            app.switch_view(crate::app::View::ControlCenter);
+            return;
+        }
+        _ => {}
+    }
+
     match code {
         KeyCode::Char('q') | KeyCode::Esc => app.quit(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
-        KeyCode::Char('g') | KeyCode::Home => app.select_first(),
+        KeyCode::Home => app.select_first(),
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
         // Palette: `:` (vim-style), `/` (fuzzy-search-style).
         KeyCode::Char(':') | KeyCode::Char('/') => app.open_palette(),
@@ -634,8 +655,33 @@ mod tests {
         assert_eq!(app.selected_index(), 2);
         handle_event(&mut app, press(KeyCode::Char('G'))).await;
         assert_eq!(app.selected_index(), 2);
-        handle_event(&mut app, press(KeyCode::Char('g'))).await;
+        // Home jumps to first row. (`g` used to do this; now it's
+        // the diff-view switcher.)
+        handle_event(&mut app, press(KeyCode::Home)).await;
         assert_eq!(app.selected_index(), 0);
+    }
+
+    #[tokio::test]
+    async fn capital_t_switches_to_terminals_view() {
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        assert_eq!(app.view(), crate::app::View::ControlCenter);
+        handle_event(&mut app, press(KeyCode::Char('T'))).await;
+        assert_eq!(app.view(), crate::app::View::Terminals);
+    }
+
+    #[tokio::test]
+    async fn lowercase_g_switches_to_diff_view() {
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        handle_event(&mut app, press(KeyCode::Char('g'))).await;
+        assert_eq!(app.view(), crate::app::View::Diff);
+    }
+
+    #[tokio::test]
+    async fn lowercase_c_returns_to_control_center() {
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        app.switch_view(crate::app::View::Diff);
+        handle_event(&mut app, press(KeyCode::Char('c'))).await;
+        assert_eq!(app.view(), crate::app::View::ControlCenter);
     }
 
     #[tokio::test]

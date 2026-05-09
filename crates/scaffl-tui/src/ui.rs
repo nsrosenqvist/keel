@@ -61,31 +61,14 @@ pub fn render(app: &App, frame: &mut Frame) {
 
     render_top_bar(app, frame, outer[0]);
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(SIDEBAR_RATIO),
-            Constraint::Percentage(100 - SIDEBAR_RATIO),
-        ])
-        .split(outer[1]);
-
-    // Left column: list on top, static details panel below.
-    // Details panel is fixed-height — the list absorbs the rest.
-    // Hidden entirely when there's no item to describe.
-    let left = if app.selected_item().is_some() {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(DETAILS_HEIGHT)])
-            .split(body[0])
-    } else {
-        std::rc::Rc::from([body[0]])
-    };
-    render_sidebar(app, frame, left[0]);
-    if left.len() > 1 {
-        render_details(app, frame, left[1]);
+    // Body delegated by view. Each view owns its sidebar + right
+    // pane; only the chrome (top bar, status bar) is shared.
+    match app.view() {
+        crate::app::View::ControlCenter => render_control_center(app, frame, outer[1]),
+        crate::app::View::Terminals => render_terminals_placeholder(app, frame, outer[1]),
+        crate::app::View::Diff => render_diff_placeholder(app, frame, outer[1]),
     }
 
-    render_right_pane(app, frame, body[1]);
     render_status(app, frame, outer[2]);
 
     if app.mode() == Mode::Palette
@@ -108,6 +91,74 @@ pub fn render(app: &App, frame: &mut Frame) {
     {
         render_worktree_switcher(switcher, frame);
     }
+}
+
+/// Control-center body: sidebar (list + details panel) + right pane.
+/// Today's home view; everything below the top bar today.
+fn render_control_center(app: &App, frame: &mut Frame, area: Rect) {
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(SIDEBAR_RATIO),
+            Constraint::Percentage(100 - SIDEBAR_RATIO),
+        ])
+        .split(area);
+
+    // Left column: list on top, static details panel below.
+    let left = if app.selected_item().is_some() {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(DETAILS_HEIGHT)])
+            .split(body[0])
+    } else {
+        std::rc::Rc::from([body[0]])
+    };
+    render_sidebar(app, frame, left[0]);
+    if left.len() > 1 {
+        render_details(app, frame, left[1]);
+    }
+
+    render_right_pane(app, frame, body[1]);
+}
+
+/// Placeholder body for the terminals view. Phase 3 replaces with
+/// the real tmux-backed sidebar + attach affordance.
+fn render_terminals_placeholder(_app: &App, frame: &mut Frame, area: Rect) {
+    let block = panel_block(" terminals ");
+    let body = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  tmux-backed terminal sessions — coming soon",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  press c to return to the control center",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+    .block(block);
+    frame.render_widget(body, area);
+}
+
+/// Placeholder body for the diff view. Phase 4 replaces with the
+/// file list + diff renderer.
+fn render_diff_placeholder(_app: &App, frame: &mut Frame, area: Rect) {
+    let block = panel_block(" diff ");
+    let body = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  file-level git diff review — coming soon",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  press c to return to the control center",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+    .block(block);
+    frame.render_widget(body, area);
 }
 
 // ───────────────────────── top bar ─────────────────────────
@@ -1319,19 +1370,19 @@ fn window(selected: usize, visible: usize, total: usize) -> (usize, usize) {
 
 // ─────────────────────── status / hint bar ───────────────────────
 
-fn render_status(app: &App, frame: &mut Frame, area: Rect) {
-    if let Some(flash) = &app.flash {
-        let p = Paragraph::new(Line::from(vec![
-            Span::styled(" ! ", Style::default().fg(Color::Black).bg(Color::Yellow)),
-            Span::raw(" "),
-            Span::styled(flash.clone(), Style::default().fg(Color::Yellow)),
-        ]));
-        frame.render_widget(p, area);
-        return;
+/// Hint set for the active view. Phases 3 and 4 fill in their own
+/// view-specific hints; for now the placeholder views just show
+/// the global view-switch keys.
+fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
+    match app.view() {
+        crate::app::View::ControlCenter => control_center_hints(app),
+        crate::app::View::Terminals | crate::app::View::Diff => {
+            vec![("c", "control center"), ("W", "worktree"), ("q", "quit")]
+        }
     }
+}
 
-    // "Something running" = the selected row's run, or the lifecycle
-    // slot. Used to flip the `s` hint between "stop" and "stop run."
+fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     let running = app.selected_run().is_some_and(|r| !r.is_done())
         || app.lifecycle_run().is_some_and(|r| !r.is_done());
     let mode_palette = app.mode() == Mode::Palette;
@@ -1353,17 +1404,45 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
                 hints.push(("s", "stop run"));
             }
         }
-        // Project-wide service ops. Single rule: shift = act on all.
         hints.push(("U", "up all"));
         hints.push(("R", "restart all"));
         hints.push(("S", "stop all"));
         hints.push(("D", "down all"));
+        // View / worktree switches at the end so they never compete
+        // with the action keys above for short-list real estate.
+        hints.push(("T", "terminals"));
+        hints.push(("g", "diff"));
+        hints.push(("W", "worktree"));
     }
     hints.push(("/  :", "palette"));
     hints.push(("q", "quit"));
+    hints
+}
 
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4 + 1);
+fn render_status(app: &App, frame: &mut Frame, area: Rect) {
+    if let Some(flash) = &app.flash {
+        let p = Paragraph::new(Line::from(vec![
+            Span::styled(" ! ", Style::default().fg(Color::Black).bg(Color::Yellow)),
+            Span::raw(" "),
+            Span::styled(flash.clone(), Style::default().fg(Color::Yellow)),
+        ]));
+        frame.render_widget(p, area);
+        return;
+    }
+
+    let hints = view_hints(app);
+
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4 + 4);
+    // Leading view tag — `[control]` / `[terminals]` / `[diff]`.
+    // Anchors the user to which view their hints apply to.
     spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        format!("[{}]", app.view().tag()),
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
+    spans.push(Span::raw("  "));
     for (i, (key, label)) in hints.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", Style::default()));

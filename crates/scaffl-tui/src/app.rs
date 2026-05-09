@@ -14,6 +14,32 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Top-level view of the TUI. Orthogonal to [`Mode`]: a view picks
+/// what's *rendered*, a mode picks how *keys* route. The control
+/// center is today's home view; terminals (tmux-backed shells) and
+/// diff (file-level git review) are second-class views reachable by
+/// `T` / `g` and back via `c`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// The home dashboard: services, watchers, recipes, scripts, and
+    /// the container row in one place. The "command center" of the
+    /// project — hence the `c` keybind to come back.
+    ControlCenter,
+    Terminals,
+    Diff,
+}
+
+impl View {
+    /// Short tag used in the status bar.
+    pub fn tag(self) -> &'static str {
+        match self {
+            View::ControlCenter => "control",
+            View::Terminals => "terminals",
+            View::Diff => "diff",
+        }
+    }
+}
+
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ItemKind {
@@ -193,6 +219,9 @@ pub struct App {
     /// Cached project root so the switcher can prefill its path
     /// input with the current parent dir.
     project_root: PathBuf,
+    /// Active top-level view. Switched via the `T` / `g` / `c`
+    /// global keybinds.
+    view: View,
 }
 
 impl App {
@@ -218,7 +247,16 @@ impl App {
             switcher: None,
             pending_switch: None,
             project_root: PathBuf::from("."),
+            view: View::ControlCenter,
         }
+    }
+
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    pub fn switch_view(&mut self, view: View) {
+        self.view = view;
     }
 
     /// Set the project root the App is bound to. Required for the
