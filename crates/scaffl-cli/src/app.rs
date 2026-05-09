@@ -45,7 +45,16 @@ pub enum Command {
     /// Show how a name resolves (recipe, script, compose, service, none).
     Which { name: String },
     /// Print the resolved project environment (process + .env + [env]).
-    Env,
+    Env {
+        /// Write the result to a dotenv file using a scaffl-managed
+        /// block, instead of printing to stdout. Existing user content
+        /// outside the block is preserved. Hook this up from
+        /// post-checkout / post-merge so worktree-derived values land
+        /// in `.env` and any tool that reads dotenv (compose, IDEs,
+        /// rails, npm scripts, …) sees them.
+        #[arg(long, value_name = "PATH")]
+        write: Option<PathBuf>,
+    },
     /// Validate the configuration and report on backend / deps / env files.
     Doctor,
     /// Scaffold a starter scaffl.toml in the project root.
@@ -160,7 +169,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         return match sub {
             Command::List => cmd_list(&cfg_arc),
             Command::Which { name } => cmd_which(&cfg_arc, &name),
-            Command::Env => commands::env::run(&cfg_arc, &project_root).await,
+            Command::Env { write } => commands::env::run(&cfg_arc, &project_root, write).await,
             Command::Doctor => {
                 let code = commands::doctor::run(&cfg_arc, &project_root).await?;
                 std::process::exit(code);
