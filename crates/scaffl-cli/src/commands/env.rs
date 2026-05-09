@@ -35,20 +35,45 @@ pub async fn run(config: &Config, project_root: &Path, write: Option<PathBuf>) -
             }
         }
         Some(path) => {
-            let resolved_path = if path.is_absolute() {
-                path
+            let resolved_path = resolve_path(project_root, &path);
+            let changed = write_managed_block(&resolved_path, &pairs)?;
+            if changed {
+                println!(
+                    "Wrote {} scaffl-managed entries to {}",
+                    pairs.len(),
+                    resolved_path.display()
+                );
             } else {
-                project_root.join(path)
-            };
-            write_managed_block(&resolved_path, &pairs)?;
-            println!(
-                "Wrote {} scaffl-managed entries to {}",
-                pairs.len(),
-                resolved_path.display()
-            );
+                println!("{} already up to date", resolved_path.display());
+            }
         }
     }
     Ok(())
+}
+
+/// Auto-write the resolved env to the path configured in
+/// `[worktrees] dotenv`. Used by both the app's pre-dispatch
+/// auto-write and the built-in env-rewrite hook handler. Silent on
+/// success; returns `Ok(())` and does nothing if `[worktrees] dotenv`
+/// isn't set.
+pub async fn auto_write_if_configured(config: &Config, project_root: &Path) -> Result<()> {
+    let Some(rel) = config.worktrees.dotenv.as_deref() else {
+        return Ok(());
+    };
+    let env = Env::resolve(config, project_root).await?;
+    let exported = exportable_keys(config);
+    let pairs: Vec<(&str, &str)> = env.iter().filter(|(k, _)| exported.contains(*k)).collect();
+    let path = resolve_path(project_root, Path::new(rel));
+    write_managed_block(&path, &pairs)?;
+    Ok(())
+}
+
+fn resolve_path(project_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    }
 }
 
 /// The set of env vars scaffl is willing to export to a file. We
@@ -65,7 +90,13 @@ fn exportable_keys(config: &Config) -> std::collections::BTreeSet<String> {
     keys
 }
 
-fn write_managed_block(path: &Path, pairs: &[(&str, &str)]) -> Result<()> {
+/// Idempotent write: produces the desired content, compares against
+/// what's on disk, and only writes when they differ. Returns `true`
+/// if the file was modified, `false` if it was already up to date.
+/// Avoids touching mtime on no-op runs — callers fire this on every
+/// scaffl invocation and surrounding tooling (file watchers, build
+/// systems) shouldn't see spurious changes.
+fn write_managed_block(path: &Path, pairs: &[(&str, &str)]) -> Result<bool> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -86,8 +117,11 @@ fn write_managed_block(path: &Path, pairs: &[(&str, &str)]) -> Result<()> {
     content.push_str(END_MARKER);
     content.push('\n');
 
+    if content == existing {
+        return Ok(false);
+    }
     std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
+    Ok(true)
 }
 
 /// Drop the scaffl-managed block (markers and all lines between)
@@ -203,6 +237,23 @@ mod tests {
         assert!(body.contains("USER_VAR=keep"));
         assert!(body.contains("SECRET=keep-this"));
         assert!(body.contains("APP_PORT=8085"));
+    }
+
+    #[test]
+    fn write_is_idempotent_on_unchanged_content() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        let pairs = vec![("APP_PORT", "8085")];
+        let first = write_managed_block(&path, &pairs).unwrap();
+        assert!(first, "first write should report modified");
+        // Capture mtime before second write.
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+        // Re-running with the same pairs must NOT touch the file.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let second = write_managed_block(&path, &pairs).unwrap();
+        assert!(!second, "second write should report unchanged");
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after, "mtime must not advance");
     }
 
     #[test]

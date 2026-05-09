@@ -25,6 +25,13 @@ APP_SERVICE   = { default = "app" }
 WWWUSER       = { from_command = "id -u" }
 WWWGROUP      = { from_command = "id -g" }
 
+[worktrees]
+# Materialise the resolved env (worktree-derived ports, compose
+# project name, etc.) into `.env` on every scaffl invocation, so
+# tools outside scaffl (raw `docker compose up`, IDE runners,
+# `bin/sail`) see the right values for the active branch.
+dotenv = ".env"
+
 [worktrees.assign]
 main       = 0      # production-shaped main always at the base port
 production = 0
@@ -120,16 +127,11 @@ run  = ["check:frontend", "check:backend"]
 # ----- Hooks -----
 
 [hooks]
-pre-commit    = ["check"]
-# Keep `.env` in sync with the active worktree's offset / slug so any
-# tool reading dotenv (compose, IDEs, rails, …) sees the right values.
-# Install these once with: scaffl hooks install --stages post-checkout,post-merge
-post-checkout = ["env-rewrite"]
-post-merge    = ["env-rewrite"]
-
-[command.env-rewrite]
-desc = "Refresh .env worktree-derived values"
-run  = "scaffl env --write .env"
+pre-commit = ["check"]
+# Note: with `[worktrees] dotenv = ".env"` set above, `scaffl hooks
+# install` (no flags) automatically wires up `post-checkout` and
+# `post-merge` so `.env` stays fresh after branch switches even
+# when you run docker compose directly. No extra recipe needed.
 
 # ----- TUI panes (Phase 5+ wiring) -----
 

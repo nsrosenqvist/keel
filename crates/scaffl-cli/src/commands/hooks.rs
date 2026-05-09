@@ -16,9 +16,9 @@ use scaffl_runtime::Executor;
 use std::path::Path;
 use std::sync::Arc;
 
-pub async fn install(project_root: &Path, stages: &[String]) -> Result<()> {
+pub async fn install(config: &Config, project_root: &Path, stages: &[String]) -> Result<()> {
     let stages_ref: Vec<&str> = if stages.is_empty() {
-        vec!["pre-commit"]
+        default_install_stages(config)
     } else {
         stages.iter().map(String::as_str).collect()
     };
@@ -28,6 +28,20 @@ pub async fn install(project_root: &Path, stages: &[String]) -> Result<()> {
         println!("Installed {}", path.display());
     }
     Ok(())
+}
+
+/// Default stages for `scaffl hooks install` (no `--stages`):
+/// always includes `pre-commit`; adds `post-checkout` and
+/// `post-merge` when `[worktrees] dotenv` is set so the file stays
+/// fresh after branch switches even when the user runs Docker
+/// directly.
+fn default_install_stages(config: &Config) -> Vec<&'static str> {
+    let mut stages = vec!["pre-commit"];
+    if config.worktrees.dotenv.is_some() {
+        stages.push("post-checkout");
+        stages.push("post-merge");
+    }
+    stages
 }
 
 pub async fn uninstall(project_root: &Path, stages: &[String]) -> Result<()> {
@@ -89,10 +103,25 @@ pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Resu
     }
 
     if native_hooks.is_empty() && !pcc_path.exists() {
-        println!("(no hooks configured for stage `{stage}`)");
+        // The dotenv auto-write runs at app entry (before this
+        // function), so for the stages it's wired to we want to
+        // surface that as the actual work — not claim "nothing
+        // happened".
+        if dotenv_stage_handled(config, stage) {
+            println!("[scaffl] refreshed dotenv for stage `{stage}`");
+        } else {
+            println!("(no hooks configured for stage `{stage}`)");
+        }
     }
 
     Ok(overall)
+}
+
+/// Returns true when `[worktrees] dotenv` is set and the stage is one
+/// the auto-write wiring covers — used to phrase the no-other-hooks
+/// message correctly instead of saying "nothing happened".
+fn dotenv_stage_handled(config: &Config, stage: &str) -> bool {
+    config.worktrees.dotenv.is_some() && matches!(stage, "post-checkout" | "post-merge")
 }
 
 fn print_outcome(outcome: &HookOutcome) {
@@ -118,5 +147,46 @@ async fn build_backend_or_null(config: &Config) -> Arc<dyn Backend> {
             Err(_) => Arc::new(scaffl_container::null::NullBackend),
         },
         _ => Arc::new(scaffl_container::null::NullBackend),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_with_dotenv(dotenv: Option<&str>) -> Config {
+        let mut cfg = Config::default();
+        cfg.worktrees.dotenv = dotenv.map(String::from);
+        cfg
+    }
+
+    #[test]
+    fn default_install_stages_minimal() {
+        let cfg = cfg_with_dotenv(None);
+        assert_eq!(default_install_stages(&cfg), vec!["pre-commit"]);
+    }
+
+    #[test]
+    fn default_install_stages_with_dotenv_includes_checkout_and_merge() {
+        let cfg = cfg_with_dotenv(Some(".env"));
+        assert_eq!(
+            default_install_stages(&cfg),
+            vec!["pre-commit", "post-checkout", "post-merge"]
+        );
+    }
+
+    #[test]
+    fn dotenv_stage_handled_only_for_relevant_stages() {
+        let cfg = cfg_with_dotenv(Some(".env"));
+        assert!(dotenv_stage_handled(&cfg, "post-checkout"));
+        assert!(dotenv_stage_handled(&cfg, "post-merge"));
+        assert!(!dotenv_stage_handled(&cfg, "pre-commit"));
+        assert!(!dotenv_stage_handled(&cfg, "pre-push"));
+    }
+
+    #[test]
+    fn dotenv_stage_handled_off_when_unset() {
+        let cfg = cfg_with_dotenv(None);
+        assert!(!dotenv_stage_handled(&cfg, "post-checkout"));
     }
 }

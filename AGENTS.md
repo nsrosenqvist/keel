@@ -137,33 +137,34 @@ Tools invoked outside scaffl (`docker compose up` directly, IDE-launched
 servers, `bin/rails s`, `npm run dev`, …) read `.env` and don't see the
 worktree-derived values.
 
-`scaffl env --write [PATH]` materialises the resolved env into a dotenv
-file as a `# >>> scaffl-managed >>>` block. User content above and
-below the markers is preserved; the block is replaced in place on each
-write.
-
-Wire it to the git lifecycle so it stays in sync with the active
-branch:
+The simplest fix is one config line:
 
 ```toml
-# scaffl.toml
-[hooks]
-post-checkout = ["env-rewrite"]
-post-merge    = ["env-rewrite"]
-
-[command.env-rewrite]
-desc = "Refresh .env worktree-derived values"
-run  = "scaffl env --write .env"
+[worktrees]
+dotenv = ".env"
 ```
 
-Then once:
+When set, two things happen:
 
-```sh
-scaffl hooks install --stages post-checkout,post-merge
-```
+1. **Auto-write on every scaffl invocation.** The resolved
+   `[env]` plus the three worktree-derived built-ins
+   (`SCAFFL_WORKTREE_SLUG`, `_OFFSET`, `COMPOSE_PROJECT_NAME`)
+   land in the file as a marker-delimited block. The write is
+   idempotent — when the contents already match, the file isn't
+   touched (mtime stays put), so file watchers and `git status`
+   don't see spurious churn.
+2. **`scaffl hooks install` auto-includes `post-checkout` and
+   `post-merge`.** That keeps the file fresh after a branch switch
+   even when the developer goes on to run `docker compose up`
+   directly without involving scaffl.
 
-After every branch switch / pull, `.env` carries the right
-`APP_PORT`, `COMPOSE_PROJECT_NAME`, etc. for that worktree.
+User content above and below the managed block is preserved;
+the block itself is replaced in place on each write. Path is
+project-root-relative unless absolute.
+
+For the explicit / one-shot form, `scaffl env --write [PATH]` writes
+the same block ad-hoc — useful in CI scripts or when you don't want
+the every-invocation auto-write.
 
 ## Layout
 

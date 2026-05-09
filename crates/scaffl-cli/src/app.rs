@@ -165,6 +165,16 @@ pub async fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("load project at {}", project_root.display()))?;
     let cfg_arc = Arc::new(config);
 
+    // Auto-write resolved env to `[worktrees] dotenv` (no-op when the
+    // field is unset). Idempotent: only writes when the contents would
+    // change, so file watchers / git status stay quiet on repeat
+    // invocations. We do this *before* dispatch so any subcommand that
+    // shells out (recipes, compose passthrough, in-container exec)
+    // sees the freshly materialised file.
+    commands::env::auto_write_if_configured(&cfg_arc, &project_root)
+        .await
+        .context("auto-write [worktrees] dotenv")?;
+
     if let Some(sub) = cli.command {
         return match sub {
             Command::List => cmd_list(&cfg_arc),
@@ -204,7 +214,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             },
             Command::Hooks { action } => match action {
                 HooksAction::Install { stages } => {
-                    commands::hooks::install(&project_root, &stages).await
+                    commands::hooks::install(&cfg_arc, &project_root, &stages).await
                 }
                 HooksAction::Uninstall { stages } => {
                     commands::hooks::uninstall(&project_root, &stages).await

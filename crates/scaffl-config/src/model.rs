@@ -87,6 +87,18 @@ pub struct WorktreesConfig {
     /// `production = 0`).
     #[serde(default)]
     pub assign: BTreeMap<String, u32>,
+
+    /// When set, scaffl materialises the resolved `[env]` (plus the
+    /// three worktree-derived built-ins) into this dotenv file as a
+    /// marker-delimited block on every CLI invocation, and `scaffl
+    /// hooks install` (without explicit `--stages`) auto-includes
+    /// `post-checkout` / `post-merge` so the file stays fresh even
+    /// when the user runs `docker compose` directly. Path is
+    /// project-root-relative unless absolute. Omitting the field
+    /// preserves the original opt-in behaviour: nothing is written
+    /// until the user runs `scaffl env --write` themselves.
+    #[serde(default)]
+    pub dotenv: Option<String>,
 }
 
 impl Default for WorktreesConfig {
@@ -96,6 +108,7 @@ impl Default for WorktreesConfig {
             seed: String::new(),
             isolate_compose: true,
             assign: BTreeMap::new(),
+            dotenv: None,
         }
     }
 }
@@ -439,6 +452,7 @@ mod tests {
         assert!(cfg.worktrees.seed.is_empty());
         assert!(cfg.worktrees.isolate_compose);
         assert!(cfg.worktrees.assign.is_empty());
+        assert!(cfg.worktrees.dotenv.is_none());
     }
 
     #[test]
@@ -448,6 +462,7 @@ mod tests {
             modulus = 100
             seed = "myseed"
             isolate_compose = false
+            dotenv = ".env"
 
             [worktrees.assign]
             main = 0
@@ -458,6 +473,7 @@ mod tests {
         assert_eq!(cfg.worktrees.modulus, 100);
         assert_eq!(cfg.worktrees.seed, "myseed");
         assert!(!cfg.worktrees.isolate_compose);
+        assert_eq!(cfg.worktrees.dotenv.as_deref(), Some(".env"));
         assert_eq!(cfg.worktrees.assign.get("main"), Some(&0));
         assert_eq!(cfg.worktrees.assign.get("feature/x"), Some(&7));
     }
