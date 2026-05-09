@@ -407,24 +407,160 @@ fn render_terminals_form(form: &crate::app::NewTerminalForm, frame: &mut Frame) 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// Placeholder body for the diff view. Phase 4 replaces with the
-/// file list + diff renderer.
-fn render_diff_placeholder(_app: &App, frame: &mut Frame, area: Rect) {
-    let block = panel_block(" diff ");
-    let body = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  file-level git diff review — coming soon",
+/// Real Diff body: file list sidebar + diff body right pane.
+fn render_diff_placeholder(app: &App, frame: &mut Frame, area: Rect) {
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(SIDEBAR_RATIO),
+            Constraint::Percentage(100 - SIDEBAR_RATIO),
+        ])
+        .split(area);
+    render_diff_files(app, frame, body[0]);
+    render_diff_body(app, frame, body[1]);
+}
+
+fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
+    use crate::app::DiffStatus;
+    let diff = app.diff();
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "changes",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" ({}) ", diff.files.len()),
             Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  press c to return to the control center",
+        ),
+    ]);
+    let block = panel_block_titled(title);
+
+    if !diff.loaded {
+        let body = Paragraph::new(Line::from(Span::styled(
+            "  loading…",
             Style::default().fg(Color::DarkGray),
-        )),
-    ])
-    .block(block);
-    frame.render_widget(body, area);
+        )))
+        .block(block);
+        frame.render_widget(body, area);
+        return;
+    }
+    if let Some(err) = diff.error.as_ref() {
+        let body = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "  error".to_string(),
+                Style::default().fg(Color::Red),
+            )),
+            Line::from(Span::styled(
+                format!("  {err}"),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(block);
+        frame.render_widget(body, area);
+        return;
+    }
+    if diff.files.is_empty() {
+        let body = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  no changes — working tree clean",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  press r to refresh",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(block);
+        frame.render_widget(body, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = diff
+        .files
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| {
+            let row_style = if idx == diff.selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let letter_style = match f.status {
+                DiffStatus::Modified => Style::default().fg(Color::Yellow),
+                DiffStatus::Added | DiffStatus::Untracked => Style::default().fg(Color::Green),
+                DiffStatus::Deleted => Style::default().fg(Color::Red),
+                DiffStatus::Renamed => Style::default().fg(Color::Cyan),
+                DiffStatus::Other => Style::default().fg(Color::DarkGray),
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {} ", f.status.letter()), letter_style),
+                Span::styled(f.path.clone(), row_style),
+            ]))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(block)
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_widget(list, area);
+}
+
+fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
+    let title_text = match app.diff_selected_file() {
+        Some(f) => format!("  diff · {}", f.path),
+        None => "  diff".into(),
+    };
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            title_text,
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+
+    let lines: Vec<Line<'static>> = match app.diff_selected_file() {
+        Some(f) => match app.diff_cache_for(&f.path) {
+            Some(diff_lines) => {
+                let max = area.height.saturating_sub(2) as usize;
+                let total = diff_lines.len();
+                let start = total.saturating_sub(max);
+                diff_lines
+                    .iter()
+                    .skip(start)
+                    .map(render_diff_line)
+                    .collect()
+            }
+            None => vec![Line::from(Span::styled(
+                "loading diff…",
+                Style::default().fg(Color::DarkGray),
+            ))],
+        },
+        None => vec![Line::from(Span::styled(
+            "select a file on the left",
+            Style::default().fg(Color::DarkGray),
+        ))],
+    };
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_diff_line(line: &crate::app::DiffLine) -> Line<'static> {
+    use crate::app::DiffLineKind;
+    let style = match line.kind {
+        DiffLineKind::Added => Style::default().fg(Color::Green),
+        DiffLineKind::Removed => Style::default().fg(Color::Red),
+        DiffLineKind::Hunk => Style::default().fg(Color::Cyan),
+        DiffLineKind::Header => Style::default().fg(Color::DarkGray),
+        DiffLineKind::Context => Style::default(),
+    };
+    Line::from(Span::styled(line.text.clone(), style))
 }
 
 // ───────────────────────── top bar ─────────────────────────
@@ -1650,7 +1786,13 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("W", "worktree"),
             ("q", "quit"),
         ],
-        crate::app::View::Diff => vec![("c", "control center"), ("W", "worktree"), ("q", "quit")],
+        crate::app::View::Diff => vec![
+            ("↑↓", "nav"),
+            ("r", "refresh"),
+            ("c", "control"),
+            ("W", "worktree"),
+            ("q", "quit"),
+        ],
     }
 }
 

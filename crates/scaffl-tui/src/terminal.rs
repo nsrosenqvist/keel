@@ -205,6 +205,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         }
         KeyCode::Char('g') => {
             app.switch_view(crate::app::View::Diff);
+            ensure_diff_loaded(app).await;
             return;
         }
         KeyCode::Char('c') if app.view() != crate::app::View::ControlCenter => {
@@ -222,10 +223,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         return;
     }
     if app.view() == crate::app::View::Diff {
-        // Phase 4 takes over; for now diff has no keys of its own.
-        if matches!(code, KeyCode::Char('q') | KeyCode::Esc) {
-            app.quit();
-        }
+        handle_key_diff(app, code, modifiers).await;
         return;
     }
 
@@ -454,6 +452,161 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
         KeyCode::Enter => app.terminals_confirm(),
         _ => {}
     }
+}
+
+async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
+        app.quit();
+        return;
+    }
+    match code {
+        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.diff_select_next();
+            ensure_diff_for_selected(app).await;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.diff_select_prev();
+            ensure_diff_for_selected(app).await;
+        }
+        KeyCode::Char('r') => {
+            app.diff_mark_stale();
+            ensure_diff_loaded(app).await;
+        }
+        _ => {}
+    }
+}
+
+/// Populate the diff file list if it hasn't been loaded yet, and
+/// ensure the selected file's diff body is cached. Cheap on
+/// subsequent calls thanks to the per-file cache.
+async fn ensure_diff_loaded(app: &mut App) {
+    if !app.diff().loaded {
+        let project_root = app.project_root().to_path_buf();
+        match load_diff_files(&project_root).await {
+            Ok(files) => app.diff_set_files(files),
+            Err(msg) => app.diff_set_error(msg),
+        }
+    }
+    ensure_diff_for_selected(app).await;
+}
+
+async fn ensure_diff_for_selected(app: &mut App) {
+    let Some(file) = app.diff_selected_file().cloned() else {
+        return;
+    };
+    if app.diff_cache_for(&file.path).is_some() {
+        return;
+    }
+    let project_root = app.project_root().to_path_buf();
+    let lines = load_diff_for_file(&project_root, &file).await;
+    app.diff_set_cache(file.path.clone(), lines);
+}
+
+async fn load_diff_files(
+    project_root: &std::path::Path,
+) -> Result<Vec<crate::app::DiffFile>, String> {
+    let output = tokio::process::Command::new("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(project_root)
+        .output()
+        .await
+        .map_err(|e| format!("git status failed: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git status exited {}",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(parse_status_porcelain(&stdout))
+}
+
+/// Parse `git status --porcelain=v1` output. Each line is two
+/// status chars + space + path (or `path -> renamed-to` for
+/// renames). We pick the worst-of-the-two status chars to colour
+/// the row; the file path is everything after.
+pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::app::DiffFile> {
+    use crate::app::{DiffFile, DiffStatus};
+    let mut out = Vec::new();
+    for line in input.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let staged = line.as_bytes()[0] as char;
+        let worktree = line.as_bytes()[1] as char;
+        let rest = &line[3..];
+        // Renames have the form `R  old -> new`.
+        let path = if let Some(idx) = rest.find(" -> ") {
+            rest[idx + 4..].to_string()
+        } else {
+            rest.to_string()
+        };
+        let status = match (staged, worktree) {
+            ('?', '?') => DiffStatus::Untracked,
+            ('A', _) | (_, 'A') => DiffStatus::Added,
+            ('D', _) | (_, 'D') => DiffStatus::Deleted,
+            ('R', _) | (_, 'R') => DiffStatus::Renamed,
+            ('M', _) | (_, 'M') => DiffStatus::Modified,
+            _ => DiffStatus::Other,
+        };
+        out.push(DiffFile { path, status });
+    }
+    out
+}
+
+async fn load_diff_for_file(
+    project_root: &std::path::Path,
+    file: &crate::app::DiffFile,
+) -> Vec<crate::app::DiffLine> {
+    use crate::app::{DiffLine, DiffLineKind, DiffStatus};
+    // Untracked files don't exist in HEAD — `git diff HEAD <path>`
+    // would error. Synthesise a file-as-added view with the file
+    // contents prefixed by `+`.
+    if file.status == DiffStatus::Untracked {
+        return load_untracked_as_diff(project_root, &file.path).await;
+    }
+    let output = match tokio::process::Command::new("git")
+        .args(["diff", "HEAD", "--", &file.path])
+        .current_dir(project_root)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            return vec![DiffLine {
+                kind: DiffLineKind::Header,
+                text: format!("git diff failed: {e}"),
+            }];
+        }
+    };
+    let body = String::from_utf8_lossy(&output.stdout);
+    body.lines()
+        .map(|line| DiffLine {
+            kind: DiffLineKind::classify(line),
+            text: line.to_string(),
+        })
+        .collect()
+}
+
+async fn load_untracked_as_diff(
+    project_root: &std::path::Path,
+    path: &str,
+) -> Vec<crate::app::DiffLine> {
+    use crate::app::{DiffLine, DiffLineKind};
+    let abs = project_root.join(path);
+    let body = tokio::fs::read_to_string(&abs).await.unwrap_or_default();
+    let mut lines = vec![DiffLine {
+        kind: DiffLineKind::Header,
+        text: format!("untracked file: {path}"),
+    }];
+    for l in body.lines() {
+        lines.push(DiffLine {
+            kind: DiffLineKind::Added,
+            text: format!("+{l}"),
+        });
+    }
+    lines
 }
 
 async fn handle_key_terminals_form(app: &mut App, code: KeyCode) {
@@ -801,6 +954,33 @@ mod tests {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('g'))).await;
         assert_eq!(app.view(), crate::app::View::Diff);
+    }
+
+    #[test]
+    fn parse_status_porcelain_classifies_each_line() {
+        use crate::app::DiffStatus;
+        // Explicit \n joins because Rust's `\<newline>` continuation
+        // strips the leading whitespace on the next line — which
+        // would corrupt git porcelain's `XY PATH` format where X
+        // can legitimately be a space.
+        let input = concat!(
+            " M src/main.rs\n",
+            "A  src/lib.rs\n",
+            "?? notes.txt\n",
+            " D Cargo.toml\n",
+            "R  old.txt -> new.txt\n",
+        );
+        let files = parse_status_porcelain(input);
+        assert_eq!(files.len(), 5);
+        assert_eq!(files[0].status, DiffStatus::Modified);
+        assert_eq!(files[0].path, "src/main.rs");
+        assert_eq!(files[1].status, DiffStatus::Added);
+        assert_eq!(files[2].status, DiffStatus::Untracked);
+        assert_eq!(files[2].path, "notes.txt");
+        assert_eq!(files[3].status, DiffStatus::Deleted);
+        // Renames carry the destination as the path.
+        assert_eq!(files[4].status, DiffStatus::Renamed);
+        assert_eq!(files[4].path, "new.txt");
     }
 
     #[tokio::test]

@@ -227,6 +227,90 @@ impl TerminalsState {
     }
 }
 
+/// State for the Diff view (`g`). Populated lazily on first
+/// switch, rebuilt on `r`. Per-file diff bodies cache so
+/// navigating among files doesn't re-shell-out to git.
+#[derive(Debug, Clone, Default)]
+pub struct DiffState {
+    pub files: Vec<DiffFile>,
+    pub selected: usize,
+    pub cache: std::collections::HashMap<String, Vec<DiffLine>>,
+    /// True once `files` has been populated at least once. Lets the
+    /// renderer distinguish "no changes" from "haven't checked yet".
+    pub loaded: bool,
+    /// Last error from `git status` / `git diff`, if any.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiffFile {
+    pub path: String,
+    pub status: DiffStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Other,
+}
+
+impl DiffStatus {
+    pub fn letter(self) -> char {
+        match self {
+            DiffStatus::Modified => 'M',
+            DiffStatus::Added => 'A',
+            DiffStatus::Deleted => 'D',
+            DiffStatus::Renamed => 'R',
+            DiffStatus::Untracked => 'U',
+            DiffStatus::Other => '?',
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineKind {
+    Added,
+    Removed,
+    Context,
+    Hunk,
+    Header,
+}
+
+impl DiffLineKind {
+    pub fn classify(line: &str) -> Self {
+        if line.starts_with("@@") {
+            return DiffLineKind::Hunk;
+        }
+        if line.starts_with("diff --git")
+            || line.starts_with("index ")
+            || line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || line.starts_with("Binary files")
+            || line.starts_with("new file mode")
+            || line.starts_with("deleted file mode")
+        {
+            return DiffLineKind::Header;
+        }
+        if line.starts_with('+') {
+            return DiffLineKind::Added;
+        }
+        if line.starts_with('-') {
+            return DiffLineKind::Removed;
+        }
+        DiffLineKind::Context
+    }
+}
+
 /// One-shot signal from the Terminals view to the event loop:
 /// "leave the alternate screen, attach to this tmux window, come
 /// back when the user detaches." Created (or, if needed, sent
@@ -345,6 +429,8 @@ pub struct App {
     /// loop drains this between ticks: drops the events reader,
     /// leaves alternate screen, runs tmux attach, re-enters.
     pub pending_attach: Option<AttachRequest>,
+    /// Diff view state. Lazily populated on first switch / refresh.
+    diff: DiffState,
 }
 
 impl App {
@@ -374,6 +460,7 @@ impl App {
             view: View::ControlCenter,
             terminals,
             pending_attach: None,
+            diff: DiffState::default(),
         }
     }
 
@@ -1132,6 +1219,57 @@ impl App {
         self.pending_attach.take()
     }
 
+    pub fn diff(&self) -> &DiffState {
+        &self.diff
+    }
+
+    /// Replace the file list (typically after a `git status` reload).
+    /// Clamps the selection so it can't point past the end. Cache
+    /// stays — the user might re-edit and want the same diff back.
+    pub fn diff_set_files(&mut self, files: Vec<DiffFile>) {
+        self.diff.files = files;
+        self.diff.loaded = true;
+        if self.diff.selected >= self.diff.files.len() {
+            self.diff.selected = self.diff.files.len().saturating_sub(1);
+        }
+        self.diff.error = None;
+    }
+
+    pub fn diff_set_error(&mut self, msg: String) {
+        self.diff.error = Some(msg);
+        self.diff.loaded = true;
+    }
+
+    pub fn diff_select_next(&mut self) {
+        if self.diff.files.is_empty() {
+            return;
+        }
+        self.diff.selected = (self.diff.selected + 1).min(self.diff.files.len() - 1);
+    }
+
+    pub fn diff_select_prev(&mut self) {
+        self.diff.selected = self.diff.selected.saturating_sub(1);
+    }
+
+    pub fn diff_selected_file(&self) -> Option<&DiffFile> {
+        self.diff.files.get(self.diff.selected)
+    }
+
+    pub fn diff_cache_for(&self, path: &str) -> Option<&Vec<DiffLine>> {
+        self.diff.cache.get(path)
+    }
+
+    pub fn diff_set_cache(&mut self, path: String, lines: Vec<DiffLine>) {
+        self.diff.cache.insert(path, lines);
+    }
+
+    /// Mark the diff state stale so the next render pulls fresh
+    /// data. Used by the `r` keybind in the diff view.
+    pub fn diff_mark_stale(&mut self) {
+        self.diff.loaded = false;
+        self.diff.cache.clear();
+    }
+
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
         let d = self.confirm.take()?;
         self.mode = Mode::Normal;
@@ -1863,6 +2001,62 @@ mod tests {
         assert!(req.session.starts_with("scaffl-"));
         assert_eq!(req.window, "shell");
         assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
+    }
+
+    #[test]
+    fn diff_line_kind_classifies_known_prefixes() {
+        use crate::app::DiffLineKind;
+        assert_eq!(
+            DiffLineKind::classify("@@ -1,5 +1,5 @@"),
+            DiffLineKind::Hunk
+        );
+        assert_eq!(
+            DiffLineKind::classify("diff --git a/x b/x"),
+            DiffLineKind::Header
+        );
+        assert_eq!(DiffLineKind::classify("--- a/x"), DiffLineKind::Header);
+        assert_eq!(DiffLineKind::classify("+++ b/x"), DiffLineKind::Header);
+        assert_eq!(DiffLineKind::classify("+ added"), DiffLineKind::Added);
+        assert_eq!(DiffLineKind::classify("- removed"), DiffLineKind::Removed);
+        assert_eq!(DiffLineKind::classify(" context"), DiffLineKind::Context);
+        assert_eq!(DiffLineKind::classify(""), DiffLineKind::Context);
+    }
+
+    #[test]
+    fn diff_select_clamps_at_bounds() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![
+            DiffFile {
+                path: "a".into(),
+                status: DiffStatus::Modified,
+            },
+            DiffFile {
+                path: "b".into(),
+                status: DiffStatus::Added,
+            },
+        ]);
+        app.diff_select_next();
+        assert_eq!(app.diff().selected, 1);
+        app.diff_select_next();
+        assert_eq!(app.diff().selected, 1);
+        app.diff_select_prev();
+        assert_eq!(app.diff().selected, 0);
+        app.diff_select_prev();
+        assert_eq!(app.diff().selected, 0);
+    }
+
+    #[test]
+    fn diff_mark_stale_clears_cache() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![DiffFile {
+            path: "a".into(),
+            status: DiffStatus::Modified,
+        }]);
+        app.diff_set_cache("a".into(), vec![]);
+        assert!(app.diff_cache_for("a").is_some());
+        app.diff_mark_stale();
+        assert!(app.diff_cache_for("a").is_none());
+        assert!(!app.diff().loaded);
     }
 
     #[test]
