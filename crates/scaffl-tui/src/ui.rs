@@ -677,17 +677,10 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
 fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
     let title = service_pane_title(service);
 
-    // The error path is the only place this pane prints prose that's
-    // long enough to wrap. Apply local block padding so the wrapped
-    // continuation lines keep the indent — the leading "  " hack used
-    // elsewhere only pads the first visual line. Other paths fall back
-    // to the bare panel block so streaming compose logs render flush
-    // (artificial indent would misalign the upstream tool's output).
-    let block = if service.tail_error.is_some() {
-        panel_block_titled(title).padding(Padding::new(2, 1, 1, 0))
-    } else {
-        panel_block_titled(title)
-    };
+    // Same padding as recipe / lifecycle output panes so all three
+    // sit in the same visual frame. Compose's own `<svc-N> |`
+    // prefix is short and stays readable inside the gutter.
+    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = service.buffer.len();
@@ -700,13 +693,12 @@ fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
         .collect();
 
     let body = if service.buffer.is_empty() && service.tail_error.is_none() {
-        vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  waiting for output…",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]
+        // Block padding now provides the left gutter; no leading "  "
+        // needed in the placeholder.
+        vec![Line::from(Span::styled(
+            "waiting for output…",
+            Style::default().fg(Color::DarkGray),
+        ))]
     } else if let Some(err) = &service.tail_error {
         // No leading "  " — the block padding handles it, including
         // for wrapped continuation lines.
@@ -1217,7 +1209,6 @@ mod tests {
         terminal.draw(|f| render(&app, f)).unwrap();
     }
 
-    #[test]
     #[test]
     fn wrap_words_breaks_at_word_boundary() {
         let out = wrap_words("the quick brown fox jumps", 10);
