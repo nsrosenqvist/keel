@@ -1157,23 +1157,30 @@ impl App {
                 });
             }
             TerminalsRow::NewSentinel => {
-                let session = self.terminals.session_name.clone();
-                let create_with = Some(format!(
-                    "cd {} && exec ${{SHELL:-/bin/sh}}",
-                    shell_escape(self.project_root.display().to_string())
-                ));
-                // Attach by name with a synthetic placeholder; the
-                // attach handler picks the next free tmux index for
-                // a fresh window. Tmux's automatic-rename will
-                // overwrite this name with the running program's
-                // name as soon as the shell starts.
-                self.pending_attach = Some(AttachRequest {
-                    session,
-                    window: "scaffl-new".to_string(),
-                    create_with,
-                });
+                self.queue_new_shell();
             }
         }
+    }
+
+    /// Spawn a fresh shell window in the worktree's tmux session
+    /// and queue the attach. Used by both the `+ new shell`
+    /// sentinel row and the `n` shortcut so the keybind and the
+    /// list entry produce identical behaviour.
+    pub fn queue_new_shell(&mut self) {
+        let session = self.terminals.session_name.clone();
+        let create_with = Some(format!(
+            "cd {} && exec ${{SHELL:-/bin/sh}}",
+            shell_escape(self.project_root.display().to_string())
+        ));
+        // `scaffl-new` is the sentinel marker — the attach handler
+        // unconditionally calls `tmux new-window` for it, so each
+        // press creates a distinct window. tmux's automatic-rename
+        // overwrites the placeholder name once `$SHELL` starts.
+        self.pending_attach = Some(AttachRequest {
+            session,
+            window: "scaffl-new".to_string(),
+            create_with,
+        });
     }
 
     /// Open a confirmation modal for killing the selected window.
@@ -2049,6 +2056,27 @@ mod tests {
         let req = app.take_pending_attach().unwrap();
         assert_eq!(req.window, "3");
         assert!(req.create_with.is_none());
+    }
+
+    #[test]
+    fn queue_new_shell_matches_sentinel_confirm() {
+        // The `n` shortcut should produce the same AttachRequest
+        // as confirming the sentinel row — both go through
+        // `queue_new_shell`. This asserts they match byte-for-byte
+        // so regressing one would catch the other in tests.
+        let mut from_shortcut = App::new(cfg());
+        from_shortcut.queue_new_shell();
+        let req_shortcut = from_shortcut.take_pending_attach().unwrap();
+
+        let mut from_sentinel = App::new(cfg());
+        // Single sentinel row at index 0 in the empty cfg.
+        from_sentinel.terminals_confirm();
+        let req_sentinel = from_sentinel.take_pending_attach().unwrap();
+
+        assert_eq!(req_shortcut.session, req_sentinel.session);
+        assert_eq!(req_shortcut.window, req_sentinel.window);
+        assert_eq!(req_shortcut.create_with, req_sentinel.create_with);
+        assert_eq!(req_shortcut.window, "scaffl-new");
     }
 
     #[test]

@@ -767,6 +767,10 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
         KeyCode::Down | KeyCode::Char('j') => app.terminals_select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.terminals_select_prev(),
         KeyCode::Char('d') => app.terminals_kill_selected(),
+        // `n` is the shortcut for the `+ new shell` sentinel —
+        // hand-shortcut for power users who don't want to scroll
+        // to the bottom of the list every time.
+        KeyCode::Char('n') => app.queue_new_shell(),
         KeyCode::Enter => app.terminals_confirm(),
         _ => {}
     }

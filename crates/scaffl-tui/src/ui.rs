@@ -1845,6 +1845,7 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         crate::app::View::Terminals => vec![
             ("↑↓", "nav"),
             ("enter", "attach"),
+            ("n", "new"),
             ("d", "delete"),
             ("C", "control"),
             ("G", "diff"),
