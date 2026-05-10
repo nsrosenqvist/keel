@@ -92,6 +92,11 @@ pub enum Command {
         #[command(subcommand)]
         action: HooksAction,
     },
+    /// Manage agent instructions and skills sourced from upstream repos.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
     /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
     Completions { shell: clap_complete::Shell },
     /// Interactive prompt helpers usable from any shell script
@@ -139,6 +144,50 @@ pub enum HooksAction {
     /// Run hooks for a stage. Used by the installed shims; `git commit`
     /// invokes this via .git/hooks/pre-commit.
     Run { stage: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentsAction {
+    /// Apply pinned upstream sources to the project tree.
+    Install {
+        /// Re-clone every source, ignoring the local cache.
+        #[arg(long)]
+        force: bool,
+        /// Plan but don't write files or save state.
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite scaffl-owned files that have been hand-edited
+        /// since the last apply.
+        #[arg(long)]
+        force_overwrite_drift: bool,
+    },
+    /// Re-resolve revisions and re-apply. Floating refs (anything
+    /// that isn't a SHA or semver tag) auto-refetch.
+    Update {
+        /// Limit the update to one or more named sources. May repeat.
+        #[arg(long = "source", value_name = "NAME")]
+        sources: Vec<String>,
+        /// Re-clone every selected source, ignoring the local cache.
+        #[arg(long)]
+        force: bool,
+        /// Plan but don't write files or save state.
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite scaffl-owned files that have been hand-edited
+        /// since the last apply.
+        #[arg(long)]
+        force_overwrite_drift: bool,
+    },
+    /// Show pinned-rev + drift status. Read-only — does not touch the
+    /// upstream cache. Exits non-zero on drift / missing files when
+    /// `--strict` is set.
+    Status {
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Print the actions a fresh apply would take, without touching
+    /// any files.
+    Diff,
 }
 
 #[derive(Debug, Subcommand)]
@@ -309,6 +358,43 @@ pub async fn run(cli: Cli) -> Result<()> {
                     std::process::exit(code);
                 }
             },
+            Command::Agents { action } => match action {
+                AgentsAction::Install {
+                    force,
+                    dry_run,
+                    force_overwrite_drift,
+                } => {
+                    commands::agents::install(
+                        &cfg_arc,
+                        &project_root,
+                        force,
+                        dry_run,
+                        force_overwrite_drift,
+                    )
+                    .await
+                }
+                AgentsAction::Update {
+                    sources,
+                    force,
+                    dry_run,
+                    force_overwrite_drift,
+                } => {
+                    commands::agents::update(
+                        &cfg_arc,
+                        &project_root,
+                        sources,
+                        force,
+                        dry_run,
+                        force_overwrite_drift,
+                    )
+                    .await
+                }
+                AgentsAction::Status { strict } => {
+                    let code = commands::agents::status(&cfg_arc, &project_root, strict).await?;
+                    std::process::exit(code);
+                }
+                AgentsAction::Diff => commands::agents::diff(&cfg_arc, &project_root).await,
+            },
             Command::Install {
                 step,
                 resume,
@@ -474,7 +560,7 @@ fn ensure_scaffl_gitignore(config: &Config, project_root: &Path) -> Result<()> {
     // The block lives inside `.scaffl/` by default, so the ignore
     // patterns are relative to that directory. Users moving the file
     // elsewhere are responsible for prefixing the patterns themselves.
-    let body = "local.toml\nworktrees/\ncache/\ninstall.state.json\n";
+    let body = "local.toml\nworktrees/\ncache/\ninstall.state.json\nagents.state.json\n";
     scaffl_config::managed_block::write(&path, body)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())

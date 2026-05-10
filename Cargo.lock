@@ -1242,6 +1242,7 @@ dependencies = [
  "crossterm 0.28.1",
  "dialoguer",
  "notify",
+ "scaffl-agents",
  "scaffl-config",
  "scaffl-container",
  "scaffl-hooks",

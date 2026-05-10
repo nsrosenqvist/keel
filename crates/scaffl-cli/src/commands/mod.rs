@@ -6,6 +6,7 @@
 //! [`scaffl_runtime::Env::resolve`] directly, `doctor` uses pure-function
 //! validation, and `init` is filesystem-only.
 
+pub mod agents;
 pub mod completions;
 pub mod doctor;
 pub mod env;

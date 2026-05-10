@@ -20,6 +20,7 @@ scaffl-container = { workspace = true }
 scaffl-runtime = { workspace = true }
 scaffl-tui = { workspace = true }
 scaffl-hooks = { workspace = true }
+scaffl-agents = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }
