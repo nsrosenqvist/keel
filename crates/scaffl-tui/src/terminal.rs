@@ -101,19 +101,40 @@ async fn drive(
             *terminal = enter_terminal(&terminal_title(app))?;
             terminal.clear()?;
             events = spawn_event_reader();
-            // Window list may have changed (new shell created, or
-            // user typed `exit` and the window died). Reload the
-            // cache so the sidebar reflects the current state.
-            // We expect the session to exist post-attach; if it
-            // doesn't, refresh_tmux_windows surfaces the cause.
+            // Drain phantom events for a short window. When tmux
+            // exits, the terminal mode-restore sequences (alt
+            // screen exit, mouse mode disable, bracketed paste
+            // toggle, focus tracking) cause some terminals to
+            // emit response bytes on stdin. Crossterm parses
+            // those as Events — and one of them happening to be
+            // 'd' would trigger `terminals_kill_selected` on the
+            // window the user just created, which exactly matches
+            // the "list disappears 100ms after detach" report.
+            let drain_deadline = std::time::Instant::now() + Duration::from_millis(150);
+            let mut drained: Vec<Event> = Vec::new();
+            while std::time::Instant::now() < drain_deadline {
+                match tokio::time::timeout(Duration::from_millis(30), events.recv()).await {
+                    Ok(Some(ev)) => drained.push(ev),
+                    Ok(None) => break,
+                    Err(_) => {} // timeout — keep waiting until the deadline
+                }
+            }
+            if !drained.is_empty() {
+                app.diagnostic(format!(
+                    "[input] discarded {} post-detach phantom event(s):",
+                    drained.len()
+                ));
+                for ev in &drained {
+                    app.diagnostic(format!("[input]   {ev:?}"));
+                }
+            }
+            // Reload cached window list — new shell created, or
+            // user typed `exit` and the window died.
             refresh_tmux_windows(app, true).await;
             // Paint the post-attach state *now*, before the next
             // loop iteration's slow pre-render hooks
             // (`refresh_service_status` shells out to compose for
-            // each service — ~200ms with two of them). Without
-            // this, users see a blank alt-screen for those couple
-            // hundred milliseconds and read "blank" as "list got
-            // emptied".
+            // each service — ~200ms with two of them).
             terminal.draw(|f| ui::render(app, f))?;
             continue;
         }
