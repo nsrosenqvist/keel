@@ -228,7 +228,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     }
 
     match code {
-        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Home => app.select_first(),
@@ -445,7 +445,7 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
         return;
     }
     match code {
-        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Down | KeyCode::Char('j') => app.terminals_select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.terminals_select_prev(),
         KeyCode::Char('d') => app.terminals_delete_selected(),
@@ -460,7 +460,7 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         return;
     }
     match code {
-        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Down | KeyCode::Char('j') => {
             app.diff_select_next();
             ensure_diff_for_selected(app).await;
@@ -1036,6 +1036,16 @@ mod tests {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, ctrl(KeyCode::Char('p'))).await;
         assert_eq!(app.mode(), crate::app::Mode::Palette);
+    }
+
+    #[tokio::test]
+    async fn esc_in_normal_does_not_quit() {
+        // Esc used to alias to quit. Now it's reserved for closing
+        // modals — `q` and `ctrl+c` are the only ways to end the
+        // session.
+        let mut app = app_with("[command.a]\nrun = \"true\"\n");
+        handle_event(&mut app, press(KeyCode::Esc)).await;
+        assert!(!app.should_quit());
     }
 
     #[tokio::test]
