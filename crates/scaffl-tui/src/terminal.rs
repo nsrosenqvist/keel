@@ -184,6 +184,28 @@ async fn drive(
             // last window — that's normal, no flash.
             refresh_tmux_windows(app, false).await;
         }
+        if app.take_pending_lazygit() {
+            // Mirror the tmux-attach handoff: drop the events
+            // reader so its blocking poll thread doesn't fight
+            // lazygit for stdin, leave alternate screen / cooked
+            // mode, run lazygit (it inherits stdin/stdout/stderr),
+            // then re-enter the TUI when the user q's out.
+            drop(events);
+            leave_terminal(terminal)?;
+            if let Err(msg) = crate::lazygit::run(app.project_root()).await {
+                app.flash = Some(msg.clone());
+                app.diagnostic(format!("[lazygit] {msg}"));
+            }
+            *terminal = enter_terminal(&terminal_title(app))?;
+            terminal.clear()?;
+            events = spawn_event_reader();
+            // Lazygit may have committed / staged / reset; the
+            // current diff snapshot is no longer authoritative.
+            app.diff_mark_stale();
+            ensure_diff_loaded(app).await;
+            terminal.draw(|f| ui::render(app, f))?;
+            continue;
+        }
         tokio::select! {
             biased;
             ev = events.recv() => {
@@ -781,34 +803,97 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
 }
 
 async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    use crate::app::DiffFocus;
     if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
         app.quit();
         return;
     }
+    // Always-on bindings: shared across both focused panes.
     match code {
-        KeyCode::Char('q') => app.quit(),
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.diff_select_next();
-            ensure_diff_for_selected(app).await;
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.diff_select_prev();
-            ensure_diff_for_selected(app).await;
+        KeyCode::Char('q') => {
+            app.quit();
+            return;
         }
         KeyCode::Char('r') => {
             app.diff_mark_stale();
             ensure_diff_loaded(app).await;
+            return;
+        }
+        KeyCode::Tab | KeyCode::BackTab => {
+            app.diff_toggle_focus();
+            return;
+        }
+        KeyCode::Char('w') => {
+            app.diff_toggle_wrap();
+            return;
+        }
+        KeyCode::Char('L') => {
+            if app.diff().lazygit_available {
+                app.request_lazygit();
+            } else {
+                app.flash = Some("install lazygit to enable the L keybind".into());
+            }
+            return;
+        }
+        KeyCode::Char(']') => {
+            app.diff_set_focus(DiffFocus::Body);
+            app.diff_jump_hunk_next();
+            return;
+        }
+        KeyCode::Char('[') => {
+            app.diff_set_focus(DiffFocus::Body);
+            app.diff_jump_hunk_prev();
+            return;
         }
         _ => {}
+    }
+    match app.diff_focus() {
+        DiffFocus::Files => match code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.diff_select_next();
+                ensure_diff_for_selected(app).await;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.diff_select_prev();
+                ensure_diff_for_selected(app).await;
+            }
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                app.diff_set_focus(DiffFocus::Body);
+            }
+            _ => {}
+        },
+        DiffFocus::Body => match code {
+            KeyCode::Down | KeyCode::Char('j') => app.diff_body_scroll_by(1),
+            KeyCode::Up | KeyCode::Char('k') => app.diff_body_scroll_by(-1),
+            KeyCode::PageDown => {
+                let half = (app.diff().body_height.get() / 2).max(1) as i32;
+                app.diff_body_scroll_by(half);
+            }
+            KeyCode::PageUp => {
+                let half = (app.diff().body_height.get() / 2).max(1) as i32;
+                app.diff_body_scroll_by(-half);
+            }
+            KeyCode::Home => app.diff_body_scroll_to_top(),
+            KeyCode::End | KeyCode::Char('G') => app.diff_body_scroll_to_bottom(),
+            KeyCode::Char('g') if app.diff_consume_g_chord() => {
+                app.diff_body_scroll_to_top();
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Esc => {
+                app.diff_set_focus(DiffFocus::Files);
+            }
+            _ => {}
+        },
     }
 }
 
 /// Preload just the file list (no per-file diff bodies) so the top
 /// bar's dirty count is populated from the first frame. Called once
 /// at startup; the diff view's normal lazy-load path takes over from
-/// there.
+/// there. Also runs the one-shot `lazygit` PATH probe so the `L`
+/// keybind in the diff view knows whether to be a no-op.
 pub(crate) async fn preload_diff_status(app: &mut App) {
     refresh_diff_anchor(app).await;
+    app.diff_set_lazygit_available(crate::lazygit::is_available());
     let project_root = app.project_root().to_path_buf();
     let anchor = app.diff().anchor.clone();
     match load_diff_files(&project_root, anchor.as_deref()).await {
@@ -818,7 +903,8 @@ pub(crate) async fn preload_diff_status(app: &mut App) {
 }
 
 /// Resolve the trunk branch (config override → remote default →
-/// local fallback) and its merge-base with HEAD, then store both on
+/// local fallback), its merge-base with HEAD, the current branch
+/// name, and the 7-char short anchor SHA — then store all four on
 /// the app. Cheap enough to redo on every diff refresh — the trunk
 /// can move forward (`git pull origin main`) and we want subsequent
 /// diffs to anchor against the new merge-base.
@@ -830,7 +916,28 @@ async fn refresh_diff_anchor(app: &mut App) {
         Some(t) => scaffl_runtime::merge_base(&project_root, t).await,
         None => None,
     };
-    app.diff_set_anchor(trunk, anchor);
+    let branch = current_branch(&project_root).await;
+    let anchor_short = anchor.as_deref().map(|sha| {
+        sha.chars().take(7).collect::<String>()
+    });
+    app.diff_set_anchor(trunk, anchor, branch, anchor_short);
+}
+
+/// Resolve the current branch name (`git rev-parse --abbrev-ref HEAD`).
+/// Returns None when detached or the command fails — the banner just
+/// hides the branch slot in that case.
+async fn current_branch(project_root: &std::path::Path) -> Option<String> {
+    let out = tokio::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(project_root)
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() || s == "HEAD" { None } else { Some(s) }
 }
 
 /// Populate the diff file list if it hasn't been loaded yet, and
@@ -883,35 +990,59 @@ async fn load_diff_files(
         return load_diff_files_fallback(project_root).await;
     };
 
-    // Tracked changes against the anchor.
-    let diff_out = tokio::process::Command::new("git")
+    // Three queries in parallel: name+status, churn (numstat), and
+    // untracked. Saves ~100ms on cold cache vs the previous
+    // sequential path.
+    let diff_fut = tokio::process::Command::new("git")
         .args(["diff", "--name-status", anchor])
         .current_dir(project_root)
-        .output()
-        .await
-        .map_err(|e| format!("git diff --name-status failed: {e}"))?;
+        .output();
+    let numstat_fut = tokio::process::Command::new("git")
+        .args(["diff", "--numstat", anchor])
+        .current_dir(project_root)
+        .output();
+    let untracked_fut = tokio::process::Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(project_root)
+        .output();
+    let (diff_out, numstat_out, untracked_out) =
+        tokio::join!(diff_fut, numstat_fut, untracked_fut);
+    let diff_out = diff_out.map_err(|e| format!("git diff --name-status failed: {e}"))?;
     if !diff_out.status.success() {
         // Anchor invalid (rare — `merge_base` already returned Some)
         // — fall back to porcelain so the view still works.
         return load_diff_files_fallback(project_root).await;
     }
-
-    // Untracked files (not yet `git add`-ed). `--exclude-standard`
-    // applies .gitignore so we don't surface build artifacts.
-    let untracked_out = tokio::process::Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .current_dir(project_root)
-        .output()
-        .await
-        .map_err(|e| format!("git ls-files failed: {e}"))?;
+    let numstat_out = numstat_out.map_err(|e| format!("git diff --numstat failed: {e}"))?;
+    let untracked_out = untracked_out.map_err(|e| format!("git ls-files failed: {e}"))?;
 
     // Merge into a BTreeMap keyed by path so a file that's both
     // tracked-modified AND showing up in ls-files (shouldn't happen,
     // but defensive) doesn't appear twice.
-    let mut files: BTreeMap<String, crate::app::DiffStatus> = BTreeMap::new();
+    use crate::app::{DiffFile, DiffStatus};
+    let mut files: BTreeMap<String, DiffFile> = BTreeMap::new();
     let diff_text = String::from_utf8_lossy(&diff_out.stdout);
     for entry in parse_diff_name_status(&diff_text) {
-        files.insert(entry.path, entry.status);
+        files.insert(
+            entry.path.clone(),
+            DiffFile {
+                path: entry.path,
+                status: entry.status,
+                additions: 0,
+                deletions: 0,
+                binary: false,
+            },
+        );
+    }
+    if numstat_out.status.success() {
+        let numstat_text = String::from_utf8_lossy(&numstat_out.stdout);
+        for entry in parse_numstat(&numstat_text) {
+            if let Some(f) = files.get_mut(&entry.path) {
+                f.additions = entry.additions;
+                f.deletions = entry.deletions;
+                f.binary = entry.binary;
+            }
+        }
     }
     if untracked_out.status.success() {
         let untracked_text = String::from_utf8_lossy(&untracked_out.stdout);
@@ -920,15 +1051,67 @@ async fn load_diff_files(
             if path.is_empty() {
                 continue;
             }
-            files
-                .entry(path.to_string())
-                .or_insert(crate::app::DiffStatus::Untracked);
+            // Untracked churn (lines added) is computed lazily on
+            // first body load — leave 0/0 here. The list still shows
+            // the U status badge so users can tell.
+            files.entry(path.to_string()).or_insert_with(|| DiffFile {
+                path: path.to_string(),
+                status: DiffStatus::Untracked,
+                additions: 0,
+                deletions: 0,
+                binary: false,
+            });
         }
     }
-    Ok(files
-        .into_iter()
-        .map(|(path, status)| crate::app::DiffFile { path, status })
-        .collect())
+    Ok(files.into_values().collect())
+}
+
+pub(crate) struct NumstatEntry {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub binary: bool,
+}
+
+/// Parse `git diff --numstat <anchor>` output. Each line is
+/// `<add>\t<del>\t<path>`. Binary files report `-\t-\t<path>`. We
+/// keep the path through rename arrows verbatim — the BTreeMap
+/// merge in the caller is keyed by path, so a rename whose
+/// destination already appears in `--name-status` will get its
+/// churn merged correctly.
+pub(crate) fn parse_numstat(input: &str) -> Vec<NumstatEntry> {
+    let mut out = Vec::new();
+    for line in input.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let Some(add) = parts.next() else { continue };
+        let Some(del) = parts.next() else { continue };
+        let Some(path) = parts.next() else { continue };
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        // Renames: `git diff --numstat` emits `path => newpath` or
+        // `{old => new}/file` style. Take the destination so it
+        // matches the path in `--name-status`.
+        let dest = if let Some(idx) = path.find(" => ") {
+            path[idx + 4..]
+                .trim_end_matches('}')
+                .trim_start_matches('{')
+                .to_string()
+        } else {
+            path.to_string()
+        };
+        let binary = add == "-" && del == "-";
+        let additions = if binary { 0 } else { add.parse().unwrap_or(0) };
+        let deletions = if binary { 0 } else { del.parse().unwrap_or(0) };
+        out.push(NumstatEntry {
+            path: dest,
+            additions,
+            deletions,
+            binary,
+        });
+    }
+    out
 }
 
 /// Old behaviour, kept as a fallback when no trunk could be
@@ -1023,7 +1206,13 @@ pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::app::DiffFile> {
             ('M', _) | (_, 'M') => DiffStatus::Modified,
             _ => DiffStatus::Other,
         };
-        out.push(DiffFile { path, status });
+        out.push(DiffFile {
+            path,
+            status,
+            additions: 0,
+            deletions: 0,
+            binary: false,
+        });
     }
     out
 }
@@ -1052,16 +1241,108 @@ async fn load_diff_for_file(
             return vec![DiffLine {
                 kind: DiffLineKind::Header,
                 text: format!("git diff failed: {e}"),
+                old_lineno: None,
+                new_lineno: None,
+                spans: vec![],
             }];
         }
     };
     let body = String::from_utf8_lossy(&output.stdout);
-    body.lines()
-        .map(|line| DiffLine {
-            kind: DiffLineKind::classify(line),
-            text: line.to_string(),
-        })
-        .collect()
+    enrich_diff_lines(&body, &file.path)
+}
+
+/// Walk a unified-diff body and produce `DiffLine`s with per-line
+/// line-numbers and syntect spans pre-computed.
+///
+/// Hunk headers (`@@ -A,B +C,D @@`) reset the `(old, new)` counters
+/// so the gutter renders the same line numbers `git diff` would
+/// print. Each non-hunk, non-header line goes through syntect once,
+/// using the file's path to pick a syntax — avoids redoing the
+/// lookup on every frame as the user scrolls.
+pub(crate) fn enrich_diff_lines(body: &str, path: &str) -> Vec<crate::app::DiffLine> {
+    use crate::app::{DiffLine, DiffLineKind};
+    let mut out = Vec::new();
+    let mut old_no: u32 = 0;
+    let mut new_no: u32 = 0;
+    for raw in body.lines() {
+        let kind = DiffLineKind::classify(raw);
+        match kind {
+            DiffLineKind::Hunk => {
+                if let Some((o, n)) = parse_hunk_header(raw) {
+                    old_no = o;
+                    new_no = n;
+                }
+                out.push(DiffLine {
+                    kind,
+                    text: raw.to_string(),
+                    old_lineno: None,
+                    new_lineno: None,
+                    spans: vec![],
+                });
+            }
+            DiffLineKind::Header => {
+                out.push(DiffLine {
+                    kind,
+                    text: raw.to_string(),
+                    old_lineno: None,
+                    new_lineno: None,
+                    spans: vec![],
+                });
+            }
+            DiffLineKind::Added => {
+                let inner = raw.get(1..).unwrap_or("");
+                let spans = crate::syntax::highlight_inner(path, inner);
+                out.push(DiffLine {
+                    kind,
+                    text: raw.to_string(),
+                    old_lineno: None,
+                    new_lineno: Some(new_no),
+                    spans,
+                });
+                new_no = new_no.saturating_add(1);
+            }
+            DiffLineKind::Removed => {
+                let inner = raw.get(1..).unwrap_or("");
+                let spans = crate::syntax::highlight_inner(path, inner);
+                out.push(DiffLine {
+                    kind,
+                    text: raw.to_string(),
+                    old_lineno: Some(old_no),
+                    new_lineno: None,
+                    spans,
+                });
+                old_no = old_no.saturating_add(1);
+            }
+            DiffLineKind::Context => {
+                let inner = raw.strip_prefix(' ').unwrap_or(raw);
+                let spans = crate::syntax::highlight_inner(path, inner);
+                out.push(DiffLine {
+                    kind,
+                    text: raw.to_string(),
+                    old_lineno: Some(old_no),
+                    new_lineno: Some(new_no),
+                    spans,
+                });
+                old_no = old_no.saturating_add(1);
+                new_no = new_no.saturating_add(1);
+            }
+        }
+    }
+    out
+}
+
+/// Parse the leading `(old_start, new_start)` out of a hunk header
+/// like `@@ -10,7 +10,9 @@`. Returns None on malformed input —
+/// callers leave the counters where they were, which is harmless.
+pub(crate) fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
+    // Skip the leading `@@`.
+    let after = line.strip_prefix("@@")?;
+    let mut tokens = after.split_whitespace();
+    let old = tokens.next()?.strip_prefix('-')?;
+    let new = tokens.next()?.strip_prefix('+')?;
+    let old_start = old.split(',').next()?.parse().ok()?;
+    let new_start = new.split(',').next()?.parse().ok()?;
+    Some((old_start, new_start))
 }
 
 async fn load_untracked_as_diff(
@@ -1074,12 +1355,21 @@ async fn load_untracked_as_diff(
     let mut lines = vec![DiffLine {
         kind: DiffLineKind::Header,
         text: format!("untracked file: {path}"),
+        old_lineno: None,
+        new_lineno: None,
+        spans: vec![],
     }];
+    let mut new_no: u32 = 1;
     for l in body.lines() {
+        let spans = crate::syntax::highlight_inner(path, l);
         lines.push(DiffLine {
             kind: DiffLineKind::Added,
             text: format!("+{l}"),
+            old_lineno: None,
+            new_lineno: Some(new_no),
+            spans,
         });
+        new_no = new_no.saturating_add(1);
     }
     lines
 }
@@ -1554,6 +1844,82 @@ mod tests {
         let entries = parse_diff_name_status(input);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "ok.rs");
+    }
+
+    #[test]
+    fn parse_numstat_text_and_binary() {
+        let input = "10\t3\tsrc/main.rs\n0\t5\tCargo.toml\n-\t-\tassets/logo.png\n";
+        let entries = parse_numstat(input);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].path, "src/main.rs");
+        assert_eq!(entries[0].additions, 10);
+        assert_eq!(entries[0].deletions, 3);
+        assert!(!entries[0].binary);
+        assert_eq!(entries[1].additions, 0);
+        assert_eq!(entries[1].deletions, 5);
+        assert_eq!(entries[2].path, "assets/logo.png");
+        assert!(entries[2].binary);
+        assert_eq!(entries[2].additions, 0);
+        assert_eq!(entries[2].deletions, 0);
+    }
+
+    #[test]
+    fn parse_numstat_rename_uses_destination_path() {
+        // git diff --numstat emits renames as `path => newpath`.
+        let input = "5\t2\told.txt => new.txt\n";
+        let entries = parse_numstat(input);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "new.txt");
+        assert_eq!(entries[0].additions, 5);
+    }
+
+    #[test]
+    fn parse_hunk_header_basic() {
+        // (old_start, new_start) — the counts after the comma are
+        // ignored because we only need the starting offsets.
+        assert_eq!(parse_hunk_header("@@ -1,7 +1,9 @@"), Some((1, 1)));
+        assert_eq!(parse_hunk_header("@@ -100 +200 @@ fn foo()"), Some((100, 200)));
+        assert_eq!(parse_hunk_header("not a hunk"), None);
+    }
+
+    #[test]
+    fn enrich_diff_lines_tracks_line_numbers_through_hunks() {
+        use crate::app::DiffLineKind;
+        // Two hunks: an add+remove pair around line 1, then a context
+        // run starting at line 10.
+        let body = "\
+diff --git a/foo.rs b/foo.rs
+index abc..def 100644
+--- a/foo.rs
++++ b/foo.rs
+@@ -1,3 +1,3 @@
+-let a = 1;
++let a = 2;
+ keep
+@@ -10,2 +10,3 @@
+ keep10
++inserted
+";
+        let lines = enrich_diff_lines(body, "foo.rs");
+        // Filter to the kinds we care about for line-number tracking.
+        let pick: Vec<(&str, Option<u32>, Option<u32>)> = lines
+            .iter()
+            .filter(|l| matches!(
+                l.kind,
+                DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context,
+            ))
+            .map(|l| (l.text.as_str(), l.old_lineno, l.new_lineno))
+            .collect();
+        assert_eq!(
+            pick,
+            vec![
+                ("-let a = 1;", Some(1), None),
+                ("+let a = 2;", None, Some(1)),
+                (" keep", Some(2), Some(2)),
+                (" keep10", Some(10), Some(10)),
+                ("+inserted", None, Some(11)),
+            ]
+        );
     }
 
     #[tokio::test]

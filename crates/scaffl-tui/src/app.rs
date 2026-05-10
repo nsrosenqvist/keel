@@ -220,6 +220,17 @@ impl TerminalsState {
     }
 }
 
+/// Which pane in the diff view has the keyboard focus. Files-pane
+/// is the default — discoverable, mirrors the implicit selection
+/// users already had in v1. Body-pane focus enables line-by-line
+/// scroll, hunk navigation, and gg/G.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffFocus {
+    #[default]
+    Files,
+    Body,
+}
+
 /// State for the Diff view (`g`). Populated lazily on first
 /// switch, rebuilt on `r`. Per-file diff bodies cache so
 /// navigating among files doesn't re-shell-out to git.
@@ -243,12 +254,53 @@ pub struct DiffState {
     /// rather than just the working-tree-vs-last-commit slice.
     /// None → fall back to HEAD as the anchor.
     pub anchor: Option<String>,
+    /// 7-char short form of `anchor`, surfaced in the header banner
+    /// so users can spot when a freshly-pulled trunk shifts the
+    /// comparison forward without hunting for the SHA themselves.
+    pub anchor_short: Option<String>,
+    /// The current branch name (`git rev-parse --abbrev-ref HEAD`).
+    /// Different from `App::branch`: that one is set by the CLI at
+    /// startup (and may carry a detached-HEAD basename); this one
+    /// is refreshed on every diff reload so amends / checkouts
+    /// inside the same TUI session are reflected.
+    pub branch: Option<String>,
+    /// Sum of `additions` across `files` — the headline `+N` in
+    /// the comparison banner.
+    pub additions_total: usize,
+    pub deletions_total: usize,
+    /// Which pane has focus. Tab toggles.
+    pub focus: DiffFocus,
+    /// Per-file scroll offset (top line index). Stored per path so
+    /// jumping to another file and back resumes the same position.
+    pub body_scroll: std::collections::HashMap<String, usize>,
+    /// Last viewport height the body was rendered at. Cell so the
+    /// renderer can write through `&App`. Read by PgUp/PgDn and G
+    /// to size half-pages and clamp to the bottom of the diff.
+    pub body_height: std::cell::Cell<u16>,
+    /// Wrap long diff lines (`w`). Off by default — most diffs are
+    /// readable without wrapping and horizontal "loss" is preferred
+    /// over visual jitter. On for narrow terminals.
+    pub wrap: bool,
+    /// True when `lazygit` was found on PATH at startup; the `L`
+    /// keybind hides itself from the footer hint when false.
+    pub lazygit_available: bool,
+    /// Two-key chord state: timestamp of the last `g` press while
+    /// body-focused. A second `g` within 500 ms triggers gg → top.
+    /// Cleared by any other key.
+    pub last_g_press: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DiffFile {
     pub path: String,
     pub status: DiffStatus,
+    /// Lines added / removed against the anchor. `(0, 0)` until
+    /// numstat lands; `(0, 0)` permanently for binary files (we set
+    /// `binary = true` so the file list can render `bin` instead of
+    /// `+0 −0`).
+    pub additions: usize,
+    pub deletions: usize,
+    pub binary: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +330,14 @@ impl DiffStatus {
 pub struct DiffLine {
     pub kind: DiffLineKind,
     pub text: String,
+    /// Old-side line number. None on Added / Hunk / Header lines.
+    pub old_lineno: Option<u32>,
+    /// New-side line number. None on Removed / Hunk / Header lines.
+    pub new_lineno: Option<u32>,
+    /// Pre-computed syntect spans for the inner code text (after
+    /// stripping the leading `+`/`-`/` ` sigil). Empty for hunk
+    /// and header lines.
+    pub spans: Vec<crate::syntax::HighlightedSpan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -582,6 +642,10 @@ pub struct App {
     /// event loop can shell out (`tmux kill-window`) without
     /// holding a borrow on App while the action runs.
     pending_kill_window: Option<KillWindow>,
+    /// Pending lazygit handoff — set by the diff view's `L` keybind,
+    /// drained between ticks so the event loop can suspend the TUI,
+    /// run lazygit foreground, and resume.
+    pub pending_lazygit: bool,
     /// Diff view state. Lazily populated on first switch / refresh.
     diff: DiffState,
     /// Diagnostic messages flushed to stderr after the TUI exits.
@@ -620,6 +684,7 @@ impl App {
             terminals,
             pending_attach: None,
             pending_kill_window: None,
+            pending_lazygit: false,
             diff: DiffState::default(),
             diagnostics: Vec::new(),
         }
@@ -1542,7 +1607,11 @@ impl App {
     /// Replace the file list (typically after a `git status` reload).
     /// Clamps the selection so it can't point past the end. Cache
     /// stays — the user might re-edit and want the same diff back.
+    /// Recomputes the additions / deletions totals from the
+    /// per-file numbers so the comparison banner stays in sync.
     pub fn diff_set_files(&mut self, files: Vec<DiffFile>) {
+        self.diff.additions_total = files.iter().map(|f| f.additions).sum();
+        self.diff.deletions_total = files.iter().map(|f| f.deletions).sum();
         self.diff.files = files;
         self.diff.loaded = true;
         if self.diff.selected >= self.diff.files.len() {
@@ -1560,9 +1629,25 @@ impl App {
     /// use as their anchor. Either may be None: a trunk without a
     /// merge-base means the trunk exists but has no shared history
     /// (rare); no trunk at all means we degrade to `git diff HEAD`.
-    pub fn diff_set_anchor(&mut self, trunk: Option<String>, anchor: Option<String>) {
+    /// `branch` is the current HEAD branch and `anchor_short` is the
+    /// 7-char form of the SHA — both surface in the comparison
+    /// banner.
+    pub fn diff_set_anchor(
+        &mut self,
+        trunk: Option<String>,
+        anchor: Option<String>,
+        branch: Option<String>,
+        anchor_short: Option<String>,
+    ) {
         self.diff.trunk = trunk;
         self.diff.anchor = anchor;
+        self.diff.branch = branch;
+        self.diff.anchor_short = anchor_short;
+    }
+
+    /// Set whether `lazygit` is on PATH. Called once at startup.
+    pub fn diff_set_lazygit_available(&mut self, available: bool) {
+        self.diff.lazygit_available = available;
     }
 
     pub fn diff_select_next(&mut self) {
@@ -1593,6 +1678,151 @@ impl App {
     pub fn diff_mark_stale(&mut self) {
         self.diff.loaded = false;
         self.diff.cache.clear();
+        self.diff.body_scroll.clear();
+        self.diff.additions_total = 0;
+        self.diff.deletions_total = 0;
+    }
+
+    pub fn diff_focus(&self) -> DiffFocus {
+        self.diff.focus
+    }
+
+    /// Toggle keyboard focus between the file list and the diff
+    /// body. Wired to Tab / Shift+Tab.
+    pub fn diff_toggle_focus(&mut self) {
+        self.diff.focus = match self.diff.focus {
+            DiffFocus::Files => DiffFocus::Body,
+            DiffFocus::Body => DiffFocus::Files,
+        };
+        // Drop any pending `g` chord on focus change so a stale `g`
+        // can't hop to top after the user already moved on.
+        self.diff.last_g_press = None;
+    }
+
+    /// Set focus directly. Used by handlers that have semantic
+    /// intent (e.g. Enter on the file list moves into the body).
+    pub fn diff_set_focus(&mut self, focus: DiffFocus) {
+        self.diff.focus = focus;
+        self.diff.last_g_press = None;
+    }
+
+    /// Current scroll offset (top line) for the selected file.
+    pub fn diff_body_scroll(&self) -> usize {
+        let path = match self.diff_selected_file() {
+            Some(f) => &f.path,
+            None => return 0,
+        };
+        self.diff.body_scroll.get(path).copied().unwrap_or(0)
+    }
+
+    /// Move the body scroll by `delta` lines, clamped to the diff
+    /// length minus the last viewport height. Negative values
+    /// scroll up.
+    pub fn diff_body_scroll_by(&mut self, delta: i32) {
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        let path = file.path.clone();
+        let total = self.diff.cache.get(&path).map(|v| v.len()).unwrap_or(0);
+        let viewport = self.diff.body_height.get() as usize;
+        let max = total.saturating_sub(viewport.max(1));
+        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0) as i64;
+        let next = (cur + delta as i64).max(0).min(max as i64) as usize;
+        self.diff.body_scroll.insert(path, next);
+    }
+
+    pub fn diff_body_scroll_to_top(&mut self) {
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        self.diff.body_scroll.insert(file.path.clone(), 0);
+    }
+
+    pub fn diff_body_scroll_to_bottom(&mut self) {
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        let path = file.path.clone();
+        let total = self.diff.cache.get(&path).map(|v| v.len()).unwrap_or(0);
+        let viewport = self.diff.body_height.get() as usize;
+        let bottom = total.saturating_sub(viewport.max(1));
+        self.diff.body_scroll.insert(path, bottom);
+    }
+
+    /// Jump to the next `@@` hunk header below the current scroll
+    /// position. No-op if no further hunk exists.
+    pub fn diff_jump_hunk_next(&mut self) {
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        let path = file.path.clone();
+        let Some(lines) = self.diff.cache.get(&path) else {
+            return;
+        };
+        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0);
+        let next = lines
+            .iter()
+            .enumerate()
+            .skip(cur + 1)
+            .find(|(_, l)| l.kind == DiffLineKind::Hunk)
+            .map(|(i, _)| i);
+        if let Some(i) = next {
+            let viewport = self.diff.body_height.get() as usize;
+            let max = lines.len().saturating_sub(viewport.max(1));
+            self.diff.body_scroll.insert(path, i.min(max));
+        }
+    }
+
+    /// Jump to the previous `@@` hunk header above the current
+    /// scroll position. No-op at the top.
+    pub fn diff_jump_hunk_prev(&mut self) {
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        let path = file.path.clone();
+        let Some(lines) = self.diff.cache.get(&path) else {
+            return;
+        };
+        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0);
+        let prev = lines
+            .iter()
+            .enumerate()
+            .take(cur)
+            .rev()
+            .find(|(_, l)| l.kind == DiffLineKind::Hunk)
+            .map(|(i, _)| i);
+        if let Some(i) = prev {
+            self.diff.body_scroll.insert(path, i);
+        }
+    }
+
+    pub fn diff_toggle_wrap(&mut self) {
+        self.diff.wrap = !self.diff.wrap;
+    }
+
+    /// Record a `g` press while body-focused. A second `g` within
+    /// `window` returns true (caller jumps to top); otherwise
+    /// false (caller arms the chord by storing the timestamp).
+    pub fn diff_consume_g_chord(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let window = std::time::Duration::from_millis(500);
+        let armed = self
+            .diff
+            .last_g_press
+            .map(|t| now.duration_since(t) <= window)
+            .unwrap_or(false);
+        self.diff.last_g_press = if armed { None } else { Some(now) };
+        armed
+    }
+
+    /// Drain a one-shot lazygit-handoff request. The event loop
+    /// checks this between ticks (same pattern as `pending_attach`).
+    pub fn take_pending_lazygit(&mut self) -> bool {
+        std::mem::take(&mut self.pending_lazygit)
+    }
+
+    pub fn request_lazygit(&mut self) {
+        self.pending_lazygit = true;
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
@@ -2489,18 +2719,22 @@ mod tests {
         assert!(err.contains("custom"), "msg: {err}");
     }
 
+    fn df(path: &str, status: DiffStatus) -> DiffFile {
+        DiffFile {
+            path: path.into(),
+            status,
+            additions: 0,
+            deletions: 0,
+            binary: false,
+        }
+    }
+
     #[test]
     fn diff_select_clamps_at_bounds() {
         let mut app = App::new(cfg());
         app.diff_set_files(vec![
-            DiffFile {
-                path: "a".into(),
-                status: DiffStatus::Modified,
-            },
-            DiffFile {
-                path: "b".into(),
-                status: DiffStatus::Added,
-            },
+            df("a", DiffStatus::Modified),
+            df("b", DiffStatus::Added),
         ]);
         app.diff_select_next();
         assert_eq!(app.diff().selected, 1);
@@ -2515,15 +2749,93 @@ mod tests {
     #[test]
     fn diff_mark_stale_clears_cache() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![DiffFile {
-            path: "a".into(),
-            status: DiffStatus::Modified,
-        }]);
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
         app.diff_set_cache("a".into(), vec![]);
         assert!(app.diff_cache_for("a").is_some());
         app.diff_mark_stale();
         assert!(app.diff_cache_for("a").is_none());
         assert!(!app.diff().loaded);
+    }
+
+    #[test]
+    fn diff_focus_toggles() {
+        let mut app = App::new(cfg());
+        assert_eq!(app.diff_focus(), DiffFocus::Files);
+        app.diff_toggle_focus();
+        assert_eq!(app.diff_focus(), DiffFocus::Body);
+        app.diff_toggle_focus();
+        assert_eq!(app.diff_focus(), DiffFocus::Files);
+    }
+
+    #[test]
+    fn diff_jump_hunk_skips_to_next_at_marker() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        // Tight viewport so scroll clamping (which keeps the last
+        // visible line at the bottom) doesn't pin the offset to 0.
+        app.diff.body_height.set(2);
+        app.diff_set_cache(
+            "a".into(),
+            vec![
+                DiffLine {
+                    kind: DiffLineKind::Header,
+                    text: "diff --git a/a b/a".into(),
+                    old_lineno: None,
+                    new_lineno: None,
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Hunk,
+                    text: "@@ -1,3 +1,3 @@".into(),
+                    old_lineno: None,
+                    new_lineno: None,
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Context,
+                    text: " ctx".into(),
+                    old_lineno: Some(1),
+                    new_lineno: Some(1),
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Hunk,
+                    text: "@@ -10,3 +10,3 @@".into(),
+                    old_lineno: None,
+                    new_lineno: None,
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Context,
+                    text: " ctx2".into(),
+                    old_lineno: Some(10),
+                    new_lineno: Some(10),
+                    spans: vec![],
+                },
+            ],
+        );
+        app.diff_jump_hunk_next();
+        assert_eq!(app.diff_body_scroll(), 1);
+        app.diff_jump_hunk_next();
+        assert_eq!(app.diff_body_scroll(), 3);
+        app.diff_jump_hunk_next();
+        // No further hunk — stays put.
+        assert_eq!(app.diff_body_scroll(), 3);
+        app.diff_jump_hunk_prev();
+        assert_eq!(app.diff_body_scroll(), 1);
+        app.diff_jump_hunk_prev();
+        assert_eq!(app.diff_body_scroll(), 1);
+    }
+
+    #[test]
+    fn diff_g_chord_fires_on_second_press() {
+        let mut app = App::new(cfg());
+        // First press arms the chord.
+        assert!(!app.diff_consume_g_chord());
+        // Second press within the window fires.
+        assert!(app.diff_consume_g_chord());
+        // After firing the state resets — next first press doesn't fire.
+        assert!(!app.diff_consume_g_chord());
     }
 
     #[test]

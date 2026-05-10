@@ -27,9 +27,11 @@ pub mod app;
 pub mod palette;
 pub mod runner;
 pub mod services;
+pub mod syntax;
 pub mod ui;
 pub mod watchers;
 
+mod lazygit;
 mod terminal;
 
 pub use app::{App, Item, ItemKind, View};

@@ -63,6 +63,9 @@ toml_edit = "0.22"
 ratatui = "0.29"
 crossterm = "0.28"
 nucleo-matcher = "0.3"
+syntect = { version = "5", default-features = false, features = [
+    "default-fancy",
+] }
 
 # Filesystem / discovery
 notify = "7"

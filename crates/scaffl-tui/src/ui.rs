@@ -52,7 +52,12 @@ fn view_accent(view: crate::app::View) -> Color {
     match view {
         crate::app::View::ControlCenter => Color::Indexed(215),
         crate::app::View::Terminals => Color::Indexed(79),
-        crate::app::View::Diff => Color::Indexed(110),
+        // Saturated sky blue — same hue family as the original
+        // 110 so the diff view still "reads" as blue, but bright
+        // enough to sit next to the peach (215) and mint teal (79)
+        // accents without disappearing into the dark-grey unfocused
+        // panel borders.
+        crate::app::View::Diff => Color::Indexed(117),
     }
 }
 
@@ -510,14 +515,113 @@ fn render_diff_placeholder(app: &App, frame: &mut Frame, area: Rect) {
             Constraint::Percentage(100 - SIDEBAR_RATIO),
         ])
         .split(area);
-    render_diff_files(app, frame, body[0]);
+    // Banner sits above the file list because it summarises the
+    // whole comparison (branch → trunk, total churn), not the
+    // currently-selected file's diff. Visual hierarchy: scope on
+    // the left, contents on the right.
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(body[0]);
+    render_diff_header(app, frame, left[0]);
+    render_diff_files(app, frame, left[1]);
     render_diff_body(app, frame, body[1]);
 }
 
+/// Bordered block whose border colour changes with focus: bright
+/// accent + bold when this pane has the keyboard focus, dim grey
+/// otherwise. Mirrors the visual language used elsewhere; users see
+/// a single "active" frame at a time. Bold on the focused border
+/// gives a second cue (weight, not just colour) so the active pane
+/// is unmistakable even on terminals that wash out 256-colour
+/// indices.
+fn diff_panel_block(title: Line<'static>, focused: bool, accent: Color) -> Block<'static> {
+    let border = if focused {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let border_type = if focused {
+        BorderType::Thick
+    } else {
+        BorderType::Rounded
+    };
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(border_type)
+        .border_style(border)
+}
+
+/// Comparison banner — sits above the file list and tells the
+/// user the scope of the diff: `<branch> → <trunk> · <short-sha>`
+/// on row 1, `<n> files · +X −Y` on row 2. A bordered panel like
+/// the file list and body so the three visually stack as one unit.
+fn render_diff_header(app: &App, frame: &mut Frame, area: Rect) {
+    let diff = app.diff();
+    let accent = accent_of(app);
+    let trunk_label = diff.trunk.clone().unwrap_or_else(|| "HEAD".into());
+    let branch_label = diff
+        .branch
+        .clone()
+        .or_else(|| app.branch().map(str::to_string))
+        .unwrap_or_else(|| "(detached)".into());
+
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "compare",
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
+
+    let mut row1: Vec<Span<'static>> = vec![
+        Span::styled(
+            branch_label,
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" → ", Style::default().fg(Color::DarkGray)),
+        Span::styled(trunk_label, Style::default().add_modifier(Modifier::BOLD)),
+    ];
+    if let Some(sha) = diff.anchor_short.as_ref() {
+        row1.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+        row1.push(Span::styled(
+            sha.clone(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    let n = diff.files.len();
+    let row2 = vec![
+        Span::styled(
+            format!("{n} {}", if n == 1 { "file" } else { "files" }),
+            Style::default().fg(Color::White).dim(),
+        ),
+        Span::styled("  · ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("+{}", diff.additions_total),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("−{}", diff.deletions_total),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    let body = Paragraph::new(vec![Line::from(row1), Line::from(row2)])
+        .block(block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(body, area);
+}
+
 fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::app::DiffStatus;
+    use crate::app::{DiffFocus, DiffStatus};
     let accent = accent_of(app);
     let diff = app.diff();
+    let focused = diff.focus == DiffFocus::Files;
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled(
@@ -529,7 +633,7 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::DarkGray),
         ),
     ]);
-    let block = panel_block_titled(title);
+    let block = diff_panel_block(title, focused, accent);
 
     if !diff.loaded {
         let body = Paragraph::new(Line::from(Span::styled(
@@ -556,10 +660,15 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
     if diff.files.is_empty() {
+        let trunk_hint = diff
+            .trunk
+            .as_deref()
+            .map(|t| format!("  no changes vs {t}"))
+            .unwrap_or_else(|| "  no changes — working tree clean".into());
         let body = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  no changes — working tree clean",
+                trunk_hint,
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(""),
@@ -573,10 +682,12 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Stateful list so the highlight covers the full row, matching
-    // the control center and terminals views. Per-row styling on
-    // the status letter stays — ratatui composes it with the
-    // highlight background on the selected row.
+    // Right-align the churn column — pad inner area so paths
+    // truncate gracefully on narrow terminals before the churn.
+    let inner_w = area.width.saturating_sub(2) as usize; // borders
+    let churn_w = 14usize; // ` +999 -999 `, generous
+    let path_w = inner_w.saturating_sub(churn_w + 4); // status letter + spaces
+
     let items: Vec<ListItem> = diff
         .files
         .iter()
@@ -588,10 +699,40 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
                 DiffStatus::Renamed => Style::default().fg(Color::Indexed(75)),
                 DiffStatus::Other => Style::default().fg(Color::DarkGray),
             };
-            ListItem::new(Line::from(vec![
+            // Path elision: keep the tail (filename) over the head
+            // when truncating — `…/tui/src/ui.rs` is more useful
+            // than `crates/scaffl-tui/src/u…`.
+            let path = elide_left(&f.path, path_w);
+            let path_pad = path_w.saturating_sub(path.chars().count());
+            let churn = if f.binary {
+                vec![
+                    Span::styled("  bin", Style::default().fg(Color::DarkGray)),
+                ]
+            } else if f.status == DiffStatus::Untracked {
+                vec![Span::styled(
+                    format!("  +{}", f.additions),
+                    Style::default().fg(Color::Green),
+                )]
+            } else {
+                vec![
+                    Span::styled(
+                        format!("+{}", f.additions),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("−{}", f.deletions),
+                        Style::default().fg(Color::Red),
+                    ),
+                ]
+            };
+            let mut spans: Vec<Span<'static>> = vec![
                 Span::styled(format!(" {} ", f.status.letter()), letter_style),
-                Span::raw(f.path.clone()),
-            ]))
+                Span::raw(path),
+                Span::raw(" ".repeat(path_pad)),
+            ];
+            spans.extend(churn);
+            ListItem::new(Line::from(spans))
         })
         .collect();
     let list = List::new(items)
@@ -608,11 +749,30 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// Truncate `s` from the left (head), keeping the tail. Adds an
+/// ellipsis prefix when truncation happens. Operates on chars so
+/// non-ASCII paths don't get sliced mid-codepoint.
+fn elide_left(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max <= 1 {
+        return "…".into();
+    }
+    let skip = count - (max - 1);
+    let tail: String = s.chars().skip(skip).collect();
+    format!("…{tail}")
+}
+
 fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
+    use crate::app::DiffFocus;
     let accent = accent_of(app);
+    let diff = app.diff();
+    let focused = diff.focus == DiffFocus::Body;
     let title_text = match app.diff_selected_file() {
-        Some(f) => format!("  diff · {}", f.path),
-        None => "  diff".into(),
+        Some(f) => format!("diff · {}", f.path),
+        None => "diff".into(),
     };
     let title = Line::from(vec![
         Span::raw(" "),
@@ -622,44 +782,160 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         ),
         Span::raw(" "),
     ]);
-    let block = panel_block_titled(title).padding(Padding::horizontal(2));
+    let block = diff_panel_block(title, focused, accent).padding(Padding::horizontal(1));
 
-    let lines: Vec<Line<'static>> = match app.diff_selected_file() {
-        Some(f) => match app.diff_cache_for(&f.path) {
-            Some(diff_lines) => {
-                let max = area.height.saturating_sub(2) as usize;
-                let total = diff_lines.len();
-                let start = total.saturating_sub(max);
-                diff_lines
-                    .iter()
-                    .skip(start)
-                    .map(render_diff_line)
-                    .collect()
-            }
-            None => vec![Line::from(Span::styled(
-                "loading diff…",
-                Style::default().fg(Color::DarkGray),
-            ))],
-        },
-        None => vec![Line::from(Span::styled(
+    // Stash the body's inner viewport height so the key handler
+    // can size half-pages and clamp G to the bottom. -2 for the
+    // top/bottom borders.
+    let inner_height = area.height.saturating_sub(2);
+    diff.body_height.set(inner_height);
+
+    let Some(file) = app.diff_selected_file() else {
+        let body = Paragraph::new(Line::from(Span::styled(
             "select a file on the left",
             Style::default().fg(Color::DarkGray),
-        ))],
+        )))
+        .block(block);
+        frame.render_widget(body, area);
+        return;
     };
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let lines = match app.diff_cache_for(&file.path) {
+        Some(l) => l,
+        None => {
+            let body = Paragraph::new(Line::from(Span::styled(
+                "loading diff…",
+                Style::default().fg(Color::DarkGray),
+            )))
+            .block(block);
+            frame.render_widget(body, area);
+            return;
+        }
+    };
+
+    // Gutter width: max line number across this file. Use string
+    // length so 4-digit lines aren't squashed against the sigil.
+    let max_lineno = lines
+        .iter()
+        .filter_map(|l| {
+            l.new_lineno
+                .map(u64::from)
+                .or(l.old_lineno.map(u64::from))
+        })
+        .max()
+        .unwrap_or(0);
+    let gutter_w = max_lineno.to_string().len().max(1);
+
+    let scroll = diff.body_scroll.get(&file.path).copied().unwrap_or(0);
+    if diff.wrap {
+        // Wrap mode: render every line; let Paragraph handle the
+        // scroll. Slower for huge diffs, fine for typical PRs.
+        let rendered: Vec<Line<'static>> = lines
+            .iter()
+            .map(|l| render_diff_body_line(l, gutter_w))
+            .collect();
+        let para = Paragraph::new(rendered)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll as u16, 0));
+        frame.render_widget(para, area);
+    } else {
+        // Non-wrap: pre-slice to viewport so we don't pay for
+        // off-screen lines on huge diffs.
+        let max = inner_height as usize;
+        let visible: Vec<Line<'static>> = lines
+            .iter()
+            .skip(scroll)
+            .take(max)
+            .map(|l| render_diff_body_line(l, gutter_w))
+            .collect();
+        frame.render_widget(Paragraph::new(visible).block(block), area);
+    }
 }
 
-fn render_diff_line(line: &crate::app::DiffLine) -> Line<'static> {
+/// Render one diff line: `<old> <new> <sigil> <code>` with a bg
+/// tint on Added / Removed / Hunk lines and syntect-derived spans
+/// for the inner code.
+fn render_diff_body_line(line: &crate::app::DiffLine, gutter_w: usize) -> Line<'static> {
     use crate::app::DiffLineKind;
-    let style = match line.kind {
-        DiffLineKind::Added => Style::default().fg(Color::Green),
-        DiffLineKind::Removed => Style::default().fg(Color::Red),
-        DiffLineKind::Hunk => Style::default().fg(Color::Indexed(73)),
-        DiffLineKind::Header => Style::default().fg(Color::DarkGray),
-        DiffLineKind::Context => Style::default(),
+    // Header lines (`diff --git`, `---`, `+++`, `index …`) keep
+    // their full text and sit dim — no gutter, no sigil.
+    if line.kind == DiffLineKind::Header {
+        return Line::from(Span::styled(
+            line.text.clone(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    // Hunk headers fill the row width-ish with a cyan tint so
+    // they stand out as section breaks.
+    if line.kind == DiffLineKind::Hunk {
+        return Line::from(Span::styled(
+            line.text.clone(),
+            Style::default()
+                .fg(Color::Indexed(73))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let bg_tint = match line.kind {
+        DiffLineKind::Added => Some(Color::Rgb(20, 38, 24)),
+        DiffLineKind::Removed => Some(Color::Rgb(46, 22, 22)),
+        _ => None,
     };
-    Line::from(Span::styled(line.text.clone(), style))
+    let sigil = match line.kind {
+        DiffLineKind::Added => "+",
+        DiffLineKind::Removed => "−",
+        DiffLineKind::Context => " ",
+        _ => " ",
+    };
+    let sigil_color = match line.kind {
+        DiffLineKind::Added => Color::Green,
+        DiffLineKind::Removed => Color::Red,
+        _ => Color::DarkGray,
+    };
+
+    fn fmt_no(no: Option<u32>, width: usize) -> String {
+        match no {
+            Some(n) => format!("{:>width$}", n, width = width),
+            None => format!("{:>width$}", "", width = width),
+        }
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 5);
+    let gutter = format!(
+        "{} {} ",
+        fmt_no(line.old_lineno, gutter_w),
+        fmt_no(line.new_lineno, gutter_w),
+    );
+    let mut gutter_style = Style::default().fg(Color::DarkGray);
+    if let Some(bg) = bg_tint {
+        gutter_style = gutter_style.bg(bg);
+    }
+    spans.push(Span::styled(gutter, gutter_style));
+    let mut sigil_style = Style::default().fg(sigil_color).add_modifier(Modifier::BOLD);
+    if let Some(bg) = bg_tint {
+        sigil_style = sigil_style.bg(bg);
+    }
+    spans.push(Span::styled(format!("{sigil} "), sigil_style));
+    if line.spans.is_empty() {
+        // No syntect spans — fall back to the raw inner text so
+        // we still render something readable.
+        let inner = line.text.get(1..).unwrap_or("");
+        let mut style = Style::default();
+        if let Some(bg) = bg_tint {
+            style = style.bg(bg);
+        }
+        spans.push(Span::styled(inner.to_string(), style));
+    } else {
+        for s in &line.spans {
+            let mut style = s.style;
+            if let Some(bg) = bg_tint {
+                style = style.bg(bg);
+            }
+            spans.push(Span::styled(s.text.clone(), style));
+        }
+    }
+    Line::from(spans)
 }
 
 // ───────────────────────── top bar ─────────────────────────
@@ -2071,15 +2347,35 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("W", "worktree"),
             ("q", "quit"),
         ],
-        crate::app::View::Diff => vec![
-            ("↑↓", "nav"),
-            ("r", "refresh"),
-            ("C", "control"),
-            ("T", "terminals"),
-            ("W", "worktree"),
-            ("q", "quit"),
-        ],
+        crate::app::View::Diff => diff_hints(app),
     }
+}
+
+fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
+    use crate::app::DiffFocus;
+    let mut hints: Vec<(&'static str, &'static str)> = match app.diff_focus() {
+        DiffFocus::Files => vec![
+            ("↑↓", "file"),
+            ("tab", "body"),
+            ("]/[", "hunk"),
+        ],
+        DiffFocus::Body => vec![
+            ("↑↓", "scroll"),
+            ("tab", "files"),
+            ("]/[", "hunk"),
+            ("gg/G", "top/bot"),
+        ],
+    };
+    hints.push(("w", "wrap"));
+    if app.diff().lazygit_available {
+        hints.push(("L", "lazygit"));
+    }
+    hints.push(("r", "refresh"));
+    hints.push(("C", "control"));
+    hints.push(("T", "terminals"));
+    hints.push(("W", "worktree"));
+    hints.push(("q", "quit"));
+    hints
 }
 
 fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
@@ -2332,10 +2628,16 @@ mod tests {
             DiffFile {
                 path: "src/a.rs".into(),
                 status: DiffStatus::Modified,
+                additions: 0,
+                deletions: 0,
+                binary: false,
             },
             DiffFile {
                 path: "src/b.rs".into(),
                 status: DiffStatus::Added,
+                additions: 0,
+                deletions: 0,
+                binary: false,
             },
         ]);
         terminal.draw(|f| render(&app, f)).unwrap();
