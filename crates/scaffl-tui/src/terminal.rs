@@ -107,6 +107,14 @@ async fn drive(
             // We expect the session to exist post-attach; if it
             // doesn't, refresh_tmux_windows surfaces the cause.
             refresh_tmux_windows(app, true).await;
+            // Paint the post-attach state *now*, before the next
+            // loop iteration's slow pre-render hooks
+            // (`refresh_service_status` shells out to compose for
+            // each service — ~200ms with two of them). Without
+            // this, users see a blank alt-screen for those couple
+            // hundred milliseconds and read "blank" as "list got
+            // emptied".
+            terminal.draw(|f| ui::render(app, f))?;
             continue;
         }
         if let Some(kill) = app.take_pending_kill_window() {
