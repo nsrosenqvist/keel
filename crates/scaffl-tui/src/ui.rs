@@ -656,7 +656,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
     // for the diff view; preloaded on startup so this header is
     // populated even before the user opens the diff view.
     if let Some(branch) = app.branch() {
-        spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
             branch.to_string(),
             Style::default().fg(ACCENT),
@@ -670,7 +670,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
             ));
         } else if app.diff().loaded {
             spans.push(Span::styled(
-                "  clean",
+                " clean",
                 Style::default().fg(Color::DarkGray),
             ));
         }
