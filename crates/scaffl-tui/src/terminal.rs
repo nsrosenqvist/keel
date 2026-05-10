@@ -326,29 +326,22 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         }
         KeyCode::Enter => {
             // Enter routing:
-            //   container         → up all (same as `U`)
+            //   container         → no-op (use U/D/R/S; flashed by
+            //                       try_launch_selected)
             //   service           → attach into a tmux pane (jumps
             //                       to the Terminals view; ctrl+b d
-            //                       returns)
+            //                       returns). Non-container services
+            //                       (systemd / custom) flash a hint
+            //                       instead — no shell to attach to.
             //   recipe / script   → either open args prompt (if forward_args
             //                       and not already running) or launch
             //   watcher           → no-op (watchers fire on file change)
-            if matches!(
-                app.selected_item().map(|i| i.kind),
-                Some(crate::app::ItemKind::Container)
-            ) {
-                if let Err(rej) = app
-                    .run_service_action(scaffl_container::service_action::UP, &[])
-                    .await
-                {
-                    app.flash = Some(launch_message(rej));
-                }
-            } else if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
+            if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
                 ensure_tmux_probed(app).await;
                 if app.terminals().tmux_available == Some(false) {
                     app.flash = Some("tmux not installed — install it to attach".into());
-                } else {
-                    app.queue_service_attach(&service);
+                } else if let Err(msg) = app.queue_service_attach(&service) {
+                    app.flash = Some(msg);
                 }
             } else if app.selected_accepts_args() && !selected_is_running(app) {
                 // Discoverability path: a `forward_args = true` row gets

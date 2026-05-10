@@ -1093,7 +1093,9 @@ impl App {
         };
         match row {
             TerminalsRow::Service(name) => {
-                self.queue_service_attach(&name);
+                if let Err(msg) = self.queue_service_attach(&name) {
+                    self.flash = Some(msg);
+                }
             }
             TerminalsRow::Terminal(term) => {
                 let session = self.terminals.session_name.clone();
@@ -1215,7 +1217,34 @@ impl App {
     /// detaches. Used by both the control-center `enter`-on-service
     /// path and the Terminals-view `enter`-on-service-row path so
     /// the tmux invocation stays in one place.
-    pub fn queue_service_attach(&mut self, service: &str) {
+    /// Queue an attach into the named compose service and jump to
+    /// the Terminals view so the user lands there after `ctrl+b d`.
+    /// Returns `Err(reason)` for non-container services (systemd,
+    /// custom). Those don't have a shell to exec into — the caller
+    /// flashes the reason rather than opening an empty pane.
+    pub fn queue_service_attach(&mut self, service: &str) -> Result<(), String> {
+        if self
+            .config
+            .services
+            .systemd
+            .iter()
+            .any(|s| s.name == service)
+        {
+            return Err(format!(
+                "`{service}` is a systemd unit — no interactive shell to attach to"
+            ));
+        }
+        if self
+            .config
+            .services
+            .custom
+            .iter()
+            .any(|s| s.name == service)
+        {
+            return Err(format!(
+                "`{service}` is a custom service — create a custom terminal instead"
+            ));
+        }
         let session = self.terminals.session_name.clone();
         let window = format!("svc:{service}");
         let create_with = Some(format!(
@@ -1227,6 +1256,7 @@ impl App {
             create_with,
         });
         self.view = View::Terminals;
+        Ok(())
     }
 
     pub fn diff(&self) -> &DiffState {
@@ -2035,7 +2065,7 @@ mod tests {
     #[test]
     fn queue_service_attach_jumps_view_and_sets_request() {
         let mut app = App::new(cfg());
-        app.queue_service_attach("app");
+        app.queue_service_attach("app").unwrap();
         assert_eq!(app.view(), View::Terminals);
         let req = app.take_pending_attach().unwrap();
         assert_eq!(req.window, "svc:app");
@@ -2045,6 +2075,50 @@ mod tests {
                 .unwrap()
                 .contains("docker compose")
         );
+    }
+
+    #[test]
+    fn queue_service_attach_rejects_systemd_service() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [containers]
+                backend = "none"
+
+                [[services.systemd]]
+                name = "postgres"
+                unit = "postgresql.service"
+            "#,
+            )
+            .unwrap(),
+        );
+        let mut app = App::new(cfg);
+        let err = app.queue_service_attach("postgres").unwrap_err();
+        assert!(err.contains("systemd"), "msg: {err}");
+        assert_eq!(app.view(), View::ControlCenter);
+        assert!(app.take_pending_attach().is_none());
+    }
+
+    #[test]
+    fn queue_service_attach_rejects_custom_service() {
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [containers]
+                backend = "none"
+
+                [[services.custom]]
+                name   = "tunnel"
+                status = "true"
+                start  = "true"
+                stop   = "true"
+            "#,
+            )
+            .unwrap(),
+        );
+        let mut app = App::new(cfg);
+        let err = app.queue_service_attach("tunnel").unwrap_err();
+        assert!(err.contains("custom"), "msg: {err}");
     }
 
     #[test]
