@@ -672,15 +672,15 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         .clone()
         .unwrap_or_else(|| "scaffl".into());
 
-    let accent = accent_of(app);
-    // Top bar's "scaffl" wordmark stays in the active view's accent
-    // — that single hue serves as the visual cue for which view is
-    // current, mirrored in panel titles below. Project name and
-    // branch sit on neutral foreground so they don't compete.
+    // Top bar's "scaffl" wordmark stays bold white regardless of
+    // view — pinning it to the active accent made it visually
+    // collide with the first sidebar group's accent-colored title
+    // immediately below. The view accent already has plenty of
+    // representation (panel titles, status-bar tag, group headers).
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
             "  scaffl ",
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
