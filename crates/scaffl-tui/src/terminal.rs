@@ -90,7 +90,22 @@ async fn drive(
             *terminal = enter_terminal(&terminal_title(app))?;
             terminal.clear()?;
             events = spawn_event_reader();
+            // Window list may have changed (new shell created, or
+            // user typed `exit` and the window died). Reload the
+            // cache so the sidebar reflects the current state.
+            refresh_tmux_windows(app).await;
             continue;
+        }
+        if let Some(kill) = app.take_pending_kill_window() {
+            let _ = tokio::process::Command::new("tmux")
+                .args([
+                    "kill-window",
+                    "-t",
+                    &format!("{}:{}", kill.session, kill.index),
+                ])
+                .status()
+                .await;
+            refresh_tmux_windows(app).await;
         }
         tokio::select! {
             biased;
@@ -105,20 +120,48 @@ async fn drive(
     }
 }
 
-/// Run the tmux attach (creating the window if needed). The child
-/// inherits our stdio so tmux owns the screen. Returns when the
-/// user detaches (`ctrl+b d`) or tmux exits for any reason.
+/// Run the tmux attach (creating the session / window if needed).
+/// Returns when the user detaches (`ctrl+b d`) or tmux exits.
+///
+/// Window-target semantics:
+///   - `req.window == "scaffl-new"` (the sentinel marker) → spawn
+///     a fresh, unnamed window each time so multiple shells can
+///     coexist; tmux's automatic-rename takes over once `$SHELL`
+///     starts.
+///   - any other value paired with `Some(create_with)` → idempotent
+///     create-or-attach by name (used for `svc:<service>` windows).
+///   - bare numeric value with `None` → attach to that window index
+///     directly.
 async fn attach_tmux(req: &crate::app::AttachRequest) {
     use tokio::process::Command;
-    // Ensure session exists. `tmux has-session` returns 0 if it
-    // does. If not, create it detached with the first window.
     let has_session = Command::new("tmux")
         .args(["has-session", "-t", &req.session])
         .status()
         .await
         .map(|s| s.success())
         .unwrap_or(false);
-    if !has_session {
+
+    let target = if req.window == "scaffl-new" {
+        // Fresh shell: ensure session, then unconditionally
+        // new-window. `-P -F #{window_index}` would let us read
+        // the index back, but the simpler path is "spawn it,
+        // immediately attach" — tmux focuses the new window when
+        // the client connects.
+        if !has_session {
+            let mut cmd = Command::new("tmux");
+            cmd.args(["new-session", "-d", "-s", &req.session]);
+            if let Some(create) = req.create_with.as_deref() {
+                cmd.arg(create);
+            }
+            let _ = cmd.status().await;
+        } else if let Some(create) = req.create_with.as_deref() {
+            let _ = Command::new("tmux")
+                .args(["new-window", "-t", &req.session, create])
+                .status()
+                .await;
+        }
+        format!("{}:", req.session) // attach to whatever's active (the new window)
+    } else if !has_session {
         let mut cmd = Command::new("tmux");
         cmd.args(["new-session", "-d", "-s", &req.session]);
         if let Some(create) = req.create_with.as_deref() {
@@ -126,25 +169,28 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         } else {
             cmd.args(["-n", &req.window]);
         }
-        // Best-effort. If this fails, the attach below will surface
-        // the error to the user via tmux's own message.
         let _ = cmd.status().await;
-    } else if let Some(create) = req.create_with.as_deref() {
-        // Session exists; create the window only if it isn't there.
-        let target = format!("{}:{}", req.session, req.window);
-        let has_window = Command::new("tmux")
-            .args(["has-session", "-t", &target])
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !has_window {
-            let _ = Command::new("tmux")
-                .args(["new-window", "-t", &req.session, "-n", &req.window, create])
+        format!("{}:{}", req.session, req.window)
+    } else {
+        // Session exists. If a `create_with` is set, ensure the
+        // named window exists (idempotent for service rows).
+        if let Some(create) = req.create_with.as_deref() {
+            let target = format!("{}:{}", req.session, req.window);
+            let has_window = Command::new("tmux")
+                .args(["has-session", "-t", &target])
                 .status()
-                .await;
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !has_window {
+                let _ = Command::new("tmux")
+                    .args(["new-window", "-t", &req.session, "-n", &req.window, create])
+                    .status()
+                    .await;
+            }
         }
-    }
+        format!("{}:{}", req.session, req.window)
+    };
     // Inject the scaffl-flavoured status bar so users always see
     // the detach hint. Mirrors AOE's layout: session name styled
     // on the left, then a separator and the detach instruction;
@@ -158,30 +204,70 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
     let status_left =
         " #[fg=cyan,bold]#S#[default] #[fg=brightblack]│#[default] ctrl+b d to detach ";
     let _ = Command::new("tmux")
-        .args([
-            "set-option",
-            "-t",
-            &req.session,
-            "status-left",
-            status_left,
-        ])
+        .args(["set-option", "-t", &req.session, "status-left", status_left])
         .status()
         .await;
     let _ = Command::new("tmux")
-        .args([
-            "set-option",
-            "-t",
-            &req.session,
-            "status-left-length",
-            "60",
-        ])
+        .args(["set-option", "-t", &req.session, "status-left-length", "60"])
         .status()
         .await;
     // Attach. Inherits stdio.
     let _ = Command::new("tmux")
-        .args(["attach", "-t", &format!("{}:{}", req.session, req.window)])
+        .args(["attach", "-t", &target])
         .status()
         .await;
+}
+
+/// Query tmux for the current window list of `session`. Returns an
+/// empty Vec when the session doesn't exist or tmux isn't reachable.
+async fn list_tmux_windows(session: &str) -> Vec<crate::app::TmuxWindow> {
+    use tokio::process::Command;
+    let Ok(output) = Command::new("tmux")
+        .args([
+            "list-windows",
+            "-t",
+            session,
+            "-F",
+            "#{window_index}:#{window_name}",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_tmux_windows(&stdout)
+}
+
+/// Parse `tmux list-windows -F '#{window_index}:#{window_name}'`
+/// output. Lines look like `0:zsh` or `1:svc:app`. Public for tests.
+pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
+    let mut out = Vec::new();
+    for line in input.lines() {
+        let Some((idx_str, name)) = line.split_once(':') else {
+            continue;
+        };
+        let Ok(index) = idx_str.parse::<u32>() else {
+            continue;
+        };
+        out.push(crate::app::TmuxWindow {
+            index,
+            name: name.to_string(),
+        });
+    }
+    out
+}
+
+/// Refresh the cached tmux window list from the live session.
+/// Cheap to call; safe when the session doesn't yet exist.
+async fn refresh_tmux_windows(app: &mut App) {
+    let session = app.terminals().session_name.clone();
+    let windows = list_tmux_windows(&session).await;
+    app.terminals_set_windows(windows);
 }
 
 async fn handle_event(app: &mut App, event: Event) {
@@ -231,6 +317,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Char('T') => {
             app.switch_view(crate::app::View::Terminals);
             ensure_tmux_probed(app).await;
+            refresh_tmux_windows(app).await;
             return;
         }
         KeyCode::Char('G') => {
@@ -475,16 +562,11 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
         app.quit();
         return;
     }
-    // Form takes precedence when open.
-    if app.terminals().creating.is_some() {
-        handle_key_terminals_form(app, code).await;
-        return;
-    }
     match code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Down | KeyCode::Char('j') => app.terminals_select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.terminals_select_prev(),
-        KeyCode::Char('d') => app.terminals_delete_selected(),
+        KeyCode::Char('d') => app.terminals_kill_selected(),
         KeyCode::Enter => app.terminals_confirm(),
         _ => {}
     }
@@ -643,17 +725,6 @@ async fn load_untracked_as_diff(
         });
     }
     lines
-}
-
-async fn handle_key_terminals_form(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Esc => app.terminals_form_cancel(),
-        KeyCode::Tab => app.terminals_form_toggle_focus(),
-        KeyCode::Backspace => app.terminals_form_pop_char(),
-        KeyCode::Enter => app.terminals_form_submit(),
-        KeyCode::Char(c) => app.terminals_form_push_char(c),
-        _ => {}
-    }
 }
 
 /// Build worktree-switcher rows for the current project. The current
@@ -1000,6 +1071,26 @@ mod tests {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('g'))).await;
         assert_eq!(app.view(), crate::app::View::ControlCenter);
+    }
+
+    #[test]
+    fn parse_tmux_windows_handles_typical_output() {
+        let input = "0:zsh\n1:svc:app\n2:vim\n";
+        let windows = parse_tmux_windows(input);
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].index, 0);
+        assert_eq!(windows[0].name, "zsh");
+        assert_eq!(windows[1].name, "svc:app");
+        assert_eq!(windows[2].index, 2);
+    }
+
+    #[test]
+    fn parse_tmux_windows_skips_malformed_lines() {
+        let input = "0:zsh\nnot a window\n2:vim\n";
+        let windows = parse_tmux_windows(input);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].name, "zsh");
+        assert_eq!(windows[1].name, "vim");
     }
 
     #[test]

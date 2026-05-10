@@ -136,12 +136,6 @@ fn render_terminals_placeholder(app: &App, frame: &mut Frame, area: Rect) {
         .split(area);
     render_terminals_sidebar(app, frame, body[0]);
     render_terminals_info(app, frame, body[1]);
-
-    // The new-terminal form rides on top as a modal overlay so it
-    // doesn't lose the user's view of the existing list.
-    if let Some(form) = app.terminals().creating.as_ref() {
-        render_terminals_form(form, frame);
-    }
 }
 
 fn render_tmux_missing(frame: &mut Frame, area: Rect) {
@@ -246,10 +240,18 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         };
         match row {
             crate::app::TerminalsRow::Service(_) => continue,
-            crate::app::TerminalsRow::Terminal(t) => {
+            crate::app::TerminalsRow::Window(w) => {
+                // Tmux's automatic-rename keeps `name` in sync with
+                // the running command (`zsh`, `vim`, …) so what
+                // the user sees here matches what their other
+                // terminal tools would show for the same window.
                 term_items.push(ListItem::new(Line::from(vec![
                     Span::styled("◇ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(t.name.clone(), style),
+                    Span::styled(
+                        format!("{}: ", w.index),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(w.name.clone(), style),
                 ])));
             }
             crate::app::TerminalsRow::NewSentinel => {
@@ -259,7 +261,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
                     Style::default().fg(ACCENT)
                 };
                 term_items.push(ListItem::new(Line::from(vec![Span::styled(
-                    "+ new terminal".to_string(),
+                    "+ new shell".to_string(),
                     new_style,
                 )])));
             }
@@ -325,23 +327,38 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        Some(crate::app::TerminalsRow::Terminal(t)) => {
+        Some(crate::app::TerminalsRow::Window(w)) => {
             lines.push(Line::from(Span::styled(
-                format!("attach into terminal `{}`", t.name),
+                format!("attach into window `{}`", w.name),
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
-            let cmd = match &t.kind {
-                crate::app::TerminalKind::Shell => {
-                    format!("→ cd {} && exec $SHELL", app.project_root().display())
-                }
-                crate::app::TerminalKind::Custom { command } => format!("→ {command}"),
-                crate::app::TerminalKind::ServiceShell { service } => {
-                    format!("→ docker compose exec -it {service} $SHELL")
-                }
-            };
             lines.push(Line::from(Span::styled(
-                cmd,
+                format!(
+                    "→ tmux attach -t {}:{}",
+                    app.terminals().session_name,
+                    w.index
+                ),
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                detach_hint,
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "d to delete this window",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(crate::app::TerminalsRow::NewSentinel) => {
+            lines.push(Line::from(Span::styled(
+                "open a new shell",
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("→ exec $SHELL in {}", app.project_root().display()),
                 Style::default().fg(Color::DarkGray),
             )));
             lines.push(Line::from(""));
@@ -350,60 +367,9 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        Some(crate::app::TerminalsRow::NewSentinel) => {
-            lines.push(Line::from(Span::styled(
-                "create a new terminal",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "press enter to open the form",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
         None => {}
     }
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_terminals_form(form: &crate::app::NewTerminalForm, frame: &mut Frame) {
-    let height = if form.error.is_some() { 11 } else { 9 };
-    let area = centered_rect(frame.area(), 60, height);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .padding(Padding::new(2, 2, 1, 1))
-        .title(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                "new terminal",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-        ]));
-
-    let name_focus = matches!(form.focus, crate::app::NewTerminalField::Name);
-    let cmd_focus = matches!(form.focus, crate::app::NewTerminalField::Command);
-
-    let mut lines: Vec<Line<'static>> = vec![
-        field_row("name", &form.name_input, name_focus),
-        field_row("cmd", &form.command_input, cmd_focus),
-        Line::from(""),
-        Line::from(Span::styled(
-            "tab toggle · enter create · esc back · empty cmd → host shell",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ];
-    if let Some(err) = form.error.as_ref() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            err.clone(),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
-    frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 

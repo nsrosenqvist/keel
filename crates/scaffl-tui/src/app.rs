@@ -127,64 +127,42 @@ pub struct WorktreeRow {
 }
 
 /// State for the Terminals view (`T`). Tmux-backed; one session per
-/// worktree, plus arbitrary user-named windows.
+/// worktree. Windows are tmux's source of truth — we don't track
+/// names ourselves; tmux's automatic-rename keeps `window_name` in
+/// sync with the running foreground program (`zsh`, `vim`, …).
 #[derive(Debug, Clone)]
 pub struct TerminalsState {
     /// `None` until probed; `Some(false)` when tmux is missing.
     pub tmux_available: Option<bool>,
     /// `scaffl-<project>-<slug>` — stable per worktree.
     pub session_name: String,
-    /// User-defined terminals in this session. Service-attach rows
-    /// don't live here; they're synthesised from `App::services` at
-    /// render time so they always reflect the current service list.
-    pub terminals: Vec<TerminalRow>,
-    /// Selected index across the (services + terminals + sentinel)
+    /// Live window list from `tmux list-windows`. Refreshed on view
+    /// entry, after each attach return, and after a delete. Empty
+    /// until the first refresh — and stays empty when the tmux
+    /// session doesn't exist yet (sentinel + service rows still
+    /// render fine).
+    pub windows: Vec<TmuxWindow>,
+    /// Selected index across the (services + windows + sentinel)
     /// concatenation that the renderer / keymap iterate.
     pub selected: usize,
-    /// Open new-terminal form, if any.
-    pub creating: Option<NewTerminalForm>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TerminalRow {
+/// One tmux window as reported by `list-windows`. `name` is what
+/// tmux's `#{window_name}` resolves to right now — for an
+/// auto-renamed window this tracks the running command live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TmuxWindow {
+    pub index: u32,
     pub name: String,
-    pub kind: TerminalKind,
 }
 
-#[derive(Debug, Clone)]
-pub enum TerminalKind {
-    /// Plain host shell; opens `cd <project> && exec $SHELL` in the
-    /// tmux window.
-    Shell,
-    /// `docker compose exec -it <svc> $SHELL` inside the named
-    /// service. Synthetic — only constructed for the attach action,
-    /// not stored in `terminals`.
-    ServiceShell { service: String },
-    /// User-defined window with a custom command line.
-    Custom { command: String },
-}
-
-#[derive(Debug, Clone)]
-pub struct NewTerminalForm {
-    pub name_input: String,
-    pub command_input: String,
-    pub focus: NewTerminalField,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NewTerminalField {
-    Name,
-    Command,
-}
-
-/// One visible row in the Terminals view's sidebar. The view
-/// renders services first, then custom terminals, then the
-/// `+ new` sentinel.
+/// One visible row in the Terminals view's sidebar. Services first
+/// (mapped to compose-exec windows when active), then user shell
+/// windows, then the `+ new shell` sentinel.
 #[derive(Debug, Clone)]
 pub enum TerminalsRow {
     Service(String),
-    Terminal(TerminalRow),
+    Window(TmuxWindow),
     NewSentinel,
 }
 
@@ -205,24 +183,18 @@ fn shell_escape(s: String) -> String {
 }
 
 impl TerminalsState {
-    /// Build initial state for a project. Pre-populates a single
-    /// `shell` terminal so the view always has at least one row to
-    /// attach to. Session name is derived from the project name +
-    /// any worktree slug — but slug-aware naming requires the
-    /// runtime identity, so we accept just the project name here
-    /// and the App caller patches the session name in
-    /// [`App::with_project_root`] when more is known.
+    /// Build initial state for a project. The window list starts
+    /// empty — the view populates it on first entry by querying
+    /// tmux. Session name is derived from the project name; slug-
+    /// aware naming would require the runtime identity, which the
+    /// caller can layer in via `with_project_root`.
     pub fn default_for(config: &Config) -> Self {
         let project = config.project.name.as_deref().unwrap_or("scaffl");
         Self {
             tmux_available: None,
             session_name: format!("scaffl-{project}"),
-            terminals: vec![TerminalRow {
-                name: "shell".into(),
-                kind: TerminalKind::Shell,
-            }],
+            windows: Vec::new(),
             selected: 0,
-            creating: None,
         }
     }
 }
@@ -319,10 +291,21 @@ impl DiffLineKind {
 #[derive(Debug, Clone)]
 pub struct AttachRequest {
     pub session: String,
+    /// Either a window name (existing) or a marker like `scaffl-new`
+    /// telling the attach handler to spawn a fresh window with
+    /// `create_with`.
     pub window: String,
     /// When set, the attach handler runs this shell command first
     /// to create the window. `None` means the window already exists.
     pub create_with: Option<String>,
+}
+
+/// Pending request to kill a tmux window. Drained by the event
+/// loop before re-rendering, then the windows list refreshes.
+#[derive(Debug, Clone)]
+pub struct KillWindow {
+    pub session: String,
+    pub index: u32,
 }
 
 /// Sub-state for the "create new worktree" flow inside the
@@ -429,6 +412,10 @@ pub struct App {
     /// loop drains this between ticks: drops the events reader,
     /// leaves alternate screen, runs tmux attach, re-enters.
     pub pending_attach: Option<AttachRequest>,
+    /// Pending tmux window kill — drained between ticks so the
+    /// event loop can shell out (`tmux kill-window`) without
+    /// holding a borrow on App while the action runs.
+    pending_kill_window: Option<KillWindow>,
     /// Diff view state. Lazily populated on first switch / refresh.
     diff: DiffState,
 }
@@ -460,6 +447,7 @@ impl App {
             view: View::ControlCenter,
             terminals,
             pending_attach: None,
+            pending_kill_window: None,
             diff: DiffState::default(),
         }
     }
@@ -1057,19 +1045,34 @@ impl App {
     }
 
     /// Stable list of rows the Terminals view shows: every service
-    /// (whether running or not — caller renders status indicators),
-    /// then every custom terminal, then a sentinel "+ new" row.
-    /// Indexes returned here align with `TerminalsState::selected`.
+    /// first, then every user shell window, then a sentinel "+ new
+    /// shell" row. Service-attached windows (`svc:*`) are filtered
+    /// out — they show up in the services group instead, never
+    /// twice. Indexes returned here align with `selected`.
     pub fn terminals_rows(&self) -> Vec<TerminalsRow> {
         let mut rows = Vec::new();
         for name in self.services.keys() {
             rows.push(TerminalsRow::Service(name.clone()));
         }
-        for t in &self.terminals.terminals {
-            rows.push(TerminalsRow::Terminal(t.clone()));
+        for w in &self.terminals.windows {
+            if w.name.starts_with("svc:") {
+                continue;
+            }
+            rows.push(TerminalsRow::Window(w.clone()));
         }
         rows.push(TerminalsRow::NewSentinel);
         rows
+    }
+
+    /// Replace the cached tmux window list. Caller has just queried
+    /// `tmux list-windows`; we adopt the result and clamp selection
+    /// so it can't dangle past the list's end after a delete.
+    pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
+        self.terminals.windows = windows;
+        let total = self.terminals_rows().len();
+        if total > 0 && self.terminals.selected >= total {
+            self.terminals.selected = total - 1;
+        }
     }
 
     pub fn terminals_select_next(&mut self) {
@@ -1086,6 +1089,15 @@ impl App {
     /// Resolve the selected row in the Terminals view: queue an
     /// attach for service / custom rows; open the create form for
     /// the sentinel.
+    /// Resolve the selected row in the Terminals view.
+    ///
+    ///   service row   → queue an attach into the compose service
+    ///   window row    → queue an attach to that tmux window
+    ///   `+ new shell` → queue an attach for a brand-new shell;
+    ///                   the attach handler creates the window
+    ///                   when the user lands in it. No name, no
+    ///                   command — tmux's automatic-rename takes
+    ///                   over once a program runs in the pane.
     pub fn terminals_confirm(&mut self) {
         let rows = self.terminals_rows();
         let Some(row) = rows.get(self.terminals.selected).cloned() else {
@@ -1097,115 +1109,54 @@ impl App {
                     self.flash = Some(msg);
                 }
             }
-            TerminalsRow::Terminal(term) => {
+            TerminalsRow::Window(window) => {
                 let session = self.terminals.session_name.clone();
-                let window = term.name.clone();
-                let create_with = match &term.kind {
-                    TerminalKind::Shell => Some(format!(
-                        "cd {} && exec ${{SHELL:-/bin/sh}}",
-                        shell_escape(self.project_root.display().to_string())
-                    )),
-                    TerminalKind::Custom { command } => Some(command.clone()),
-                    TerminalKind::ServiceShell { .. } => None, // unreachable — services come via Service variant
-                };
                 self.pending_attach = Some(AttachRequest {
                     session,
-                    window,
-                    create_with,
+                    window: window.index.to_string(),
+                    create_with: None,
                 });
             }
             TerminalsRow::NewSentinel => {
-                self.terminals.creating = Some(NewTerminalForm {
-                    name_input: String::new(),
-                    command_input: String::new(),
-                    focus: NewTerminalField::Name,
-                    error: None,
+                let session = self.terminals.session_name.clone();
+                let create_with = Some(format!(
+                    "cd {} && exec ${{SHELL:-/bin/sh}}",
+                    shell_escape(self.project_root.display().to_string())
+                ));
+                // Attach by name with a synthetic placeholder; the
+                // attach handler picks the next free tmux index for
+                // a fresh window. Tmux's automatic-rename will
+                // overwrite this name with the running program's
+                // name as soon as the shell starts.
+                self.pending_attach = Some(AttachRequest {
+                    session,
+                    window: "scaffl-new".to_string(),
+                    create_with,
                 });
             }
         }
     }
 
-    /// Delete the selected custom terminal. Services and the
-    /// sentinel are not deletable; this no-ops on those.
-    pub fn terminals_delete_selected(&mut self) {
+    /// Mark the selected window for tmux to kill. Sets
+    /// `pending_kill_window` so the event loop can shell out
+    /// without holding `&mut App`. Services and the sentinel are
+    /// not deletable; this no-ops on those.
+    pub fn terminals_kill_selected(&mut self) {
         let rows = self.terminals_rows();
         let Some(row) = rows.get(self.terminals.selected) else {
             return;
         };
-        let TerminalsRow::Terminal(target) = row else {
+        let TerminalsRow::Window(window) = row else {
             return;
         };
-        let target_name = target.name.clone();
-        self.terminals.terminals.retain(|t| t.name != target_name);
-        // Clamp selection so we don't point past the end after the
-        // shrink.
-        let new_total = self.terminals_rows().len();
-        if self.terminals.selected >= new_total && new_total > 0 {
-            self.terminals.selected = new_total - 1;
-        }
+        self.pending_kill_window = Some(KillWindow {
+            session: self.terminals.session_name.clone(),
+            index: window.index,
+        });
     }
 
-    pub fn terminals_form_push_char(&mut self, c: char) {
-        if let Some(form) = self.terminals.creating.as_mut() {
-            match form.focus {
-                NewTerminalField::Name => form.name_input.push(c),
-                NewTerminalField::Command => form.command_input.push(c),
-            }
-            form.error = None;
-        }
-    }
-
-    pub fn terminals_form_pop_char(&mut self) {
-        if let Some(form) = self.terminals.creating.as_mut() {
-            match form.focus {
-                NewTerminalField::Name => {
-                    form.name_input.pop();
-                }
-                NewTerminalField::Command => {
-                    form.command_input.pop();
-                }
-            }
-            form.error = None;
-        }
-    }
-
-    pub fn terminals_form_toggle_focus(&mut self) {
-        if let Some(form) = self.terminals.creating.as_mut() {
-            form.focus = match form.focus {
-                NewTerminalField::Name => NewTerminalField::Command,
-                NewTerminalField::Command => NewTerminalField::Name,
-            };
-        }
-    }
-
-    pub fn terminals_form_cancel(&mut self) {
-        self.terminals.creating = None;
-    }
-
-    /// Save the form into a new TerminalRow. Empty name is rejected
-    /// inline; empty command falls back to `Shell` in the project root.
-    pub fn terminals_form_submit(&mut self) {
-        let Some(form) = self.terminals.creating.as_mut() else {
-            return;
-        };
-        let name = form.name_input.trim().to_string();
-        if name.is_empty() {
-            form.error = Some("name is required".into());
-            return;
-        }
-        if self.terminals.terminals.iter().any(|t| t.name == name) {
-            form.error = Some(format!("`{name}` already exists"));
-            return;
-        }
-        let kind = if form.command_input.trim().is_empty() {
-            TerminalKind::Shell
-        } else {
-            TerminalKind::Custom {
-                command: form.command_input.trim().to_string(),
-            }
-        };
-        self.terminals.terminals.push(TerminalRow { name, kind });
-        self.terminals.creating = None;
+    pub fn take_pending_kill_window(&mut self) -> Option<KillWindow> {
+        self.pending_kill_window.take()
     }
 
     pub fn take_pending_attach(&mut self) -> Option<AttachRequest> {
@@ -1947,100 +1898,106 @@ mod tests {
     }
 
     #[test]
-    fn terminals_default_has_one_shell_row() {
+    fn terminals_default_has_no_windows() {
         let app = App::new(cfg());
-        assert_eq!(app.terminals().terminals.len(), 1);
-        assert_eq!(app.terminals().terminals[0].name, "shell");
-    }
-
-    #[test]
-    fn terminals_form_submit_adds_row() {
-        let mut app = App::new(cfg());
-        // Open the form by jumping to the sentinel (last row).
-        let total = app.terminals_rows().len();
-        for _ in 0..total {
-            app.terminals_select_next();
-        }
-        app.terminals_confirm();
-        // Type "build" + cmd "make".
-        for c in "build".chars() {
-            app.terminals_form_push_char(c);
-        }
-        app.terminals_form_toggle_focus();
-        for c in "make".chars() {
-            app.terminals_form_push_char(c);
-        }
-        app.terminals_form_submit();
-        assert!(app.terminals().creating.is_none());
-        assert!(app.terminals().terminals.iter().any(|t| t.name == "build"));
-    }
-
-    #[test]
-    fn terminals_form_rejects_empty_name() {
-        let mut app = App::new(cfg());
-        let total = app.terminals_rows().len();
-        for _ in 0..total {
-            app.terminals_select_next();
-        }
-        app.terminals_confirm();
-        app.terminals_form_submit();
-        let form = app.terminals().creating.as_ref().unwrap();
-        assert_eq!(form.error.as_deref(), Some("name is required"));
-    }
-
-    #[test]
-    fn terminals_form_rejects_duplicate_name() {
-        let mut app = App::new(cfg());
-        let total = app.terminals_rows().len();
-        for _ in 0..total {
-            app.terminals_select_next();
-        }
-        app.terminals_confirm();
-        for c in "shell".chars() {
-            app.terminals_form_push_char(c);
-        }
-        app.terminals_form_submit();
-        let form = app.terminals().creating.as_ref().unwrap();
-        assert!(form.error.as_deref().unwrap().contains("already exists"));
-    }
-
-    #[test]
-    fn terminals_delete_removes_only_custom_rows() {
-        let mut app = App::new(cfg());
-        // Add a custom row first via the form.
-        let total = app.terminals_rows().len();
-        for _ in 0..total {
-            app.terminals_select_next();
-        }
-        app.terminals_confirm();
-        for c in "extra".chars() {
-            app.terminals_form_push_char(c);
-        }
-        app.terminals_form_submit();
-        // Now select the new row (it lands before sentinel).
+        assert!(app.terminals().windows.is_empty());
+        // Even with no windows, the sidebar still has the
+        // sentinel row to launch a shell from.
         let rows = app.terminals_rows();
-        let idx = rows
-            .iter()
-            .position(|r| matches!(r, crate::app::TerminalsRow::Terminal(t) if t.name == "extra"))
-            .unwrap();
-        app.terminals.selected = idx;
-        app.terminals_delete_selected();
-        assert!(!app.terminals().terminals.iter().any(|t| t.name == "extra"));
-        // Default `shell` row stays.
-        assert!(app.terminals().terminals.iter().any(|t| t.name == "shell"));
+        assert!(matches!(
+            rows.last().unwrap(),
+            crate::app::TerminalsRow::NewSentinel
+        ));
     }
 
     #[test]
-    fn terminals_confirm_on_shell_row_queues_attach() {
+    fn terminals_set_windows_populates_rows() {
         let mut app = App::new(cfg());
-        // First terminal row in the default state is "shell" (no
-        // services in this fixture).
+        app.terminals_set_windows(vec![
+            crate::app::TmuxWindow {
+                index: 0,
+                name: "zsh".into(),
+            },
+            crate::app::TmuxWindow {
+                index: 1,
+                name: "vim".into(),
+            },
+        ]);
+        let rows = app.terminals_rows();
+        // No services in this cfg + 2 windows + sentinel = 3 rows.
+        assert_eq!(rows.len(), 3);
+        assert!(matches!(
+            rows[0],
+            crate::app::TerminalsRow::Window(ref w) if w.name == "zsh"
+        ));
+    }
+
+    #[test]
+    fn terminals_set_windows_filters_service_windows() {
+        // svc:* windows are surfaced via the service row instead;
+        // they should not appear in the terminals list.
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![
+            crate::app::TmuxWindow {
+                index: 0,
+                name: "zsh".into(),
+            },
+            crate::app::TmuxWindow {
+                index: 1,
+                name: "svc:app".into(),
+            },
+        ]);
+        let rows = app.terminals_rows();
+        // Only the zsh window + sentinel — svc:app is excluded.
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(
+            rows[0],
+            crate::app::TerminalsRow::Window(ref w) if w.name == "zsh"
+        ));
+        assert!(matches!(rows[1], crate::app::TerminalsRow::NewSentinel));
+    }
+
+    #[test]
+    fn terminals_confirm_on_sentinel_queues_new_shell() {
+        let mut app = App::new(cfg());
+        // Single row (sentinel). selected = 0.
+        app.terminals_confirm();
+        let req = app.take_pending_attach().unwrap();
+        assert_eq!(req.window, "scaffl-new");
+        assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
+    }
+
+    #[test]
+    fn terminals_confirm_on_window_queues_attach_by_index() {
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 3,
+            name: "vim".into(),
+        }]);
         app.terminals.selected = 0;
         app.terminals_confirm();
         let req = app.take_pending_attach().unwrap();
-        assert!(req.session.starts_with("scaffl-"));
-        assert_eq!(req.window, "shell");
-        assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
+        assert_eq!(req.window, "3");
+        assert!(req.create_with.is_none());
+    }
+
+    #[test]
+    fn terminals_kill_selected_only_targets_window_rows() {
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+        }]);
+        app.terminals.selected = 0;
+        app.terminals_kill_selected();
+        let kill = app.take_pending_kill_window().unwrap();
+        assert_eq!(kill.index, 0);
+
+        // Selecting the sentinel and killing is a no-op.
+        let total = app.terminals_rows().len();
+        app.terminals.selected = total - 1;
+        app.terminals_kill_selected();
+        assert!(app.take_pending_kill_window().is_none());
     }
 
     #[test]
