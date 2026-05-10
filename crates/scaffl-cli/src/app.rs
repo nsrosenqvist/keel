@@ -94,6 +94,12 @@ pub enum Command {
     },
     /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
     Completions { shell: clap_complete::Shell },
+    /// Interactive prompt helpers usable from any shell script
+    /// (`scaffl lib ask`, `confirm`, `password`, `select`, `filter`).
+    Lib {
+        #[command(subcommand)]
+        action: LibAction,
+    },
     /// Worktree identity, offset, and pinned-assignment management.
     Worktree {
         #[command(subcommand)]
@@ -136,6 +142,58 @@ pub enum HooksAction {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum LibAction {
+    /// Ask the user for a single-line text input. Prints answer to stdout.
+    Ask {
+        prompt: String,
+        #[arg(long)]
+        default: Option<String>,
+    },
+    /// Ask a yes/no question. Exits 0 on yes, 1 on no.
+    Confirm {
+        prompt: String,
+        /// Default when the user just hits Enter (or when stdin is non-tty).
+        #[arg(long, value_parser = parse_yes_no)]
+        default: Option<bool>,
+    },
+    /// Ask for a password (no echo). Prints answer to stdout.
+    Password { prompt: String },
+    /// Pick from a list. Use `--multi` for multi-select.
+    Select {
+        prompt: String,
+        /// Choices given as positional arguments. Ignored when `--from`
+        /// is set.
+        choices: Vec<String>,
+        /// Allow selecting multiple items; one selection per output line.
+        #[arg(long)]
+        multi: bool,
+        /// Default-selected index (single-select mode only).
+        #[arg(long)]
+        default: Option<usize>,
+        /// Read choices from a file, or `-` to read from stdin.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
+    /// Fuzzy-filter picker. Same I/O contract as single-select.
+    Filter {
+        prompt: String,
+        /// Choices as positional args (ignored when `--from` is set).
+        choices: Vec<String>,
+        /// Read choices from a file, or `-` to read from stdin.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
+}
+
+fn parse_yes_no(s: &str) -> Result<bool, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "y" | "yes" | "true" | "1" => Ok(true),
+        "n" | "no" | "false" | "0" => Ok(false),
+        other => Err(format!("expected yes/no, got `{other}`")),
+    }
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorktreeAction {
     /// Show the current worktree's identity, offset, and computed env.
     Status,
@@ -166,6 +224,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
     if let Some(Command::Completions { shell }) = cli.command {
         return commands::completions::run(shell);
+    }
+    if let Some(Command::Lib { action }) = cli.command {
+        let code = run_lib_action(action)?;
+        std::process::exit(code);
     }
 
     let project_root = locate_project_root(cli.project.as_deref())?;
@@ -208,6 +270,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             Command::Init { .. } => unreachable!("handled above"),
             Command::Completions { .. } => unreachable!("handled above"),
+            Command::Lib { .. } => unreachable!("handled above"),
             Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root, &identity).await,
             Command::Watch {
                 recipe,
@@ -326,6 +389,28 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             anyhow::bail!("no such command `{name}`");
         }
+    }
+}
+
+/// Dispatch a `scaffl lib <verb>` subcommand. Pure CLI — never touches
+/// the project config; that's the whole point.
+fn run_lib_action(action: LibAction) -> Result<i32> {
+    match action {
+        LibAction::Ask { prompt, default } => commands::lib::ask(&prompt, default.as_deref()),
+        LibAction::Confirm { prompt, default } => commands::lib::confirm(&prompt, default),
+        LibAction::Password { prompt } => commands::lib::password(&prompt),
+        LibAction::Select {
+            prompt,
+            choices,
+            multi,
+            default,
+            from,
+        } => commands::lib::select(&prompt, choices, multi, default, from.as_deref()),
+        LibAction::Filter {
+            prompt,
+            choices,
+            from,
+        } => commands::lib::filter(&prompt, choices, from.as_deref()),
     }
 }
 
