@@ -156,7 +156,7 @@ async fn drive(
                     Err(_) => {} // timeout — keep waiting until the deadline
                 }
             }
-            if drained_count > 0 {
+            if verbose && drained_count > 0 {
                 app.diagnostic(format!(
                     "[input] discarded {drained_count} post-detach phantom event(s) — terminal mode-restore artefacts"
                 ));
@@ -438,15 +438,6 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
     let session = app.terminals().session_name.clone();
     match list_tmux_windows(&session).await {
         WindowList::Ok(w) => {
-            if expecting_session {
-                app.diagnostic(format!(
-                    "[tmux] post-attach refresh of `{session}`: {} window(s)",
-                    w.len()
-                ));
-                for win in &w {
-                    app.diagnostic(format!("[tmux]   {}: {}", win.index, win.name));
-                }
-            }
             // Capture each window's visible pane content for the
             // info-pane preview. ~5-15ms per window via
             // `tmux capture-pane -p`; cheap enough to refresh on
@@ -457,24 +448,6 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
                 app.terminals_set_preview(*idx, lines);
             }
             app.terminals_set_windows(w);
-            if expecting_session {
-                // Cross-check: dump what scaffl will *render* in the
-                // sidebar. If this list disagrees with what tmux
-                // returned, the bug is in our row assembly /
-                // filter, not tmux.
-                let rows = app.terminals_rows();
-                app.diagnostic(format!("[ui] sidebar rows: {} total", rows.len()));
-                for (i, row) in rows.iter().enumerate() {
-                    let label = match row {
-                        crate::app::TerminalsRow::Service(name) => format!("Service({name})"),
-                        crate::app::TerminalsRow::Window(w) => {
-                            format!("Window({}: {})", w.index, w.name)
-                        }
-                        crate::app::TerminalsRow::NewSentinel => "NewSentinel".into(),
-                    };
-                    app.diagnostic(format!("[ui]   {i}: {label}"));
-                }
-            }
         }
         WindowList::NoSession(msg) => {
             app.terminals_set_windows(Vec::new());
