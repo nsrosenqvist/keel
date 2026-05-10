@@ -542,19 +542,14 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    // Stateful list so the highlight covers the full row, matching
+    // the control center and terminals views. Per-row styling on
+    // the status letter stays — ratatui composes it with the
+    // highlight background on the selected row.
     let items: Vec<ListItem> = diff
         .files
         .iter()
-        .enumerate()
-        .map(|(idx, f)| {
-            let row_style = if idx == diff.selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(ACCENT)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+        .map(|f| {
             let letter_style = match f.status {
                 DiffStatus::Modified => Style::default().fg(Color::Yellow),
                 DiffStatus::Added | DiffStatus::Untracked => Style::default().fg(Color::Green),
@@ -564,14 +559,22 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
             };
             ListItem::new(Line::from(vec![
                 Span::styled(format!(" {} ", f.status.letter()), letter_style),
-                Span::styled(f.path.clone(), row_style),
+                Span::raw(f.path.clone()),
             ]))
         })
         .collect();
     let list = List::new(items)
         .block(block)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_spacing(HighlightSpacing::Always);
-    frame.render_widget(list, area);
+    let mut state = ListState::default();
+    state.select(Some(diff.selected));
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
