@@ -186,7 +186,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             Command::Init { .. } => unreachable!("handled above"),
             Command::Completions { .. } => unreachable!("handled above"),
-            Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root).await,
+            Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root, &identity).await,
             Command::Watch {
                 recipe,
                 args,
@@ -228,7 +228,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 
     if cli.args.is_empty() {
-        return run_tui(Arc::clone(&cfg_arc), &project_root).await;
+        return run_tui(Arc::clone(&cfg_arc), &project_root, &identity).await;
     }
 
     let (name, rest) = split_args(&cli.args);
@@ -404,16 +404,22 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     )))
 }
 
-async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()> {
+async fn run_tui(
+    initial_config: Arc<Config>,
+    initial_root: &Path,
+    initial_identity: &scaffl_runtime::Identity,
+) -> Result<()> {
     // Outer loop: each iteration is one TUI session. The user can
     // switch worktrees from inside the TUI (`W` modal) → we drop
     // out of `scaffl_tui::run`, rebuild config / backend / executor
     // against the new root, and re-enter. `Quit` ends the loop.
     // The active view is carried over so a hot-reload from the
     // Terminals or Diff view lands in the same view in the new
-    // worktree.
+    // worktree. The identity's BaseRef label feeds the top bar's
+    // branch slot — re-detected after every hot-reload.
     let mut current_root = initial_root.to_path_buf();
     let mut current_config = initial_config;
+    let mut current_branch = branch_label(initial_identity);
     let mut next_view = scaffl_tui::View::ControlCenter;
     loop {
         let backend: Arc<dyn Backend> = match build_backend(&current_config).await {
@@ -434,6 +440,7 @@ async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()>
             backend,
             &current_root,
             next_view,
+            current_branch.clone(),
         )
         .await
         .context("run TUI")?;
@@ -455,9 +462,23 @@ async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()>
                     .with_context(|| format!("load project at {}", path.display()))?;
                 current_root = path;
                 current_config = Arc::new(new_cfg);
+                current_branch = branch_label(&identity);
                 next_view = view;
             }
         }
+    }
+}
+
+/// Map a worktree Identity to the string we surface in the top bar:
+/// the active branch, a short SHA for detached HEAD, or the linked
+/// worktree's directory basename. None when we're not inside a git
+/// repo at all — the renderer skips the slot entirely in that case.
+fn branch_label(identity: &scaffl_runtime::Identity) -> Option<String> {
+    match &identity.base_ref {
+        scaffl_runtime::BaseRef::Branch(b) => Some(b.clone()),
+        scaffl_runtime::BaseRef::DetachedSha(s) => Some(format!("det-{s}")),
+        scaffl_runtime::BaseRef::WorktreeDir(d) => Some(d.clone()),
+        scaffl_runtime::BaseRef::None => None,
     }
 }
 

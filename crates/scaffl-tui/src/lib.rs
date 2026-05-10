@@ -55,21 +55,29 @@ pub use terminal::DriveOutcome;
 /// `initial_view` lets the CLI carry the active view across a
 /// worktree hot-reload so the user lands where they left off
 /// rather than always returning to the control center.
+///
+/// `branch` populates the top-bar branch slot (None → header skips
+/// the slot, e.g. when not in a git repo). The diff file list is
+/// preloaded so the dirty count is visible from the first frame
+/// instead of waiting for the user to open the diff view.
 pub async fn run(
     config: Arc<Config>,
     executor: Executor,
     backend: Arc<dyn Backend>,
     project_root: &Path,
     initial_view: View,
+    branch: Option<String>,
 ) -> Result<DriveOutcome, TuiError> {
     let mut app = App::new(config)
         .with_executor(executor)
         .with_backend(backend)
-        .with_project_root(project_root);
+        .with_project_root(project_root)
+        .with_branch(branch);
     // Order matters: discover before watchers so the sidebar sections
     // populate in one rebuild rather than two flickers.
     app.discover_services().await;
     app.spawn_watcher_panes(project_root);
+    terminal::preload_diff_status(&mut app).await;
     if initial_view != View::ControlCenter {
         app.switch_view(initial_view);
     }

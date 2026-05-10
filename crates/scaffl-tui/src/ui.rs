@@ -649,14 +649,31 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];
 
-    // Worktree info — only meaningful when isolated.
-    let services_count = app.services().len();
-    let watchers_count = app.watchers().len();
-    if services_count > 0 || watchers_count > 0 {
+    // Branch + dirty marker — globally relevant across every view.
+    // The branch is set by the CLI from the detected Identity at
+    // startup (and on every worktree hot-reload). Dirty count comes
+    // from the same `git status --porcelain` we already shell out
+    // for the diff view; preloaded on startup so this header is
+    // populated even before the user opens the diff view.
+    if let Some(branch) = app.branch() {
+        spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
-            format!("  │  {services_count} services, {watchers_count} watchers"),
-            Style::default().fg(Color::DarkGray),
+            branch.to_string(),
+            Style::default().fg(ACCENT),
         ));
+        let dirty = app.diff().files.len();
+        if app.diff().loaded && dirty > 0 {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("●{dirty}"),
+                Style::default().fg(Color::Yellow),
+            ));
+        } else if app.diff().loaded {
+            spans.push(Span::styled(
+                "  clean",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
     }
 
     let p = Paragraph::new(Line::from(spans));
@@ -2038,6 +2055,72 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(Arc::new(scaffl_config::Config::default()));
         terminal.draw(|f| render(&app, f)).unwrap();
+    }
+
+    #[test]
+    fn top_bar_shows_branch_when_set() {
+        let backend = TestBackend::new(120, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new(cfg()).with_branch(Some("feature-x".into()));
+        terminal.draw(|f| render(&app, f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buffer.area.width {
+            text.push_str(buffer[(x, 0)].symbol());
+        }
+        assert!(
+            text.contains("feature-x"),
+            "expected branch in top bar, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn top_bar_shows_dirty_count_when_files_present() {
+        use crate::app::{DiffFile, DiffStatus};
+        let backend = TestBackend::new(120, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(cfg()).with_branch(Some("main".into()));
+        app.diff_set_files(vec![
+            DiffFile {
+                path: "src/a.rs".into(),
+                status: DiffStatus::Modified,
+            },
+            DiffFile {
+                path: "src/b.rs".into(),
+                status: DiffStatus::Added,
+            },
+        ]);
+        terminal.draw(|f| render(&app, f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buffer.area.width {
+            text.push_str(buffer[(x, 0)].symbol());
+        }
+        assert!(
+            text.contains("●2"),
+            "expected dirty marker '●2' in top bar, got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn top_bar_omits_branch_when_unset() {
+        // No branch (e.g. not in a git repo) → header skips the slot
+        // entirely rather than showing an empty separator.
+        let backend = TestBackend::new(120, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new(cfg());
+        terminal.draw(|f| render(&app, f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buffer.area.width {
+            text.push_str(buffer[(x, 0)].symbol());
+        }
+        // Project name renders, but no second separator after it.
+        assert!(text.contains("tuitest"), "expected project name");
+        assert!(
+            !text.contains("●"),
+            "should not show dirty marker without a branch context"
+        );
     }
 
     #[test]

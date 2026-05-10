@@ -827,6 +827,18 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     }
 }
 
+/// Preload just the file list (no per-file diff bodies) so the top
+/// bar's dirty count is populated from the first frame. Called once
+/// at startup; the diff view's normal lazy-load path takes over from
+/// there.
+pub(crate) async fn preload_diff_status(app: &mut App) {
+    let project_root = app.project_root().to_path_buf();
+    match load_diff_files(&project_root).await {
+        Ok(files) => app.diff_set_files(files),
+        Err(msg) => app.diff_set_error(msg),
+    }
+}
+
 /// Populate the diff file list if it hasn't been loaded yet, and
 /// ensure the selected file's diff body is cached. Cheap on
 /// subsequent calls thanks to the per-file cache.

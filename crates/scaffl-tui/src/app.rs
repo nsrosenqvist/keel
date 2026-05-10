@@ -422,6 +422,10 @@ pub struct App {
     /// Cached project root so the switcher can prefill its path
     /// input with the current parent dir.
     project_root: PathBuf,
+    /// Branch (or detached SHA / worktree dir basename) of the
+    /// current worktree. Surfaced in the top bar so users always
+    /// know which checkout they're acting on, regardless of view.
+    branch: Option<String>,
     /// Active top-level view. Switched via the `T` / `g` / `c`
     /// global keybinds.
     view: View,
@@ -470,6 +474,7 @@ impl App {
             switcher: None,
             pending_switch: None,
             project_root: PathBuf::from("."),
+            branch: None,
             view: View::ControlCenter,
             terminals,
             pending_attach: None,
@@ -497,6 +502,20 @@ impl App {
 
     pub fn project_root(&self) -> &Path {
         &self.project_root
+    }
+
+    /// Tag the App with the current worktree's branch (or detached
+    /// SHA / dir basename) so the top bar can surface it. Optional —
+    /// the App still functions without it; the top bar just won't
+    /// show a branch slot. Reset on every worktree hot-reload by the
+    /// CLI's outer loop.
+    pub fn with_branch(mut self, branch: Option<String>) -> Self {
+        self.branch = branch;
+        self
+    }
+
+    pub fn branch(&self) -> Option<&str> {
+        self.branch.as_deref()
     }
 
     pub fn with_executor(mut self, executor: Executor) -> Self {
