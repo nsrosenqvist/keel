@@ -1670,7 +1670,9 @@ fn render_worktree_switcher(
 
 fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, accent: Color, frame: &mut Frame) {
     let total_rows = switcher.total_rows();
-    let height = (total_rows as u16 + 4).min(20);
+    // Body layout: list rows + blank + hint = total_rows + 2.
+    // Block adds 2 (borders) + 2 (padding) = 4. Cap at 20.
+    let height = (total_rows as u16 + 6).min(20);
     let area = centered_rect(frame.area(), 60, height);
 
     let block = Block::default()
@@ -1686,68 +1688,71 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, accent: Color, 
             Span::raw(" "),
         ]));
 
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(total_rows + 2);
-    for (idx, row) in switcher.entries.iter().enumerate() {
-        let prefix = if idx == switcher.selected {
-            "▶ "
-        } else {
-            "  "
-        };
-        let row_style = if idx == switcher.selected {
+    frame.render_widget(Clear, area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Stack list above blank-row + hint. Stateful list paints the
+    // full-row highlight; the old Paragraph + manually-styled spans
+    // only colored the row text, leaving "+ new worktree" with a
+    // visibly shorter highlight than the worktree-name rows above.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(total_rows as u16),
+            Constraint::Length(1), // blank
+            Constraint::Length(1), // hint
+        ])
+        .split(inner);
+
+    let items: Vec<ListItem> = switcher
+        .entries
+        .iter()
+        .map(|row| {
+            let current_marker = if row.is_current {
+                Span::styled(" ●", Style::default().fg(Color::Green))
+            } else {
+                Span::raw("  ")
+            };
+            let branch_label = row
+                .branch
+                .clone()
+                .unwrap_or_else(|| "<detached>".to_string());
+            ListItem::new(Line::from(vec![
+                Span::raw(format!("{branch_label:<24}")),
+                current_marker,
+                Span::raw("  "),
+                Span::styled(
+                    row.path.display().to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+        })
+        .chain(std::iter::once(ListItem::new(Line::from(Span::styled(
+            "+ new worktree",
+            Style::default().fg(accent),
+        )))))
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(
             Style::default()
                 .fg(SELECTION_FG)
                 .bg(SELECTION_BG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let current_marker = if row.is_current {
-            Span::styled(" ●", Style::default().fg(Color::Green))
-        } else {
-            Span::raw("  ")
-        };
-        let branch_label = row
-            .branch
-            .clone()
-            .unwrap_or_else(|| "<detached>".to_string());
-        lines.push(Line::from(vec![
-            Span::styled(prefix.to_string(), row_style),
-            Span::styled(format!("{branch_label:<24}"), row_style),
-            current_marker,
-            Span::raw("  "),
-            Span::styled(
-                row.path.display().to_string(),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
-    }
-    // Sentinel "+ new worktree" row.
-    let new_idx = switcher.new_row_index();
-    let prefix = if switcher.selected == new_idx {
-        "▶ "
-    } else {
-        "  "
-    };
-    let row_style = if switcher.selected == new_idx {
-        Style::default()
-            .fg(SELECTION_FG)
-            .bg(SELECTION_BG)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(accent)
-    };
-    lines.push(Line::from(vec![
-        Span::styled(prefix.to_string(), row_style),
-        Span::styled("+ new worktree".to_string(), row_style),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "↑↓ nav · enter switch · esc cancel",
-        Style::default().fg(Color::DarkGray),
-    )));
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_spacing(HighlightSpacing::Always);
+    let mut state = ListState::default();
+    state.select(Some(switcher.selected));
+    frame.render_stateful_widget(list, chunks[0], &mut state);
 
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "↑↓ nav · enter switch · esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[2],
+    );
 }
 
 fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame: &mut Frame) {
