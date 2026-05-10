@@ -191,6 +191,23 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         }
         format!("{}:{}", req.session, req.window)
     };
+    // Pin per-session options so detach doesn't unintentionally
+    // kill the session. Users with `destroy-unattached on` in
+    // their global tmux config would otherwise see the session
+    // (and every shell in it) vanish the moment scaffl detached
+    // — definitely not what "ctrl+b d" should do. We only touch
+    // this one session; the global config stays untouched.
+    let _ = Command::new("tmux")
+        .args([
+            "set-option",
+            "-t",
+            &req.session,
+            "destroy-unattached",
+            "off",
+        ])
+        .status()
+        .await;
+
     // Inject the scaffl-flavoured status bar so users always see
     // the detach hint. Mirrors AOE's layout: session name styled
     // on the left, then a separator and the detach instruction;
