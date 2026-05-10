@@ -319,6 +319,7 @@ async fn run_captured(
         StepSource::InstallHooks => {
             run_install_hooks(config, project_root, renderer, update_hooks).await
         }
+        StepSource::ApplyAgents => run_apply_agents(config, project_root, renderer).await,
     }
 }
 
@@ -416,11 +417,10 @@ async fn build_command(step: &Step, project_root: &Path, _env: &Env) -> Result<(
             }
             Ok((cmd, cwd))
         }
-        StepSource::Recipe(_) | StepSource::InstallHooks => {
-            // These are never marked interactive (recipes don't carry
-            // the interactive flag, and the install-hooks builtin is
-            // always non-interactive). Reach this only if someone
-            // hand-edits the plan; treat as an internal bug.
+        StepSource::Recipe(_) | StepSource::InstallHooks | StepSource::ApplyAgents => {
+            // None of these carry an interactive flag (recipes don't,
+            // and the two builtins are always non-interactive). Reach
+            // here only if someone hand-edits the plan.
             anyhow::bail!("step kind cannot run interactively");
         }
     }
@@ -520,6 +520,51 @@ async fn run_install_hooks(
     Ok(0)
 }
 
+async fn run_apply_agents(
+    config: &Config,
+    project_root: &Path,
+    renderer: &mut Renderer,
+) -> Result<i32> {
+    let opts = scaffl_agents::ApplyOptions::default();
+    let report = match scaffl_agents::apply(project_root, &config.agents, &opts).await {
+        Ok(r) => r,
+        Err(e) => {
+            renderer.append_tail(&format!("agents apply failed: {e}"));
+            return Ok(1);
+        }
+    };
+    for dest in &report.written {
+        renderer.append_tail(&format!("  wrote   {}", dest.display()));
+    }
+    for dest in &report.updated {
+        renderer.append_tail(&format!("  updated {}", dest.display()));
+    }
+    for dest in &report.removed {
+        renderer.append_tail(&format!("  removed {}", dest.display()));
+    }
+    for dest in &report.once_kept {
+        renderer.append_tail(&format!("  kept    {} (mode = once)", dest.display()));
+    }
+    for collision in &report.collisions {
+        renderer.append_tail(&format!(
+            "  warn    {} declared by [{}], using `{}`",
+            collision.dest.display(),
+            collision.overshadowed_sources.join(", "),
+            collision.winning_source,
+        ));
+    }
+    for entry in &report.drift_warnings {
+        renderer.append_tail(&format!(
+            "  warn    {} drifted; left alone",
+            entry.dest.display(),
+        ));
+    }
+    if report.written.is_empty() && report.updated.is_empty() && report.removed.is_empty() {
+        renderer.append_tail("  agent files unchanged");
+    }
+    Ok(0)
+}
+
 /// Default hook stages installed when no explicit list is given.
 /// Mirrors the existing `commands::hooks::default_install_stages`
 /// rules so the install flow and the explicit `scaffl hooks install`
@@ -541,6 +586,7 @@ fn print_plan(plan: &[Step]) -> Result<i32> {
             StepSource::Script(_) => "script",
             StepSource::Inline(_) => "inline",
             StepSource::InstallHooks => "builtin",
+            StepSource::ApplyAgents => "builtin",
         };
         let flags = match (step.optional, step.interactive) {
             (true, true) => " [optional, interactive]",

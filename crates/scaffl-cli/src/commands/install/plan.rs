@@ -47,6 +47,10 @@ pub enum StepSource {
     /// Built-in: install git-hook shims and prefetch any external hook
     /// repos referenced by `.pre-commit-config.yaml`.
     InstallHooks,
+    /// Built-in: apply agent instructions / skills via `scaffl-agents`.
+    /// Runs before [`StepSource::InstallHooks`] so any hook-related
+    /// docs land in place first.
+    ApplyAgents,
 }
 
 /// Resolve the install plan against `config`. The `project_root` is
@@ -58,6 +62,16 @@ pub fn resolve(config: &Config, _project_root: &std::path::Path) -> Result<Vec<S
     } else {
         steps_from_explicit(config)?
     };
+
+    if config.agents.install_with_setup && !config.agents.sources.is_empty() {
+        steps.push(Step {
+            name: "apply-agents".into(),
+            desc: Some("Apply agent instructions and skills from upstream sources".into()),
+            source: StepSource::ApplyAgents,
+            interactive: false,
+            optional: false,
+        });
+    }
 
     if config.install.install_git_hooks {
         steps.push(Step {
@@ -253,6 +267,54 @@ mod tests {
         let plan = resolve(&cfg, std::path::Path::new("/")).unwrap();
         assert_eq!(plan.len(), 1);
         assert!(matches!(plan[0].source, StepSource::InstallHooks));
+    }
+
+    #[test]
+    fn apply_agents_step_runs_before_install_hooks() {
+        use scaffl_config::SourceSpec;
+        let mut cfg = Config::default();
+        cfg.install.install_git_hooks = true;
+        cfg.agents.install_with_setup = true;
+        cfg.agents.sources.push(SourceSpec {
+            name: "x".into(),
+            repo: "https://example.com/x.git".into(),
+            rev: "v1".into(),
+            subpath: None,
+            manifest_path: None,
+            overrides: vec![],
+        });
+        let plan = resolve(&cfg, std::path::Path::new("/")).unwrap();
+        assert_eq!(plan.len(), 2, "{plan:?}");
+        assert!(matches!(plan[0].source, StepSource::ApplyAgents));
+        assert!(matches!(plan[1].source, StepSource::InstallHooks));
+    }
+
+    #[test]
+    fn apply_agents_step_skipped_when_no_sources() {
+        let mut cfg = Config::default();
+        cfg.install.install_git_hooks = false;
+        cfg.agents.install_with_setup = true; // default
+        // sources empty — nothing to apply
+        let plan = resolve(&cfg, std::path::Path::new("/")).unwrap();
+        assert!(plan.is_empty(), "{plan:?}");
+    }
+
+    #[test]
+    fn apply_agents_step_skipped_when_install_with_setup_false() {
+        use scaffl_config::SourceSpec;
+        let mut cfg = Config::default();
+        cfg.install.install_git_hooks = false;
+        cfg.agents.install_with_setup = false;
+        cfg.agents.sources.push(SourceSpec {
+            name: "x".into(),
+            repo: "https://example.com/x.git".into(),
+            rev: "v1".into(),
+            subpath: None,
+            manifest_path: None,
+            overrides: vec![],
+        });
+        let plan = resolve(&cfg, std::path::Path::new("/")).unwrap();
+        assert!(plan.is_empty(), "{plan:?}");
     }
 
     #[test]
