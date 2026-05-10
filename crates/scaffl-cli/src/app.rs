@@ -409,8 +409,12 @@ async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()>
     // switch worktrees from inside the TUI (`W` modal) → we drop
     // out of `scaffl_tui::run`, rebuild config / backend / executor
     // against the new root, and re-enter. `Quit` ends the loop.
+    // The active view is carried over so a hot-reload from the
+    // Terminals or Diff view lands in the same view in the new
+    // worktree.
     let mut current_root = initial_root.to_path_buf();
     let mut current_config = initial_config;
+    let mut next_view = scaffl_tui::View::ControlCenter;
     loop {
         let backend: Arc<dyn Backend> = match build_backend(&current_config).await {
             Ok(b) => b,
@@ -429,27 +433,29 @@ async fn run_tui(initial_config: Arc<Config>, initial_root: &Path) -> Result<()>
             executor,
             backend,
             &current_root,
+            next_view,
         )
         .await
         .context("run TUI")?;
         match outcome {
             scaffl_tui::DriveOutcome::Quit => return Ok(()),
-            scaffl_tui::DriveOutcome::SwitchWorktree(new_root) => {
+            scaffl_tui::DriveOutcome::SwitchWorktree { path, view } => {
                 // Reload config from the new root. Slug detection
                 // happens during config load via the same bootstrap
                 // pass `run` does on first start.
-                let bootstrap_cfg = scaffl_config::load_project_with_slug(&new_root, None)
-                    .with_context(|| format!("load project at {}", new_root.display()))?;
-                let identity = scaffl_runtime::Identity::detect(&new_root, &bootstrap_cfg).await;
+                let bootstrap_cfg = scaffl_config::load_project_with_slug(&path, None)
+                    .with_context(|| format!("load project at {}", path.display()))?;
+                let identity = scaffl_runtime::Identity::detect(&path, &bootstrap_cfg).await;
                 let slug_for_overlay = if identity.is_isolated() {
                     Some(identity.slug.as_str())
                 } else {
                     None
                 };
-                let new_cfg = scaffl_config::load_project_with_slug(&new_root, slug_for_overlay)
-                    .with_context(|| format!("load project at {}", new_root.display()))?;
-                current_root = new_root;
+                let new_cfg = scaffl_config::load_project_with_slug(&path, slug_for_overlay)
+                    .with_context(|| format!("load project at {}", path.display()))?;
+                current_root = path;
                 current_config = Arc::new(new_cfg);
+                next_view = view;
             }
         }
     }

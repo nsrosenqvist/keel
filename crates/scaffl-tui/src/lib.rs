@@ -31,7 +31,7 @@ pub mod watchers;
 
 mod terminal;
 
-pub use app::{App, Item, ItemKind};
+pub use app::{App, Item, ItemKind, View};
 pub use runner::{CapturedLine, RunState};
 pub use services::ServicePane;
 pub use watchers::{WatcherPane, WatcherState};
@@ -51,11 +51,16 @@ pub use terminal::DriveOutcome;
 /// worktree switch. The caller's job to rebuild the App against the
 /// new root and call `run` again — that keeps the TUI crate
 /// independent of how config / backend / executor are constructed.
+///
+/// `initial_view` lets the CLI carry the active view across a
+/// worktree hot-reload so the user lands where they left off
+/// rather than always returning to the control center.
 pub async fn run(
     config: Arc<Config>,
     executor: Executor,
     backend: Arc<dyn Backend>,
     project_root: &Path,
+    initial_view: View,
 ) -> Result<DriveOutcome, TuiError> {
     let mut app = App::new(config)
         .with_executor(executor)
@@ -65,5 +70,8 @@ pub async fn run(
     // populate in one rebuild rather than two flickers.
     app.discover_services().await;
     app.spawn_watcher_panes(project_root);
-    terminal::run_event_loop(&mut app).await
+    if initial_view != View::ControlCenter {
+        app.switch_view(initial_view);
+    }
+    terminal::run_event_loop(&mut app, initial_view).await
 }

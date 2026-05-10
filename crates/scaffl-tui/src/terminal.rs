@@ -28,16 +28,37 @@ const TICK_INTERVAL_MS: u64 = 250;
 
 /// Outcome of one drive of the event loop. `Quit` ends the session;
 /// `SwitchWorktree` signals a hot-reload — the CLI's outer loop
-/// rebuilds the App against the new root and re-enters drive.
+/// rebuilds the App against the new root and re-enters drive,
+/// carrying over the active view so the user lands where they left.
 #[derive(Debug)]
 pub enum DriveOutcome {
     Quit,
-    SwitchWorktree(std::path::PathBuf),
+    SwitchWorktree {
+        path: std::path::PathBuf,
+        view: crate::app::View,
+    },
 }
 
-pub async fn run_event_loop(app: &mut App) -> Result<DriveOutcome, TuiError> {
+pub async fn run_event_loop(
+    app: &mut App,
+    initial_view: crate::app::View,
+) -> Result<DriveOutcome, TuiError> {
     let title = terminal_title(app);
     let mut terminal = enter_terminal(&title)?;
+    // Run the same view-entry hooks the keymap fires when switching
+    // views interactively — so a worktree hot-reload that lands in
+    // Terminals or Diff doesn't show stale (empty) state on first
+    // paint.
+    match initial_view {
+        crate::app::View::Terminals => {
+            ensure_tmux_probed(app).await;
+            refresh_tmux_windows(app, false).await;
+        }
+        crate::app::View::Diff => {
+            ensure_diff_loaded(app).await;
+        }
+        crate::app::View::ControlCenter => {}
+    }
     let result = drive(&mut terminal, app).await;
     leave_terminal(&mut terminal)?;
     // Print any buffered diagnostics now that the alternate screen
@@ -87,7 +108,10 @@ async fn drive(
             return Ok(DriveOutcome::Quit);
         }
         if let Some(path) = app.take_pending_switch() {
-            return Ok(DriveOutcome::SwitchWorktree(path));
+            return Ok(DriveOutcome::SwitchWorktree {
+                path,
+                view: app.view(),
+            });
         }
         if let Some(req) = app.take_pending_attach() {
             // Yield the terminal to tmux. Drop the events reader
@@ -529,6 +553,13 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             app.switch_view(crate::app::View::ControlCenter);
             return;
         }
+        // Worktree switcher is also global — accessible from every
+        // view (used to be control-center-only).
+        KeyCode::Char('W') => {
+            let entries = build_worktree_rows(app).await;
+            app.open_worktree_switcher(entries);
+            return;
+        }
         _ => {}
     }
 
@@ -625,11 +656,8 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 app.flash = Some(launch_message(rej));
             }
         }
-        // `W`: open the worktree switcher modal.
-        KeyCode::Char('W') => {
-            let entries = build_worktree_rows(app).await;
-            app.open_worktree_switcher(entries);
-        }
+        // `W` is handled in the global view-switch block above so
+        // it works from every view, not just the control center.
         // `D`: down all. No lowercase counterpart — compose's `down` is
         // intrinsically project-wide; the per-service equivalent is
         // `stop` (bound to `s`).
@@ -1259,6 +1287,23 @@ mod tests {
         assert_eq!(app.view(), crate::app::View::ControlCenter);
         handle_event(&mut app, press(KeyCode::Char('T'))).await;
         assert_eq!(app.view(), crate::app::View::Terminals);
+    }
+
+    #[tokio::test]
+    async fn capital_w_works_from_terminals_view() {
+        // Used to be control-center-only; now global.
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        app.switch_view(crate::app::View::Terminals);
+        handle_event(&mut app, press(KeyCode::Char('W'))).await;
+        assert_eq!(app.mode(), crate::app::Mode::WorktreeSwitcher);
+    }
+
+    #[tokio::test]
+    async fn capital_w_works_from_diff_view() {
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        app.switch_view(crate::app::View::Diff);
+        handle_event(&mut app, press(KeyCode::Char('W'))).await;
+        assert_eq!(app.mode(), crate::app::Mode::WorktreeSwitcher);
     }
 
     #[tokio::test]
