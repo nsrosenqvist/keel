@@ -93,7 +93,9 @@ async fn drive(
             // Window list may have changed (new shell created, or
             // user typed `exit` and the window died). Reload the
             // cache so the sidebar reflects the current state.
-            refresh_tmux_windows(app).await;
+            // We expect the session to exist post-attach; if it
+            // doesn't, refresh_tmux_windows surfaces the cause.
+            refresh_tmux_windows(app, true).await;
             continue;
         }
         if let Some(kill) = app.take_pending_kill_window() {
@@ -105,7 +107,9 @@ async fn drive(
                 ])
                 .status()
                 .await;
-            refresh_tmux_windows(app).await;
+            // The session might be gone now if we just killed the
+            // last window — that's normal, no flash.
+            refresh_tmux_windows(app, false).await;
         }
         tokio::select! {
             biased;
@@ -247,11 +251,19 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         .await;
 }
 
-/// Query tmux for the current window list of `session`. Returns an
-/// empty Vec when the session doesn't exist or tmux isn't reachable.
-async fn list_tmux_windows(session: &str) -> Vec<crate::app::TmuxWindow> {
+/// Outcome of asking tmux for the windows in a session. Lets the
+/// caller distinguish "no such session" from "session has no
+/// windows" — which look identical when collapsed to a Vec.
+enum WindowList {
+    Ok(Vec<crate::app::TmuxWindow>),
+    NoSession(String),
+    SpawnFailed(String),
+}
+
+/// Query tmux for the current window list of `session`.
+async fn list_tmux_windows(session: &str) -> WindowList {
     use tokio::process::Command;
-    let Ok(output) = Command::new("tmux")
+    let output = match Command::new("tmux")
         .args([
             "list-windows",
             "-t",
@@ -262,14 +274,20 @@ async fn list_tmux_windows(session: &str) -> Vec<crate::app::TmuxWindow> {
         .stdin(std::process::Stdio::null())
         .output()
         .await
-    else {
-        return Vec::new();
+    {
+        Ok(o) => o,
+        Err(e) => return WindowList::SpawnFailed(e.to_string()),
     };
     if !output.status.success() {
-        return Vec::new();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return WindowList::NoSession(if stderr.is_empty() {
+            format!("tmux exited {}", output.status.code().unwrap_or(-1))
+        } else {
+            stderr
+        });
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_tmux_windows(&stdout)
+    WindowList::Ok(parse_tmux_windows(&stdout))
 }
 
 /// Parse `tmux list-windows -F '#{window_index}:#{window_name}'`
@@ -292,11 +310,32 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
 }
 
 /// Refresh the cached tmux window list from the live session.
-/// Cheap to call; safe when the session doesn't yet exist.
-async fn refresh_tmux_windows(app: &mut App) {
+/// Surfaces three cases differently:
+///
+///   - Ok with windows  → adopt them.
+///   - Ok with no windows → adopt the empty list (the session
+///     exists but every window has died).
+///   - NoSession after the user just attached → flash a hint;
+///     a hook or rebind in the user's tmux config probably
+///     destroyed the session on detach.
+///   - SpawnFailed → flash the spawn error.
+async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
     let session = app.terminals().session_name.clone();
-    let windows = list_tmux_windows(&session).await;
-    app.terminals_set_windows(windows);
+    match list_tmux_windows(&session).await {
+        WindowList::Ok(w) => app.terminals_set_windows(w),
+        WindowList::NoSession(msg) => {
+            app.terminals_set_windows(Vec::new());
+            if expecting_session {
+                app.flash = Some(format!(
+                    "tmux session `{session}` vanished after detach — check ~/.tmux.conf hooks ({msg})"
+                ));
+            }
+        }
+        WindowList::SpawnFailed(msg) => {
+            app.terminals_set_windows(Vec::new());
+            app.flash = Some(format!("tmux query failed: {msg}"));
+        }
+    }
 }
 
 async fn handle_event(app: &mut App, event: Event) {
@@ -346,7 +385,9 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Char('T') => {
             app.switch_view(crate::app::View::Terminals);
             ensure_tmux_probed(app).await;
-            refresh_tmux_windows(app).await;
+            // Don't expect a session yet — the user may not have
+            // attached to anything during this scaffl session.
+            refresh_tmux_windows(app, false).await;
             return;
         }
         KeyCode::Char('G') => {
