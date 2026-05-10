@@ -101,32 +101,41 @@ async fn drive(
             *terminal = enter_terminal(&terminal_title(app))?;
             terminal.clear()?;
             events = spawn_event_reader();
-            // Drain phantom events for a short window. When tmux
-            // exits, the terminal mode-restore sequences (alt
-            // screen exit, mouse mode disable, bracketed paste
-            // toggle, focus tracking) cause some terminals to
-            // emit response bytes on stdin. Crossterm parses
-            // those as Events — and one of them happening to be
-            // 'd' would trigger `terminals_kill_selected` on the
-            // window the user just created, which exactly matches
-            // the "list disappears 100ms after detach" report.
+            // Drain phantom events for a short window. Terminals
+            // respond to tmux's mode-restore queries (DA, color
+            // queries, etc.) with bytes on stdin that crossterm
+            // parses as Events — verified in the wild: ghostty
+            // emitted 76 keypresses including `d`s, which would
+            // happily trigger `terminals_kill_selected` on the
+            // brand-new shell window. Real user keypresses don't
+            // arrive within 150ms of pressing ctrl+b d (their
+            // fingers are still recovering from the chord); the
+            // terminal's response bytes do.
+            //
+            // Set `SCAFFL_DEBUG_INPUT=1` to log every drained
+            // event — useful when porting to a new terminal that
+            // misbehaves in some other way.
+            let verbose = std::env::var("SCAFFL_DEBUG_INPUT")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false);
             let drain_deadline = std::time::Instant::now() + Duration::from_millis(150);
-            let mut drained: Vec<Event> = Vec::new();
+            let mut drained_count = 0usize;
             while std::time::Instant::now() < drain_deadline {
                 match tokio::time::timeout(Duration::from_millis(30), events.recv()).await {
-                    Ok(Some(ev)) => drained.push(ev),
+                    Ok(Some(ev)) => {
+                        drained_count += 1;
+                        if verbose {
+                            app.diagnostic(format!("[input]   {ev:?}"));
+                        }
+                    }
                     Ok(None) => break,
                     Err(_) => {} // timeout — keep waiting until the deadline
                 }
             }
-            if !drained.is_empty() {
+            if drained_count > 0 {
                 app.diagnostic(format!(
-                    "[input] discarded {} post-detach phantom event(s):",
-                    drained.len()
+                    "[input] discarded {drained_count} post-detach phantom event(s) — terminal mode-restore artefacts"
                 ));
-                for ev in &drained {
-                    app.diagnostic(format!("[input]   {ev:?}"));
-                }
             }
             // Reload cached window list — new shell created, or
             // user typed `exit` and the window died.
