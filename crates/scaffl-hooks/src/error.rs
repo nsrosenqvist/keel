@@ -42,6 +42,42 @@ pub enum HookError {
     #[error("hook `{hook}` requires a non-empty `entry`")]
     EntryMissing { hook: String },
 
+    #[error(
+        "hook `{hook}` uses language `{language}`; scaffl runs only `system` / `script` hooks. \
+         Use a wrapper script with `language: script`, or a tool already on PATH with `language: system`."
+    )]
+    UnsupportedLanguage { hook: String, language: String },
+
+    #[error(
+        "`repo: meta` references pre-commit's built-in hooks (check-hooks-apply, identity, …) \
+         which scaffl does not implement. Remove the entry or replace it with an equivalent \
+         `repo: local` hook."
+    )]
+    MetaRepoNotSupported,
+
+    #[error(
+        "failed to clone {repo} at rev `{rev}` into cache: {message}. \
+         Make sure `git` is on PATH and the repo URL is reachable."
+    )]
+    CloneFailed {
+        repo: String,
+        rev: String,
+        message: String,
+    },
+
+    #[error(
+        "hook `{hook}` references repo {repo} at rev `{rev}` but its `.pre-commit-hooks.yaml` \
+         does not define an id matching `{hook}`."
+    )]
+    UpstreamHookMissing {
+        repo: String,
+        rev: String,
+        hook: String,
+    },
+
+    #[error("repo `{repo}` is missing a `rev` — external hook repos must pin a revision")]
+    MissingRev { repo: String },
+
     #[error(transparent)]
     Other(#[from] std::io::Error),
 }

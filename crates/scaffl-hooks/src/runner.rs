@@ -1,23 +1,29 @@
 //! Hook execution.
 //!
-//! Two paths:
+//! Two paths, both native:
 //!
-//! 1. **Native** (`repo: local` + `language: system | script`): the entry
-//!    is parsed via `shell_words`, args are appended, and — unless
+//! 1. **Local hook** (`repo: local`, any `language: system | script`):
+//!    the user's `HookSpec` provides everything. The entry is parsed
+//!    via `shell_words`, args are appended, and — unless
 //!    `pass_filenames = false` — the matching staged files come last.
-//!    The hook runs as a child process inheriting stdio.
-//! 2. **Bridged** (anything else): if the `pre-commit` binary is on PATH,
-//!    we shell out to it for that hook. If not, we WARN and skip the hook
-//!    rather than failing the whole stage. The user can install
-//!    `pre-commit` to get full coverage.
+//! 2. **Cached upstream repo** (`repo: <url>` with a `rev`): scaffl
+//!    clones the repo into `.scaffl/cache/hooks/<key>/` and reads its
+//!    `.pre-commit-hooks.yaml` to fill in any fields the user didn't
+//!    override. Same native execution path after merging.
+//!
+//! Unsupported shapes (`language: python` / `node` / `ruby` / …,
+//! and `repo: meta`) produce a clear error at run time rather than
+//! silently skipping. scaffl deliberately does not bridge to the
+//! `pre-commit` binary; replication is the only mode.
 
-use crate::config::{HookLanguage, HookSpec, PreCommitConfig, Repo};
+use crate::cache;
+use crate::config::{HookLanguage, HookSpec, PreCommitConfig, Repo, UpstreamHook};
 use crate::error::HookError;
 use crate::git;
 use regex::Regex;
 use std::path::Path;
 use tokio::process::Command;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Outcome of running a single hook.
 #[derive(Debug)]
@@ -34,8 +40,10 @@ impl HookOutcome {
     }
 }
 
-/// Run the pre-commit stage. Returns the per-hook outcomes; the caller
-/// renders them and decides on the overall exit code.
+/// Run every hook configured for `stage`. Returns the per-hook
+/// outcomes in declaration order; the caller renders them and decides
+/// on the overall exit code (typically: any non-zero hook fails the
+/// stage).
 pub async fn run_pre_commit(
     config: &PreCommitConfig,
     project_root: &Path,
@@ -50,7 +58,7 @@ pub async fn run_pre_commit(
             if !hook.applies_to_stage(stage, &config.default_stages) {
                 continue;
             }
-            let outcome = run_one_hook(repo, hook, &staged, &repo_root).await?;
+            let outcome = run_one_hook(project_root, repo, hook, &staged, &repo_root).await?;
             outcomes.push(outcome);
         }
     }
@@ -58,50 +66,129 @@ pub async fn run_pre_commit(
 }
 
 async fn run_one_hook(
+    project_root: &Path,
     repo: &Repo,
     hook: &HookSpec,
     staged: &[String],
     repo_root: &Path,
 ) -> Result<HookOutcome, HookError> {
-    if repo.is_local() && hook.language.is_native() {
-        return run_native(hook, staged, repo_root).await;
+    if repo.is_meta() {
+        return Err(HookError::MetaRepoNotSupported);
     }
-    bridge_to_pre_commit(hook, repo_root).await
+
+    let resolved = if repo.is_local() {
+        if !hook.language.is_native() {
+            return Err(HookError::UnsupportedLanguage {
+                hook: hook.id.clone(),
+                language: format!("{:?}", hook.language),
+            });
+        }
+        ResolvedHook::local(hook.clone())
+    } else {
+        let cached = cache::clone_or_reuse(project_root, repo, false).await?;
+        let upstream = find_upstream(&cached.clone_dir, hook, &repo.repo, repo.rev.as_deref())?;
+        let merged = crate::config::merge_with_upstream(hook, &upstream)?;
+        ResolvedHook::cached(merged, cached.clone_dir)
+    };
+
+    run_native(&resolved, staged, repo_root).await
+}
+
+/// What the runner actually executes after resolving local-vs-cached
+/// and merging upstream-vs-user fields.
+struct ResolvedHook {
+    spec: HookSpec,
+    /// Directory the entry path resolves against (for `language: script`
+    /// hooks whose entry is a file inside the cached repo). For
+    /// `language: system` and local hooks this is unused.
+    script_root: Option<std::path::PathBuf>,
+}
+
+impl ResolvedHook {
+    fn local(spec: HookSpec) -> Self {
+        Self {
+            spec,
+            script_root: None,
+        }
+    }
+
+    fn cached(spec: HookSpec, clone_dir: std::path::PathBuf) -> Self {
+        Self {
+            spec,
+            script_root: Some(clone_dir),
+        }
+    }
+}
+
+fn find_upstream(
+    clone_dir: &Path,
+    hook: &HookSpec,
+    repo_url: &str,
+    rev: Option<&str>,
+) -> Result<UpstreamHook, HookError> {
+    let hooks = crate::config::load_upstream_hooks(clone_dir)?;
+    hooks
+        .into_iter()
+        .find(|h| h.id == hook.id)
+        .ok_or_else(|| HookError::UpstreamHookMissing {
+            repo: repo_url.to_string(),
+            rev: rev.unwrap_or("").to_string(),
+            hook: hook.id.clone(),
+        })
 }
 
 async fn run_native(
-    hook: &HookSpec,
+    resolved: &ResolvedHook,
     staged: &[String],
     repo_root: &Path,
 ) -> Result<HookOutcome, HookError> {
-    let entry = hook.entry.as_ref().ok_or_else(|| HookError::EntryMissing {
-        hook: hook.id.clone(),
-    })?;
+    let entry = resolved
+        .spec
+        .entry
+        .as_ref()
+        .ok_or_else(|| HookError::EntryMissing {
+            hook: resolved.spec.id.clone(),
+        })?;
     let mut argv = shell_words::split(entry).map_err(|e| HookError::EntryParse {
-        hook: hook.id.clone(),
+        hook: resolved.spec.id.clone(),
         message: e.to_string(),
     })?;
     if argv.is_empty() {
         return Err(HookError::EntryMissing {
-            hook: hook.id.clone(),
+            hook: resolved.spec.id.clone(),
         });
     }
-    argv.extend(hook.args.iter().cloned());
 
-    let files = filter_files(hook, staged)?;
-    if hook.pass_filenames && files.is_empty() && !hook.always_run {
+    // For `language: script`, the entry is a path *inside the cloned
+    // repo*. Rewrite the first token to its absolute path so we can
+    // still set `current_dir` to the user's repo_root (matches
+    // pre-commit's semantics: hooks see the project tree, but their
+    // own files come from the cache).
+    if matches!(resolved.spec.language, HookLanguage::Script)
+        && let Some(root) = resolved.script_root.as_deref()
+    {
+        let candidate = root.join(&argv[0]);
+        if candidate.is_file() {
+            argv[0] = candidate.to_string_lossy().into_owned();
+        }
+    }
+
+    argv.extend(resolved.spec.args.iter().cloned());
+
+    let files = filter_files(&resolved.spec, staged)?;
+    if resolved.spec.pass_filenames && files.is_empty() && !resolved.spec.always_run {
         debug!(
-            hook = hook.id,
+            hook = resolved.spec.id,
             "no staged files match; skipping native hook"
         );
         return Ok(HookOutcome {
-            hook_id: hook.id.clone(),
+            hook_id: resolved.spec.id.clone(),
             native: true,
             skipped: Some("no matching staged files".into()),
             exit_code: None,
         });
     }
-    if hook.pass_filenames {
+    if resolved.spec.pass_filenames {
         argv.extend(files.iter().cloned());
     }
 
@@ -114,40 +201,8 @@ async fn run_native(
         .await
         .map_err(|e| HookError::GitFailed(format!("spawn `{program}`: {e}")))?;
     Ok(HookOutcome {
-        hook_id: hook.id.clone(),
+        hook_id: resolved.spec.id.clone(),
         native: true,
-        skipped: None,
-        exit_code: status.code(),
-    })
-}
-
-async fn bridge_to_pre_commit(hook: &HookSpec, repo_root: &Path) -> Result<HookOutcome, HookError> {
-    if which::which("pre-commit").is_err() {
-        let reason = match hook.language {
-            HookLanguage::Other => {
-                "language not recognised; install pre-commit binary for full support".to_string()
-            }
-            ref other => {
-                format!("{other:?} hooks need the pre-commit binary; install it to enable")
-            }
-        };
-        warn!(hook = hook.id, "skipping: {reason}");
-        return Ok(HookOutcome {
-            hook_id: hook.id.clone(),
-            native: false,
-            skipped: Some(reason),
-            exit_code: None,
-        });
-    }
-    let status = Command::new("pre-commit")
-        .args(["run", "--hook-stage", "pre-commit", &hook.id])
-        .current_dir(repo_root)
-        .status()
-        .await
-        .map_err(|e| HookError::GitFailed(format!("spawn pre-commit: {e}")))?;
-    Ok(HookOutcome {
-        hook_id: hook.id.clone(),
-        native: false,
         skipped: None,
         exit_code: status.code(),
     })
@@ -255,5 +310,77 @@ mod tests {
         assert!(pass.passed());
         assert!(skip.passed());
         assert!(!fail.passed());
+    }
+
+    #[tokio::test]
+    async fn meta_repo_errors_at_run_time() {
+        let temp = tempfile::TempDir::new().unwrap();
+        // Make it a git repo so git::discover_repo succeeds.
+        tokio::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .status()
+            .await
+            .unwrap();
+        let cfg = PreCommitConfig {
+            repos: vec![Repo {
+                repo: "meta".into(),
+                rev: None,
+                hooks: vec![HookSpec {
+                    id: "identity".into(),
+                    name: None,
+                    language: HookLanguage::System,
+                    entry: Some("true".into()),
+                    args: vec![],
+                    files: None,
+                    exclude: None,
+                    pass_filenames: false,
+                    stages: vec![],
+                    always_run: true,
+                }],
+            }],
+            default_stages: vec![],
+        };
+        let err = run_pre_commit(&cfg, temp.path(), "pre-commit")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, HookError::MetaRepoNotSupported));
+    }
+
+    #[tokio::test]
+    async fn local_python_hook_errors_with_clear_message() {
+        let temp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .status()
+            .await
+            .unwrap();
+        let cfg = PreCommitConfig {
+            repos: vec![Repo {
+                repo: "local".into(),
+                rev: None,
+                hooks: vec![HookSpec {
+                    id: "ruff".into(),
+                    name: None,
+                    language: HookLanguage::Python,
+                    entry: Some("ruff".into()),
+                    args: vec![],
+                    files: None,
+                    exclude: None,
+                    pass_filenames: true,
+                    stages: vec![],
+                    always_run: true,
+                }],
+            }],
+            default_stages: vec![],
+        };
+        let err = run_pre_commit(&cfg, temp.path(), "pre-commit")
+            .await
+            .unwrap_err();
+        match err {
+            HookError::UnsupportedLanguage { hook, .. } => assert_eq!(hook, "ruff"),
+            other => panic!("expected UnsupportedLanguage, got {other:?}"),
+        }
     }
 }

@@ -28,9 +28,124 @@ pub struct Repo {
 }
 
 impl Repo {
+    /// True when the repo's hooks are defined inline in the user's
+    /// `.pre-commit-config.yaml` (no clone needed). `repo: meta` was
+    /// historically treated as local; it isn't — meta references
+    /// pre-commit's built-in lint hooks, which scaffl does not
+    /// implement. The runner errors when it encounters one.
     pub fn is_local(&self) -> bool {
-        self.repo == "local" || self.repo == "meta"
+        self.repo == "local"
     }
+
+    /// True only for `repo: meta` — pre-commit's built-in hook bundle.
+    pub fn is_meta(&self) -> bool {
+        self.repo == "meta"
+    }
+}
+
+/// Single hook entry as it appears inside an upstream repo's
+/// `.pre-commit-hooks.yaml`. The shape matches [`HookSpec`] from the
+/// user-side config — `id` is required, every other field is a
+/// fallback that the user may override in their own
+/// `.pre-commit-config.yaml`.
+///
+/// Kept as a separate struct (rather than reusing [`HookSpec`]) because
+/// the merge direction matters: the user's `HookSpec` is the source of
+/// truth for everything they explicitly set, falling back to this only
+/// where they were silent.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct UpstreamHook {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub language: Option<HookLanguage>,
+    #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub files: Option<String>,
+    #[serde(default)]
+    pub exclude: Option<String>,
+    #[serde(default)]
+    pub pass_filenames: Option<bool>,
+    #[serde(default)]
+    pub stages: Vec<String>,
+    #[serde(default)]
+    pub always_run: Option<bool>,
+}
+
+/// Read the `.pre-commit-hooks.yaml` from the root of a cached upstream
+/// repo. Returns the full list as authored — callers index by `id`.
+pub fn load_upstream_hooks(repo_dir: &Path) -> Result<Vec<UpstreamHook>, HookError> {
+    let path = repo_dir.join(".pre-commit-hooks.yaml");
+    let raw = std::fs::read_to_string(&path).map_err(|source| HookError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    serde_yaml_ng::from_str(&raw).map_err(|source| HookError::Parse { path, source })
+}
+
+/// Merge an upstream hook definition into the user's reference. The
+/// user wins on every explicitly-set field; upstream fills the gaps.
+/// Errors when the merged result still lacks an `entry` or has a
+/// non-native language — those translate to clear install-time errors.
+pub fn merge_with_upstream(
+    user: &HookSpec,
+    upstream: &UpstreamHook,
+) -> Result<HookSpec, HookError> {
+    // Upstream owns the language field — that's where the hook was
+    // authored. We fall back to the user's value only when upstream
+    // didn't declare one (rare, since `.pre-commit-hooks.yaml`
+    // requires it).
+    let language = upstream
+        .language
+        .clone()
+        .unwrap_or_else(|| user.language.clone());
+    if !language.is_native() {
+        return Err(HookError::UnsupportedLanguage {
+            hook: user.id.clone(),
+            language: format!("{language:?}"),
+        });
+    }
+    let entry = user
+        .entry
+        .clone()
+        .or_else(|| upstream.entry.clone())
+        .ok_or_else(|| HookError::EntryMissing {
+            hook: user.id.clone(),
+        })?;
+    Ok(HookSpec {
+        id: user.id.clone(),
+        name: user.name.clone().or_else(|| upstream.name.clone()),
+        language,
+        entry: Some(entry),
+        args: if user.args.is_empty() {
+            upstream.args.clone()
+        } else {
+            user.args.clone()
+        },
+        files: user.files.clone().or_else(|| upstream.files.clone()),
+        exclude: user.exclude.clone().or_else(|| upstream.exclude.clone()),
+        // `pass_filenames` defaults to true at deserialization, so we
+        // can't tell whether the user said "yes" or omitted it. The
+        // upstream value, when present, is taken as the more
+        // authoritative default — but only when the user kept the
+        // default true. Users who say `pass_filenames: false`
+        // explicitly are honoured.
+        pass_filenames: if !user.pass_filenames {
+            false
+        } else {
+            upstream.pass_filenames.unwrap_or(true)
+        },
+        stages: if user.stages.is_empty() {
+            upstream.stages.clone()
+        } else {
+            user.stages.clone()
+        },
+        always_run: user.always_run || upstream.always_run.unwrap_or(false),
+    })
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

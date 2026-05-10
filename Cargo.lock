@@ -1041,13 +1041,13 @@ dependencies = [
  "scaffl-config",
  "scaffl-runtime",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "shell-words",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
- "which",
 ]
 
 [[package]]
