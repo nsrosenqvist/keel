@@ -104,6 +104,17 @@ pub struct ConfirmDialog {
 pub enum ConfirmAction {
     /// Abort the named run and relaunch it.
     KillAndRestart { key: RunKey },
+    /// Kill a tmux window in the Terminals view. Carries the
+    /// session + index so the action survives any navigation the
+    /// user does while the modal is open.
+    KillTmuxWindow {
+        session: String,
+        index: u32,
+        /// Window name as it was when the modal opened — purely
+        /// for the dialog body so the user sees what they're
+        /// killing.
+        name: String,
+    },
 }
 
 /// Open args prompt for a `forward_args = true` row. Only one is
@@ -1143,10 +1154,10 @@ impl App {
         }
     }
 
-    /// Mark the selected window for tmux to kill. Sets
-    /// `pending_kill_window` so the event loop can shell out
-    /// without holding `&mut App`. Services and the sentinel are
-    /// not deletable; this no-ops on those.
+    /// Open a confirmation modal for killing the selected window.
+    /// Services and the sentinel aren't killable; this no-ops on
+    /// those. The actual `tmux kill-window` shell-out is queued
+    /// (via `pending_kill_window`) only after the user accepts.
     pub fn terminals_kill_selected(&mut self) {
         let rows = self.terminals_rows();
         let Some(row) = rows.get(self.terminals.selected) else {
@@ -1155,10 +1166,20 @@ impl App {
         let TerminalsRow::Window(window) = row else {
             return;
         };
-        self.pending_kill_window = Some(KillWindow {
-            session: self.terminals.session_name.clone(),
-            index: window.index,
+        let session = self.terminals.session_name.clone();
+        let name = window.name.clone();
+        let index = window.index;
+        self.confirm = Some(ConfirmDialog {
+            title: format!("close `{name}`?"),
+            body: "the tmux window and any running processes will end.".into(),
+            yes_focused: true,
+            action: ConfirmAction::KillTmuxWindow {
+                session,
+                index,
+                name,
+            },
         });
+        self.mode = Mode::Confirm;
     }
 
     pub fn take_pending_kill_window(&mut self) -> Option<KillWindow> {
@@ -1298,6 +1319,10 @@ impl App {
                     self.selected = idx;
                 }
                 self.force_relaunch_selected().err()
+            }
+            ConfirmAction::KillTmuxWindow { session, index, .. } => {
+                self.pending_kill_window = Some(KillWindow { session, index });
+                None
             }
         }
     }
@@ -2000,7 +2025,10 @@ mod tests {
     }
 
     #[test]
-    fn terminals_kill_selected_only_targets_window_rows() {
+    fn terminals_kill_selected_opens_confirm_modal() {
+        // Killing now goes through a confirm modal — no immediate
+        // pending_kill_window. The shell-out fires only after the
+        // user accepts via confirm_resolve(true).
         let mut app = App::new(cfg());
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
@@ -2008,14 +2036,49 @@ mod tests {
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
+        assert_eq!(app.mode(), Mode::Confirm);
+        assert!(app.take_pending_kill_window().is_none());
+        let dialog = app.confirm_dialog().unwrap();
+        assert!(dialog.title.contains("zsh"));
+        assert!(dialog.yes_focused);
+    }
+
+    #[test]
+    fn confirm_resolve_yes_queues_kill() {
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+        }]);
+        app.terminals.selected = 0;
+        app.terminals_kill_selected();
+        let rejection = app.confirm_resolve(true);
+        assert!(rejection.is_none());
         let kill = app.take_pending_kill_window().unwrap();
         assert_eq!(kill.index, 0);
+    }
 
-        // Selecting the sentinel and killing is a no-op.
-        let total = app.terminals_rows().len();
-        app.terminals.selected = total - 1;
+    #[test]
+    fn confirm_resolve_no_skips_kill() {
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+        }]);
+        app.terminals.selected = 0;
         app.terminals_kill_selected();
+        app.confirm_resolve(false);
         assert!(app.take_pending_kill_window().is_none());
+    }
+
+    #[test]
+    fn terminals_kill_on_sentinel_is_noop() {
+        let mut app = App::new(cfg());
+        // Only sentinel in the list.
+        app.terminals.selected = app.terminals_rows().len() - 1;
+        app.terminals_kill_selected();
+        assert_eq!(app.mode(), Mode::Normal);
+        assert!(app.confirm_dialog().is_none());
     }
 
     #[test]
