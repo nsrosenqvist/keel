@@ -42,8 +42,30 @@ const SIDEBAR_RATIO: u16 = 28;
 const TOP_BAR_HEIGHT: u16 = 1;
 const STATUS_BAR_HEIGHT: u16 = 1;
 
-/// Accent colour used for active highlights and key hints.
-const ACCENT: Color = Color::Cyan;
+/// Per-view accent. Each top-level view gets its own muted hue so
+/// users have a visual cue for which view they're in without
+/// reading the status-bar tag — peach for the home/control center,
+/// mint teal for the tmux-backed terminals view, soft sky blue for
+/// the diff view. Indexed colors so terminals with non-standard
+/// 16-color palettes still land somewhere reasonable.
+fn view_accent(view: crate::app::View) -> Color {
+    match view {
+        crate::app::View::ControlCenter => Color::Indexed(215),
+        crate::app::View::Terminals => Color::Indexed(79),
+        crate::app::View::Diff => Color::Indexed(110),
+    }
+}
+
+fn accent_of(app: &App) -> Color {
+    view_accent(app.view())
+}
+
+/// Selection highlight chrome — same across all views so the
+/// "selected row" affordance reads consistently. Subtle dim grey
+/// background pairs with the active accent for the row's text;
+/// avoids the loud cyan-bg / black-fg contrast we used before.
+const SELECTION_BG: Color = Color::Indexed(238);
+const SELECTION_FG: Color = Color::Indexed(255);
 
 pub fn render(app: &App, frame: &mut Frame) {
     let outer = Layout::default()
@@ -67,25 +89,26 @@ pub fn render(app: &App, frame: &mut Frame) {
 
     render_status(app, frame, outer[2]);
 
+    let accent = accent_of(app);
     if app.mode() == Mode::Palette
         && let Some(palette) = app.palette()
     {
-        render_palette(app, palette, frame);
+        render_palette(app, palette, accent, frame);
     }
     if app.mode() == Mode::Confirm
         && let Some(dialog) = app.confirm_dialog()
     {
-        render_confirm_modal(dialog, frame);
+        render_confirm_modal(dialog, accent, frame);
     }
     if app.mode() == Mode::ArgsPrompt
         && let Some(prompt) = app.args_prompt()
     {
-        render_args_prompt(prompt, frame);
+        render_args_prompt(prompt, accent, frame);
     }
     if app.mode() == Mode::WorktreeSwitcher
         && let Some(switcher) = app.switcher()
     {
-        render_worktree_switcher(switcher, frame);
+        render_worktree_switcher(switcher, accent, frame);
     }
 }
 
@@ -109,7 +132,7 @@ fn render_control_center(app: &App, frame: &mut Frame, area: Rect) {
 /// Real Terminals body: tmux-backed sidebar + info panel.
 fn render_terminals_placeholder(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(false) = app.terminals().tmux_available {
-        render_tmux_missing(frame, area);
+        render_tmux_missing(accent_of(app), frame, area);
         return;
     }
     let body = Layout::default()
@@ -123,8 +146,8 @@ fn render_terminals_placeholder(app: &App, frame: &mut Frame, area: Rect) {
     render_terminals_info(app, frame, body[1]);
 }
 
-fn render_tmux_missing(frame: &mut Frame, area: Rect) {
-    let block = panel_block(" terminals ");
+fn render_tmux_missing(accent: Color, frame: &mut Frame, area: Rect) {
+    let block = panel_block(" terminals ", accent);
     let body = Paragraph::new(vec![
         Line::from(""),
         Line::from(Span::styled(
@@ -170,12 +193,15 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         .constraints(constraints)
         .split(area);
 
-    // Highlight style shared by both groups — same shape as the
-    // control-center sidebar so visited and selected rows read
-    // consistently across views.
+    let accent = accent_of(app);
+    // Selection chrome: muted dark grey background with white text.
+    // Shared across views so the "this is the selected row"
+    // affordance reads consistently. The view's accent appears in
+    // the row's foreground content (e.g. group titles) — keeping
+    // the highlight neutral lets it not compete for attention.
     let highlight = Style::default()
-        .fg(Color::Black)
-        .bg(ACCENT)
+        .fg(SELECTION_FG)
+        .bg(SELECTION_BG)
         .add_modifier(Modifier::BOLD);
 
     // Services group
@@ -204,7 +230,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
             Span::raw(" "),
             Span::styled(
                 "services",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!(" ({services_count}) "),
@@ -238,7 +264,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
                 }
                 term_items.push(ListItem::new(Line::from(Span::styled(
                     "+ new shell",
-                    Style::default().fg(ACCENT),
+                    Style::default().fg(accent),
                 ))));
             }
         }
@@ -247,7 +273,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         Span::raw(" "),
         Span::styled(
             "terminals",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" ({}) ", terminals_total - 1),
@@ -336,7 +362,7 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     let info_block = panel_block_titled(info_title).padding(Padding::horizontal(2));
     frame.render_widget(Paragraph::new(info_body).block(info_block), info_area);
 
-    render_terminals_preview(preview, frame, preview_area);
+    render_terminals_preview(preview, accent_of(app), frame, preview_area);
 }
 
 fn terminals_info_title(
@@ -424,12 +450,17 @@ fn build_terminals_info_body(
     lines
 }
 
-fn render_terminals_preview(preview: Option<&Vec<String>>, frame: &mut Frame, area: Rect) {
+fn render_terminals_preview(
+    preview: Option<&Vec<String>>,
+    accent: Color,
+    frame: &mut Frame,
+    area: Rect,
+) {
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled(
             "preview",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ]);
@@ -485,12 +516,13 @@ fn render_diff_placeholder(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
     use crate::app::DiffStatus;
+    let accent = accent_of(app);
     let diff = app.diff();
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled(
             "changes",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" ({}) ", diff.files.len()),
@@ -553,7 +585,7 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
                 DiffStatus::Modified => Style::default().fg(Color::Yellow),
                 DiffStatus::Added | DiffStatus::Untracked => Style::default().fg(Color::Green),
                 DiffStatus::Deleted => Style::default().fg(Color::Red),
-                DiffStatus::Renamed => Style::default().fg(Color::Cyan),
+                DiffStatus::Renamed => Style::default().fg(Color::Indexed(75)),
                 DiffStatus::Other => Style::default().fg(Color::DarkGray),
             };
             ListItem::new(Line::from(vec![
@@ -566,8 +598,8 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
         .block(block)
         .highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(ACCENT)
+                .fg(SELECTION_FG)
+                .bg(SELECTION_BG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_spacing(HighlightSpacing::Always);
@@ -577,6 +609,7 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
+    let accent = accent_of(app);
     let title_text = match app.diff_selected_file() {
         Some(f) => format!("  diff · {}", f.path),
         None => "  diff".into(),
@@ -585,7 +618,7 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         Span::raw(" "),
         Span::styled(
             title_text,
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ]);
@@ -622,7 +655,7 @@ fn render_diff_line(line: &crate::app::DiffLine) -> Line<'static> {
     let style = match line.kind {
         DiffLineKind::Added => Style::default().fg(Color::Green),
         DiffLineKind::Removed => Style::default().fg(Color::Red),
-        DiffLineKind::Hunk => Style::default().fg(Color::Cyan),
+        DiffLineKind::Hunk => Style::default().fg(Color::Indexed(73)),
         DiffLineKind::Header => Style::default().fg(Color::DarkGray),
         DiffLineKind::Context => Style::default(),
     };
@@ -639,10 +672,15 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         .clone()
         .unwrap_or_else(|| "scaffl".into());
 
+    let accent = accent_of(app);
+    // Top bar's "scaffl" wordmark stays in the active view's accent
+    // — that single hue serves as the visual cue for which view is
+    // current, mirrored in panel titles below. Project name and
+    // branch sit on neutral foreground so they don't compete.
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
             "  scaffl ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
@@ -658,7 +696,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
             branch.to_string(),
-            Style::default().fg(ACCENT),
+            Style::default().fg(Color::Gray),
         ));
         let dirty = app.diff().files.len();
         if app.diff().loaded && dirty > 0 {
@@ -681,7 +719,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     let groups = build_groups(app);
     if groups.is_empty() {
-        let block = panel_block(" commands ");
+        let block = panel_block(" commands ", accent_of(app));
         let body = Paragraph::new(Line::from(Span::styled(
             "  (no items)",
             Style::default().fg(Color::DarkGray),
@@ -790,11 +828,12 @@ fn render_group(
     selected: Option<usize>,
     frame: &mut Frame,
 ) {
+    let accent = accent_of(app);
     let title_line = Line::from(vec![
         Span::raw(" "),
         Span::styled(
             group.label,
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" ({}) ", group.items.len()),
@@ -828,8 +867,8 @@ fn render_group(
         .block(block)
         .highlight_style(
             Style::default()
-                .fg(Color::Black)
-                .bg(ACCENT)
+                .fg(SELECTION_FG)
+                .bg(SELECTION_BG)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ")
@@ -916,11 +955,12 @@ fn run_indicator_style(run: Option<&RunState>) -> Style {
 // from block padding, so we don't waste rows we could be filling.
 
 fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
+    let accent = accent_of(app);
     let Some(item) = app.selected_item() else {
         // Selection-less state (e.g. an empty config). One panel
         // spanning the whole right column reads cleaner than an
         // empty info-over-output split.
-        let block = panel_block(" output ");
+        let block = panel_block(" output ", accent);
         frame.render_widget(block, area);
         return;
     };
@@ -932,11 +972,11 @@ fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
         // No info to show (e.g. service / container with no
         // metadata) — give the output panel the whole column so we
         // don't render an empty bordered slot.
-        render_output_for_item(app, item, frame, area);
+        render_output_for_item(app, item, accent, frame, area);
         return;
     }
-    render_info_panel(item, frame, info_area, info_body);
-    render_output_for_item(app, item, frame, output_area);
+    render_info_panel(item, accent, frame, info_area, info_body);
+    render_output_for_item(app, item, accent, frame, output_area);
 }
 
 /// Stack two panels vertically: info up top, output below. The info
@@ -958,18 +998,24 @@ fn info_inner_width(area: Rect) -> usize {
     (area.width as usize).saturating_sub(2 + 4)
 }
 
-fn render_info_panel(item: &Item, frame: &mut Frame, area: Rect, body: Vec<Line<'static>>) {
-    let title = info_panel_title(item);
+fn render_info_panel(
+    item: &Item,
+    accent: Color,
+    frame: &mut Frame,
+    area: Rect,
+    body: Vec<Line<'static>>,
+) {
+    let title = info_panel_title(item, accent);
     let block = panel_block_titled(title).padding(Padding::horizontal(2));
     frame.render_widget(Paragraph::new(body).block(block), area);
 }
 
-fn info_panel_title(item: &Item) -> Line<'static> {
+fn info_panel_title(item: &Item, accent: Color) -> Line<'static> {
     Line::from(vec![
         Span::raw(" "),
         Span::styled(
             item.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
         Span::styled(
@@ -982,11 +1028,12 @@ fn info_panel_title(item: &Item) -> Line<'static> {
     ])
 }
 
-fn render_output_for_item(app: &App, item: &Item, frame: &mut Frame, area: Rect) {
+fn render_output_for_item(app: &App, item: &Item, accent: Color, frame: &mut Frame, area: Rect) {
     match item.kind {
         ItemKind::Container => match app.lifecycle_run() {
-            Some(run) => render_run_buffer(run, frame, area),
+            Some(run) => render_run_buffer(run, accent, frame, area),
             None => render_idle_output(
+                accent,
                 frame,
                 area,
                 "no lifecycle action has run yet",
@@ -995,17 +1042,17 @@ fn render_output_for_item(app: &App, item: &Item, frame: &mut Frame, area: Rect)
         },
         ItemKind::Service => {
             if let Some(service) = app.selected_service() {
-                render_service_logs(service, frame, area);
+                render_service_logs(service, accent, frame, area);
             }
         }
         ItemKind::Watcher => {
             if let Some(watcher) = app.selected_watcher() {
-                render_watcher(watcher, frame, area);
+                render_watcher(watcher, accent, frame, area);
             }
         }
         ItemKind::Recipe | ItemKind::Script => match app.selected_run() {
-            Some(run) => render_run_buffer(run, frame, area),
-            None => render_idle_output(frame, area, "press enter to run", None),
+            Some(run) => render_run_buffer(run, accent, frame, area),
+            None => render_idle_output(accent, frame, area, "press enter to run", None),
         },
     }
 }
@@ -1013,8 +1060,14 @@ fn render_output_for_item(app: &App, item: &Item, frame: &mut Frame, area: Rect)
 /// Idle output panel — used by recipes / scripts / lifecycle row
 /// when nothing has been run yet this session. Title carries an
 /// "idle" badge instead of an exit code or duration.
-fn render_idle_output(frame: &mut Frame, area: Rect, body_text: &str, hint: Option<&str>) {
-    let title = output_pane_title(OutputStatus::Idle);
+fn render_idle_output(
+    accent: Color,
+    frame: &mut Frame,
+    area: Rect,
+    body_text: &str,
+    hint: Option<&str>,
+) {
+    let title = output_pane_title(OutputStatus::Idle, accent);
     let block = panel_block_titled(title).padding(Padding::horizontal(2));
     let mut lines = vec![Line::from(Span::styled(
         body_text.to_string(),
@@ -1030,8 +1083,8 @@ fn render_idle_output(frame: &mut Frame, area: Rect, body_text: &str, hint: Opti
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
-    let title = output_pane_title(OutputStatus::Run(run));
+fn render_run_buffer(run: &RunState, accent: Color, frame: &mut Frame, area: Rect) {
+    let title = output_pane_title(OutputStatus::Run(run), accent);
     let block = panel_block_titled(title).padding(Padding::horizontal(2));
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = run.buffer.len();
@@ -1227,12 +1280,12 @@ enum OutputStatus<'a> {
     Watcher(&'a WatcherPane),
 }
 
-fn output_pane_title(status: OutputStatus<'_>) -> Line<'static> {
+fn output_pane_title(status: OutputStatus<'_>, accent: Color) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![
         Span::raw(" "),
         Span::styled(
             "output",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
     ];
     let suffix: Vec<Span<'static>> = match status {
@@ -1242,7 +1295,7 @@ fn output_pane_title(status: OutputStatus<'_>) -> Line<'static> {
         )],
         OutputStatus::Run(run) => run_status_spans(run),
         OutputStatus::Service(svc) => service_status_spans(svc),
-        OutputStatus::Watcher(w) => watcher_status_spans(w),
+        OutputStatus::Watcher(w) => watcher_status_spans(w, accent),
     };
     spans.extend(suffix);
     Line::from(spans)
@@ -1310,8 +1363,8 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
     crate::ansi::ansi_to_line(&line.text, base)
 }
 
-fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
-    let title = output_pane_title(OutputStatus::Service(service));
+fn render_service_logs(service: &ServicePane, accent: Color, frame: &mut Frame, area: Rect) {
+    let title = output_pane_title(OutputStatus::Service(service), accent);
 
     // Horizontal-only padding — every output pane sits in the same
     // visual frame so all three (run / service / lifecycle) read
@@ -1393,12 +1446,12 @@ fn service_status_spans(service: &ServicePane) -> Vec<Span<'static>> {
     }
 }
 
-fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
+fn render_watcher(watcher: &WatcherPane, accent: Color, frame: &mut Frame, area: Rect) {
     // Watcher meta (recipe / globs / debounce) lives in the info
     // panel above. The output pane is purely the buffer from the
     // most recent run, with a placeholder when nothing has run yet —
     // matching the recipe / script / lifecycle pane shape.
-    let title = output_pane_title(OutputStatus::Watcher(watcher));
+    let title = output_pane_title(OutputStatus::Watcher(watcher), accent);
     let block = panel_block_titled(title).padding(Padding::horizontal(2));
 
     let max_lines = area.height.saturating_sub(2) as usize;
@@ -1432,7 +1485,7 @@ fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn watcher_status_spans(watcher: &WatcherPane) -> Vec<Span<'static>> {
+fn watcher_status_spans(watcher: &WatcherPane, accent: Color) -> Vec<Span<'static>> {
     match watcher.state {
         WatcherState::Idle => match watcher.last_exit_code {
             None => vec![Span::styled(
@@ -1466,7 +1519,7 @@ fn watcher_status_spans(watcher: &WatcherPane) -> Vec<Span<'static>> {
                 .unwrap_or(0.0);
             vec![Span::styled(
                 format!("  ● running {elapsed:.1}s "),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             )]
         }
     }
@@ -1483,7 +1536,7 @@ fn watcher_indicator_style(app: &App, name: &str) -> Style {
             Some(_) => Style::default().fg(Color::Red),
         },
         WatcherState::Debouncing => Style::default().fg(Color::Yellow),
-        WatcherState::Running => Style::default().fg(ACCENT),
+        WatcherState::Running => Style::default().fg(accent_of(app)),
     }
 }
 
@@ -1503,7 +1556,7 @@ fn service_indicator_style(app: &App, service: &str) -> Style {
 
 // ─────────────────────── palette ───────────────────────
 
-fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
+fn render_palette(app: &App, palette: &Palette, accent: Color, frame: &mut Frame) {
     let outer = frame.area();
     let area = centered_rect(outer, 60, 16);
     frame.render_widget(Clear, area);
@@ -1512,7 +1565,7 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
         Span::raw(" "),
         Span::styled(
             "run …",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled("  Esc cancels ", Style::default().fg(Color::DarkGray)),
     ]));
@@ -1528,13 +1581,13 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
         Span::raw(" "),
         Span::styled(
             "❯ ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             palette.input().to_string(),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::styled("│", Style::default().fg(ACCENT)),
+        Span::styled("│", Style::default().fg(accent)),
     ]);
     frame.render_widget(Paragraph::new(input_line), layout[0]);
 
@@ -1554,8 +1607,8 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
             let kind = kind_label(item.kind);
             let row_style = if idx == selected {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(ACCENT)
+                    .fg(SELECTION_FG)
+                    .bg(SELECTION_BG)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
@@ -1589,18 +1642,22 @@ fn render_palette(app: &App, palette: &Palette, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(body), layout[1]);
 }
 
-fn render_worktree_switcher(switcher: &crate::app::WorktreeSwitcher, frame: &mut Frame) {
+fn render_worktree_switcher(
+    switcher: &crate::app::WorktreeSwitcher,
+    accent: Color,
+    frame: &mut Frame,
+) {
     // Two sub-views: list (default) and the create form. They share
     // the same outer block; the form is taller because it has two
     // input rows plus a hint and an error line.
     if let Some(form) = switcher.creating.as_ref() {
-        render_switcher_form(form, frame);
+        render_switcher_form(form, accent, frame);
     } else {
-        render_switcher_list(switcher, frame);
+        render_switcher_list(switcher, accent, frame);
     }
 }
 
-fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Frame) {
+fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, accent: Color, frame: &mut Frame) {
     let total_rows = switcher.total_rows();
     let height = (total_rows as u16 + 4).min(20);
     let area = centered_rect(frame.area(), 60, height);
@@ -1613,7 +1670,7 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Fra
             Span::raw(" "),
             Span::styled(
                 "switch worktree",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
         ]));
@@ -1627,8 +1684,8 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Fra
         };
         let row_style = if idx == switcher.selected {
             Style::default()
-                .fg(Color::Black)
-                .bg(ACCENT)
+                .fg(SELECTION_FG)
+                .bg(SELECTION_BG)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
@@ -1662,11 +1719,11 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Fra
     };
     let row_style = if switcher.selected == new_idx {
         Style::default()
-            .fg(Color::Black)
-            .bg(ACCENT)
+            .fg(SELECTION_FG)
+            .bg(SELECTION_BG)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(ACCENT)
+        Style::default().fg(accent)
     };
     lines.push(Line::from(vec![
         Span::styled(prefix.to_string(), row_style),
@@ -1682,7 +1739,7 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, frame: &mut Fra
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_switcher_form(form: &crate::app::NewWorktreeForm, frame: &mut Frame) {
+fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame: &mut Frame) {
     use crate::app::NewFormField;
     let height = if form.error.is_some() { 11 } else { 9 };
     let area = centered_rect(frame.area(), 60, height);
@@ -1695,7 +1752,7 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, frame: &mut Frame) {
             Span::raw(" "),
             Span::styled(
                 "new worktree",
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
         ]));
@@ -1704,8 +1761,13 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, frame: &mut Frame) {
     let branch_focus = matches!(form.focus, NewFormField::Branch);
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
-    lines.push(field_row("path", &form.path_input, path_focus));
-    lines.push(field_row("branch", &form.branch_input, branch_focus));
+    lines.push(field_row("path", &form.path_input, path_focus, accent));
+    lines.push(field_row(
+        "branch",
+        &form.branch_input,
+        branch_focus,
+        accent,
+    ));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "tab toggle · enter create · esc back",
@@ -1723,9 +1785,9 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn field_row(label: &'static str, value: &str, focused: bool) -> Line<'static> {
+fn field_row(label: &'static str, value: &str, focused: bool, accent: Color) -> Line<'static> {
     let label_style = if focused {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -1735,7 +1797,7 @@ fn field_row(label: &'static str, value: &str, focused: bool) -> Line<'static> {
         Style::default()
     };
     let cursor_span = if focused {
-        Span::styled("█", Style::default().fg(ACCENT))
+        Span::styled("█", Style::default().fg(accent))
     } else {
         Span::raw("")
     };
@@ -1746,7 +1808,7 @@ fn field_row(label: &'static str, value: &str, focused: bool) -> Line<'static> {
     ])
 }
 
-fn render_args_prompt(prompt: &crate::app::ArgsPrompt, frame: &mut Frame) {
+fn render_args_prompt(prompt: &crate::app::ArgsPrompt, accent: Color, frame: &mut Frame) {
     let area = centered_rect(frame.area(), 60, 7);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1756,20 +1818,20 @@ fn render_args_prompt(prompt: &crate::app::ArgsPrompt, frame: &mut Frame) {
             Span::raw(" "),
             Span::styled(
                 format!("args for `{}`", prompt.item_name),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
         ]));
 
     let body = vec![
         Line::from(vec![
-            Span::styled("> ", Style::default().fg(ACCENT)),
+            Span::styled("> ", Style::default().fg(accent)),
             Span::styled(
                 prompt.input.clone(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             // Block-character cursor at the end so users see where input goes.
-            Span::styled("█", Style::default().fg(ACCENT)),
+            Span::styled("█", Style::default().fg(accent)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -1782,7 +1844,7 @@ fn render_args_prompt(prompt: &crate::app::ArgsPrompt, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(body).block(block), area);
 }
 
-fn render_confirm_modal(dialog: &crate::app::ConfirmDialog, frame: &mut Frame) {
+fn render_confirm_modal(dialog: &crate::app::ConfirmDialog, accent: Color, frame: &mut Frame) {
     // Center a fixed-size box. Width is generous enough to fit the
     // longest plausible body line; height is just the four content
     // rows + borders. Anything narrower than ~60 cols falls back to
@@ -1796,23 +1858,23 @@ fn render_confirm_modal(dialog: &crate::app::ConfirmDialog, frame: &mut Frame) {
             Span::raw(" "),
             Span::styled(
                 dialog.title.clone(),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
         ]));
 
     let yes_style = if dialog.yes_focused {
         Style::default()
-            .fg(Color::Black)
-            .bg(ACCENT)
+            .fg(SELECTION_FG)
+            .bg(SELECTION_BG)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let no_style = if !dialog.yes_focused {
         Style::default()
-            .fg(Color::Black)
-            .bg(ACCENT)
+            .fg(SELECTION_FG)
+            .bg(SELECTION_BG)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -1938,6 +2000,7 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     let hints = view_hints(app);
+    let accent = accent_of(app);
 
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4 + 4);
     // Leading view tag — `[control]` / `[terminals]` / `[diff]`.
@@ -1945,7 +2008,7 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
         format!("[{}]", app.view().tag()),
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
     ));
     spans.push(Span::raw(" "));
     spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
@@ -1958,7 +2021,7 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         }
         spans.push(Span::styled(
             (*key).to_string(),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
@@ -1971,11 +2034,11 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 
 // ─────────────────────── helpers ───────────────────────
 
-fn panel_block(title: &'static str) -> Block<'static> {
+fn panel_block(title: &'static str, accent: Color) -> Block<'static> {
     Block::default()
         .title(Span::styled(
             title,
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
