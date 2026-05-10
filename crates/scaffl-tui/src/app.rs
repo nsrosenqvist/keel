@@ -1093,16 +1093,7 @@ impl App {
         };
         match row {
             TerminalsRow::Service(name) => {
-                let session = self.terminals.session_name.clone();
-                let window = format!("svc:{name}");
-                let create_with = Some(format!(
-                    "docker compose exec -it {name} sh -c 'exec ${{SHELL:-/bin/sh}}'"
-                ));
-                self.pending_attach = Some(AttachRequest {
-                    session,
-                    window,
-                    create_with,
-                });
+                self.queue_service_attach(&name);
             }
             TerminalsRow::Terminal(term) => {
                 let session = self.terminals.session_name.clone();
@@ -1217,6 +1208,25 @@ impl App {
 
     pub fn take_pending_attach(&mut self) -> Option<AttachRequest> {
         self.pending_attach.take()
+    }
+
+    /// Queue an attach into the named compose service and jump to
+    /// the Terminals view so the user lands there after `ctrl+b d`
+    /// detaches. Used by both the control-center `enter`-on-service
+    /// path and the Terminals-view `enter`-on-service-row path so
+    /// the tmux invocation stays in one place.
+    pub fn queue_service_attach(&mut self, service: &str) {
+        let session = self.terminals.session_name.clone();
+        let window = format!("svc:{service}");
+        let create_with = Some(format!(
+            "docker compose exec -it {service} sh -c 'exec ${{SHELL:-/bin/sh}}'"
+        ));
+        self.pending_attach = Some(AttachRequest {
+            session,
+            window,
+            create_with,
+        });
+        self.view = View::Terminals;
     }
 
     pub fn diff(&self) -> &DiffState {
@@ -2020,6 +2030,21 @@ mod tests {
         assert_eq!(DiffLineKind::classify("- removed"), DiffLineKind::Removed);
         assert_eq!(DiffLineKind::classify(" context"), DiffLineKind::Context);
         assert_eq!(DiffLineKind::classify(""), DiffLineKind::Context);
+    }
+
+    #[test]
+    fn queue_service_attach_jumps_view_and_sets_request() {
+        let mut app = App::new(cfg());
+        app.queue_service_attach("app");
+        assert_eq!(app.view(), View::Terminals);
+        let req = app.take_pending_attach().unwrap();
+        assert_eq!(req.window, "svc:app");
+        assert!(
+            req.create_with
+                .as_deref()
+                .unwrap()
+                .contains("docker compose")
+        );
     }
 
     #[test]

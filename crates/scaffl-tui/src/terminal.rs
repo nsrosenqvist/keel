@@ -287,8 +287,19 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 app.flash = Some(launch_message(rej));
             }
         }
-        // `U`: up all. No lowercase counterpart — `enter` ups the
-        // selected service, so a separate `u` would be redundant.
+        // `u`: up the selected service. Pairs with `U` (up all) just
+        // like `r`/`R` and `s`/`S`. Enter on a service used to do
+        // this; it now attaches instead, so explicit `u` for "up
+        // without attaching" is back.
+        KeyCode::Char('u') => {
+            if let Some(service) = app.selected_service().map(|s| s.name.clone())
+                && let Err(rej) = app
+                    .run_service_action(scaffl_container::service_action::UP, &[service.as_str()])
+                    .await
+            {
+                app.flash = Some(launch_message(rej));
+            }
+        }
         KeyCode::Char('U') => {
             if let Err(rej) = app
                 .run_service_action(scaffl_container::service_action::UP, &[])
@@ -316,7 +327,9 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Enter => {
             // Enter routing:
             //   container         → up all (same as `U`)
-            //   service           → up that service via lifecycle action
+            //   service           → attach into a tmux pane (jumps
+            //                       to the Terminals view; ctrl+b d
+            //                       returns)
             //   recipe / script   → either open args prompt (if forward_args
             //                       and not already running) or launch
             //   watcher           → no-op (watchers fire on file change)
@@ -331,11 +344,11 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                     app.flash = Some(launch_message(rej));
                 }
             } else if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
-                if let Err(rej) = app
-                    .run_service_action(scaffl_container::service_action::UP, &[service.as_str()])
-                    .await
-                {
-                    app.flash = Some(launch_message(rej));
+                ensure_tmux_probed(app).await;
+                if app.terminals().tmux_available == Some(false) {
+                    app.flash = Some("tmux not installed — install it to attach".into());
+                } else {
+                    app.queue_service_attach(&service);
                 }
             } else if app.selected_accepts_args() && !selected_is_running(app) {
                 // Discoverability path: a `forward_args = true` row gets

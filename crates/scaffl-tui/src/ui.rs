@@ -1797,30 +1797,25 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 }
 
 fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
-    let running = app.selected_run().is_some_and(|r| !r.is_done())
-        || app.lifecycle_run().is_some_and(|r| !r.is_done());
     let mode_palette = app.mode() == Mode::Palette;
-    let on_service = app.selected_service().is_some();
 
     let mut hints: Vec<(&str, &str)> = vec![("↑↓", "nav")];
     if !mode_palette {
-        if on_service {
-            hints.push(("enter", "up"));
-            hints.push(("r", "restart"));
-            if running {
-                hints.push(("s", "stop run"));
-            } else {
-                hints.push(("s", "stop"));
-            }
-        } else {
-            hints.push(("enter", "run"));
-            if running {
-                hints.push(("s", "stop run"));
-            }
-        }
-        hints.push(("U", "up all"));
-        hints.push(("R", "restart all"));
-        hints.push(("S", "stop all"));
+        // Enter label adapts to the row kind so users see what
+        // pressing it will do without consulting docs.
+        let enter_label = match app.selected_item().map(|i| i.kind) {
+            Some(crate::app::ItemKind::Container) => "up all",
+            Some(crate::app::ItemKind::Service) => "attach",
+            Some(crate::app::ItemKind::Recipe | crate::app::ItemKind::Script) => "run",
+            _ => "select",
+        };
+        hints.push(("enter", enter_label));
+        // Combined single/all keybinds — lowercase acts on the
+        // selected service, uppercase on every service. Pairing
+        // them in one hint keeps the legend short.
+        hints.push(("u/U", "up"));
+        hints.push(("r/R", "restart"));
+        hints.push(("s/S", "stop"));
         hints.push(("D", "down all"));
         // View / worktree switches at the end so they never compete
         // with the action keys above for short-list real estate.
