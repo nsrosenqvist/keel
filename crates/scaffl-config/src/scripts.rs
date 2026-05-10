@@ -30,6 +30,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// A single script-defined command.
+///
+/// The `cwd` / `optional` / `interactive` fields are populated by the
+/// frontmatter parser but are only consulted by the install runner —
+/// `.scaffl/commands/` execution ignores them. They live on the shared
+/// struct so authors don't have to remember which keys go where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptCommand {
     pub name: String,
@@ -40,6 +45,15 @@ pub struct ScriptCommand {
     pub env: BTreeMap<String, String>,
     pub needs: Vec<String>,
     pub forward_args: bool,
+    /// Working directory the step runs in. Relative paths resolve
+    /// against the project root. Honoured by the install runner.
+    pub cwd: Option<String>,
+    /// When true, a non-zero exit logs a warning and the install
+    /// continues. Install-only.
+    pub optional: bool,
+    /// When true, the install renderer hands the terminal directly to
+    /// this step (inherited stdio) so it can prompt the user.
+    pub interactive: bool,
 }
 
 impl ScriptCommand {
@@ -70,6 +84,9 @@ impl ScriptCommand {
             env: BTreeMap::new(),
             needs: Vec::new(),
             forward_args: false,
+            cwd: None,
+            optional: false,
+            interactive: false,
         };
         parse_frontmatter(&content, &mut cmd, path)?;
         Ok(cmd)
@@ -114,6 +131,9 @@ fn apply_frontmatter_kv(
         "in" | "service" => cmd.service = Some(value.to_string()),
         "tty" => cmd.tty = parse_bool(value, key, path)?,
         "forward_args" => cmd.forward_args = parse_bool(value, key, path)?,
+        "cwd" => cmd.cwd = Some(value.to_string()),
+        "optional" => cmd.optional = parse_bool(value, key, path)?,
+        "interactive" => cmd.interactive = parse_bool(value, key, path)?,
         "needs" => {
             cmd.needs.extend(
                 value
@@ -183,6 +203,9 @@ mod tests {
              # @env: KEY=val\n\
              # @forward-args: true\n\
              # @tty: yes\n\
+             # @cwd: subdir\n\
+             # @optional: yes\n\
+             # @interactive: false\n\
              php artisan migrate \"$@\"\n",
         );
         let cmd = ScriptCommand::from_path(&p).unwrap();
@@ -197,6 +220,9 @@ mod tests {
         assert_eq!(cmd.env.get("KEY").map(String::as_str), Some("val"));
         assert!(cmd.forward_args);
         assert!(cmd.tty);
+        assert_eq!(cmd.cwd.as_deref(), Some("subdir"));
+        assert!(cmd.optional);
+        assert!(!cmd.interactive);
     }
 
     #[test]

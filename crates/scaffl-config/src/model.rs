@@ -4,6 +4,7 @@
 //! validated, and then handed (immutable) to the runtime. They expose no
 //! behaviour beyond accessors. Behaviour lives in `scaffl-runtime`.
 
+use crate::install::InstallConfig;
 use crate::scripts::ScriptCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -65,6 +66,13 @@ pub struct Config {
     /// [`crate::loader::load_project`]; never serialized.
     #[serde(skip)]
     pub scripts: BTreeMap<String, ScriptCommand>,
+
+    /// Install-time configuration: ordered step plan plus the steps
+    /// discovered under `.scaffl/install/`. Authors who don't ship an
+    /// install flow can ignore this entirely — `[install]` defaults to
+    /// "no steps, hooks still installed automatically".
+    #[serde(default)]
+    pub install: InstallConfig,
 }
 
 /// Worktree isolation configuration.

@@ -10,14 +10,9 @@
 
 use anyhow::{Context, Result};
 use scaffl_config::Config;
+use scaffl_config::managed_block;
 use scaffl_runtime::Env;
 use std::path::{Path, PathBuf};
-
-/// Markers used to delimit the scaffl-managed block inside a target
-/// file. Matched verbatim — keep them stable so existing files round-
-/// trip cleanly.
-const BEGIN_MARKER: &str = "# >>> scaffl-managed (auto-generated; do not edit by hand) >>>";
-const END_MARKER: &str = "# <<< scaffl-managed <<<";
 
 /// Resolve the project env (process + .env files + `[env]` section)
 /// and either print sorted `KEY=VALUE` pairs to stdout (default) or
@@ -90,66 +85,16 @@ fn exportable_keys(config: &Config) -> std::collections::BTreeSet<String> {
     keys
 }
 
-/// Idempotent write: produces the desired content, compares against
-/// what's on disk, and only writes when they differ. Returns `true`
-/// if the file was modified, `false` if it was already up to date.
-/// Avoids touching mtime on no-op runs — callers fire this on every
-/// scaffl invocation and surrounding tooling (file watchers, build
-/// systems) shouldn't see spurious changes.
+/// Idempotent write: builds the dotenv body from `pairs` and asks the
+/// shared `managed_block` helper to splice it into `path`. Returns
+/// `true` when the file changed, `false` when it was already up to
+/// date. Mtime is left alone on no-op runs.
 fn write_managed_block(path: &Path, pairs: &[(&str, &str)]) -> Result<bool> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let preserved = strip_managed_block(&existing);
-
-    let mut content = preserved;
-    if !content.is_empty() && !content.ends_with('\n') {
-        content.push('\n');
-    }
-    content.push_str(BEGIN_MARKER);
-    content.push('\n');
+    let mut body = String::new();
     for (k, v) in pairs {
-        content.push_str(&format!("{}={}\n", k, format_value(v)));
+        body.push_str(&format!("{}={}\n", k, format_value(v)));
     }
-    content.push_str(END_MARKER);
-    content.push('\n');
-
-    if content == existing {
-        return Ok(false);
-    }
-    std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
-    Ok(true)
-}
-
-/// Drop the scaffl-managed block (markers and all lines between)
-/// while preserving everything else. Tolerates absent block.
-fn strip_managed_block(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut inside = false;
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# >>> scaffl-managed") {
-            inside = true;
-            continue;
-        }
-        if trimmed.starts_with("# <<< scaffl-managed") {
-            inside = false;
-            continue;
-        }
-        if !inside {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    // Drop trailing empty lines created by the strip — the writer
-    // adds its own trailing newline.
-    while out.ends_with("\n\n") {
-        out.pop();
-    }
-    out
+    managed_block::write(path, &body).with_context(|| format!("write {}", path.display()))
 }
 
 /// Quote dotenv values containing whitespace, quotes, or backslashes
@@ -180,6 +125,7 @@ fn format_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scaffl_config::managed_block::{BEGIN_MARKER, END_MARKER};
     use tempfile::TempDir;
 
     #[test]
@@ -200,21 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_round_trips() {
-        let content =
-            "A=1\n# >>> scaffl-managed (auto) >>>\nFOO=bar\n# <<< scaffl-managed <<<\nB=2\n";
-        let stripped = strip_managed_block(content);
-        assert_eq!(stripped, "A=1\nB=2\n");
-    }
-
-    #[test]
-    fn strip_handles_absent_block() {
-        let content = "A=1\nB=2\n";
-        assert_eq!(strip_managed_block(content), "A=1\nB=2\n");
-    }
-
-    #[test]
-    fn write_creates_block_in_new_file() {
+    fn write_emits_dotenv_pairs_inside_managed_block() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("subdir").join(".env");
         let pairs = vec![("APP_PORT", "8085"), ("SCAFFL_WORKTREE_SLUG", "feature-x")];
@@ -227,52 +159,17 @@ mod tests {
     }
 
     #[test]
-    fn write_preserves_user_content_around_block() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".env");
-        std::fs::write(&path, "USER_VAR=keep\nSECRET=keep-this\n").unwrap();
-        let pairs = vec![("APP_PORT", "8085")];
-        write_managed_block(&path, &pairs).unwrap();
-        let body = std::fs::read_to_string(&path).unwrap();
-        assert!(body.contains("USER_VAR=keep"));
-        assert!(body.contains("SECRET=keep-this"));
-        assert!(body.contains("APP_PORT=8085"));
-    }
-
-    #[test]
     fn write_is_idempotent_on_unchanged_content() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".env");
         let pairs = vec![("APP_PORT", "8085")];
         let first = write_managed_block(&path, &pairs).unwrap();
         assert!(first, "first write should report modified");
-        // Capture mtime before second write.
         let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
-        // Re-running with the same pairs must NOT touch the file.
         std::thread::sleep(std::time::Duration::from_millis(10));
         let second = write_managed_block(&path, &pairs).unwrap();
         assert!(!second, "second write should report unchanged");
         let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
         assert_eq!(mtime_before, mtime_after, "mtime must not advance");
-    }
-
-    #[test]
-    fn write_replaces_old_block_in_place() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".env");
-        std::fs::write(
-            &path,
-            "USER_VAR=keep\n# >>> scaffl-managed (auto) >>>\nAPP_PORT=8080\n# <<< scaffl-managed <<<\nMORE=ok\n",
-        )
-        .unwrap();
-        let pairs = vec![("APP_PORT", "8085")];
-        write_managed_block(&path, &pairs).unwrap();
-        let body = std::fs::read_to_string(&path).unwrap();
-        assert!(body.contains("APP_PORT=8085"));
-        assert!(!body.contains("APP_PORT=8080"));
-        assert!(body.contains("USER_VAR=keep"));
-        assert!(body.contains("MORE=ok"));
-        // Exactly one managed block.
-        assert_eq!(body.matches(BEGIN_MARKER).count(), 1);
     }
 }

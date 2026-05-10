@@ -844,6 +844,9 @@ mod tests {
                 env: Default::default(),
                 needs: Vec::new(),
                 forward_args: false,
+                cwd: None,
+                optional: false,
+                interactive: false,
             },
         );
         let executor = Executor::new(
@@ -907,6 +910,9 @@ mod tests {
                 env: env_overrides,
                 needs: Vec::new(),
                 forward_args: false,
+                cwd: None,
+                optional: false,
+                interactive: false,
             },
         );
         let executor = Executor::new(
@@ -954,6 +960,9 @@ mod tests {
                 env: Default::default(),
                 needs: Vec::new(),
                 forward_args: true,
+                cwd: None,
+                optional: false,
+                interactive: false,
             },
         );
         let cfg_arc = Arc::new(cfg_inner);
@@ -1007,6 +1016,9 @@ mod tests {
                 env: Default::default(),
                 needs: Vec::new(),
                 forward_args: false,
+                cwd: None,
+                optional: false,
+                interactive: false,
             },
         );
         let executor = Executor::new(

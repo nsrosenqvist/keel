@@ -4,6 +4,7 @@
 //! terms of [`Config`] and never speak TOML directly.
 
 use crate::error::ConfigError;
+use crate::install::discover_install_steps;
 use crate::model::Config;
 use crate::scripts::ScriptCommand;
 use std::collections::BTreeMap;
@@ -95,6 +96,12 @@ pub fn load_project_with_slug(
     let scripts_dir = project_root.join(".scaffl").join("commands");
     if scripts_dir.is_dir() {
         config.scripts = discover_scripts(&scripts_dir)?;
+    }
+    let install_dir = project_root.join(".scaffl").join("install");
+    if install_dir.is_dir() {
+        let (discovered, order) = discover_install_steps(&install_dir)?;
+        config.install.discovered = discovered;
+        config.install.discovered_order = order;
     }
     config.validate().map_err(ConfigError::Invalid)?;
     Ok(config)

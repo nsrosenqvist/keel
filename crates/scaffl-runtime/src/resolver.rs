@@ -187,6 +187,9 @@ mod tests {
                 env: BTreeMap::new(),
                 needs: Vec::new(),
                 forward_args: false,
+                cwd: None,
+                optional: false,
+                interactive: false,
             },
         );
         let r = Resolver::new(&cfg, ResolverContext::default());
