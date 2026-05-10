@@ -191,20 +191,32 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         }
         format!("{}:{}", req.session, req.window)
     };
-    // Pin per-session options so detach doesn't unintentionally
-    // kill the session. Users with `destroy-unattached on` in
-    // their global tmux config would otherwise see the session
-    // (and every shell in it) vanish the moment scaffl detached
-    // — definitely not what "ctrl+b d" should do. We only touch
-    // this one session; the global config stays untouched.
+    // Pin options that decide whether ctrl+b d ends up killing
+    // the session or its windows. Users with `destroy-unattached
+    // on` (or rebound `d` to `kill-session`) in their global
+    // tmux config would otherwise see every shell vanish the
+    // moment scaffl detached — definitely not what "detach"
+    // should do. Belt and braces:
+    //
+    //   - per-session destroy-unattached off (always survives detach)
+    //   - per-session remain-on-exit off (default; explicit)
+    //   - bind ctrl+b d to detach-client (in case user rebound it)
+    //
+    // The keybinding is server-global; it leaves a small
+    // footprint on the user's tmux server, but since we're
+    // setting it to tmux's *default* behaviour, any user who
+    // rebound `d` did so by writing config that runs at server
+    // start — they'll get their override back on the next tmux
+    // server restart. This is the smallest defensive write that
+    // still catches the rebind case.
+    for arg_set in [
+        ["set-option", "-t", &req.session, "destroy-unattached", "off"],
+        ["set-option", "-t", &req.session, "remain-on-exit", "off"],
+    ] {
+        let _ = Command::new("tmux").args(arg_set).status().await;
+    }
     let _ = Command::new("tmux")
-        .args([
-            "set-option",
-            "-t",
-            &req.session,
-            "destroy-unattached",
-            "off",
-        ])
+        .args(["bind-key", "d", "detach-client"])
         .status()
         .await;
 
