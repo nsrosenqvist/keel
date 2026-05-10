@@ -7,6 +7,7 @@ members = [
     "crates/scaffl-runtime",
     "crates/scaffl-tui",
     "crates/scaffl-cache",
+    "crates/scaffl-agents",
     "crates/scaffl-hooks",
 ]
 
@@ -26,6 +27,7 @@ scaffl-config = { path = "crates/scaffl-config", version = "0.0.1" }
 scaffl-container = { path = "crates/scaffl-container", version = "0.0.1" }
 scaffl-runtime = { path = "crates/scaffl-runtime", version = "0.0.1" }
 scaffl-cache = { path = "crates/scaffl-cache", version = "0.0.1" }
+scaffl-agents = { path = "crates/scaffl-agents", version = "0.0.1" }
 scaffl-hooks = { path = "crates/scaffl-hooks", version = "0.0.1" }
 scaffl-tui = { path = "crates/scaffl-tui", version = "0.0.1" }
 
@@ -79,6 +81,7 @@ dirs = "5"
 dotenvy = "0.15"
 regex = "1"
 walkdir = "2"
+sha2 = "0.10"
 
 # Tracing / logging
 tracing = "0.1"
