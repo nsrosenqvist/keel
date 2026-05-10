@@ -41,10 +41,6 @@ use scaffl_runtime::OutputStream;
 const SIDEBAR_RATIO: u16 = 28;
 const TOP_BAR_HEIGHT: u16 = 1;
 const STATUS_BAR_HEIGHT: u16 = 1;
-/// Fixed height of the details panel under the sidebar list. Big
-/// enough for the kind tag, desc, in, and run line; smaller details
-/// (env, needs) wrap or get cut by the panel border.
-const DETAILS_HEIGHT: u16 = 12;
 
 /// Accent colour used for active highlights and key hints.
 const ACCENT: Color = Color::Cyan;
@@ -93,8 +89,11 @@ pub fn render(app: &App, frame: &mut Frame) {
     }
 }
 
-/// Control-center body: sidebar (list + details panel) + right pane.
-/// Today's home view; everything below the top bar today.
+/// Control-center body: sidebar takes the full left column; the
+/// right column is split vertically into an info panel (kv pairs +
+/// description) on top and an output panel underneath. The legacy
+/// bottom-left "details" panel is gone — the same data now lives
+/// above the output for the selected item.
 fn render_control_center(app: &App, frame: &mut Frame, area: Rect) {
     let body = Layout::default()
         .direction(Direction::Horizontal)
@@ -103,21 +102,7 @@ fn render_control_center(app: &App, frame: &mut Frame, area: Rect) {
             Constraint::Percentage(100 - SIDEBAR_RATIO),
         ])
         .split(area);
-
-    // Left column: list on top, static details panel below.
-    let left = if app.selected_item().is_some() {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(DETAILS_HEIGHT)])
-            .split(body[0])
-    } else {
-        std::rc::Rc::from([body[0]])
-    };
-    render_sidebar(app, frame, left[0]);
-    if left.len() > 1 {
-        render_details(app, frame, left[1]);
-    }
-
+    render_sidebar(app, frame, body[0]);
     render_right_pane(app, frame, body[1]);
 }
 
@@ -323,26 +308,15 @@ fn collapse_home(path: &str) -> String {
     path.to_string()
 }
 
+/// Right column for the terminals view: info panel on top
+/// (selected row's identity + the command we'd run on attach +
+/// detach hint), preview panel below (tmux capture-pane output, or
+/// a fallback "press enter to attach" placeholder when there's
+/// nothing to show yet).
 fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     let rows = app.terminals_rows();
     let selected_row = rows.get(app.terminals().selected);
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            "tmux".to_string(),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  session: {}", app.terminals().session_name),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::raw(" "),
-    ]);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
 
-    // Try to surface a tmux pane preview when one exists — much
-    // more useful than static "press enter to attach" text once
-    // the user has attached at least once.
     let preview_index = match selected_row {
         Some(crate::app::TerminalsRow::Window(w)) => Some(w.index),
         Some(crate::app::TerminalsRow::Service(name)) => app
@@ -355,101 +329,124 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     };
     let preview = preview_index.and_then(|i| app.terminals_preview(i));
 
+    let info_body = build_terminals_info_body(app, selected_row);
+    let [info_area, preview_area] = split_info_output(area, info_body.len());
+
+    let info_title = terminals_info_title(app, selected_row);
+    let info_block = panel_block_titled(info_title).padding(Padding::horizontal(2));
+    frame.render_widget(Paragraph::new(info_body).block(info_block), info_area);
+
+    render_terminals_preview(preview, frame, preview_area);
+}
+
+fn terminals_info_title(
+    app: &App,
+    selected_row: Option<&crate::app::TerminalsRow>,
+) -> Line<'static> {
+    let label = match selected_row {
+        Some(crate::app::TerminalsRow::Window(w)) => w.name.clone(),
+        Some(crate::app::TerminalsRow::Service(name)) => format!("svc:{name}"),
+        Some(crate::app::TerminalsRow::NewSentinel) => "+ new shell".into(),
+        None => "tmux".into(),
+    };
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(label, Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  session: {}", app.terminals().session_name),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+    ])
+}
+
+fn build_terminals_info_body(
+    app: &App,
+    selected_row: Option<&crate::app::TerminalsRow>,
+) -> Vec<Line<'static>> {
     let detach_hint = "ctrl+b d returns to scaffl";
     let mut lines: Vec<Line<'static>> = Vec::new();
     match selected_row {
-        Some(crate::app::TerminalsRow::Service(name)) => match preview {
-            Some(p) if !p.is_empty() => {
-                lines.push(Line::from(Span::styled(
-                    format!("svc:{name}  ·  last visible:"),
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                let body_height = area.height.saturating_sub(6) as usize;
-                lines.extend(preview_lines(p, body_height));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "enter re-attaches  ·  d closes the window",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            _ => {
-                lines.push(Line::from(Span::styled(
-                    format!("attach into service `{name}`"),
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!("→ docker compose exec -it {name} $SHELL"),
-                    Style::default().fg(Color::DarkGray),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    detach_hint,
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        },
-        Some(crate::app::TerminalsRow::Window(w)) => match preview {
-            Some(p) if !p.is_empty() => {
-                let header = match w.cwd.as_deref() {
-                    Some(cwd) => format!("{}  ·  {}", w.name, collapse_home(cwd)),
-                    None => w.name.clone(),
-                };
-                lines.push(Line::from(Span::styled(
-                    header,
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                let body_height = area.height.saturating_sub(6) as usize;
-                lines.extend(preview_lines(p, body_height));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "enter re-attaches  ·  d closes the window",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            _ => {
-                lines.push(Line::from(Span::styled(
-                    format!("attach into window `{}`", w.name),
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        "→ tmux attach -t {}:{}",
-                        app.terminals().session_name,
-                        w.index
-                    ),
-                    Style::default().fg(Color::DarkGray),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    detach_hint,
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        },
-        Some(crate::app::TerminalsRow::NewSentinel) => {
-            lines.push(Line::from(Span::styled(
-                "open a new shell",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
+        Some(crate::app::TerminalsRow::Service(name)) => {
+            lines.push(kv(
+                "command",
+                &format!("docker compose exec -it {name} $SHELL"),
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                format!("→ exec $SHELL in {}", app.project_root().display()),
+                "enter re-attaches  ·  d closes the window",
                 Style::default().fg(Color::DarkGray),
             )));
+            lines.push(Line::from(Span::styled(
+                detach_hint.to_string(),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(crate::app::TerminalsRow::Window(w)) => {
+            if let Some(cwd) = w.cwd.as_deref() {
+                lines.push(kv("cwd", &collapse_home(cwd)));
+            }
+            lines.push(kv(
+                "attach",
+                &format!(
+                    "tmux attach -t {}:{}",
+                    app.terminals().session_name,
+                    w.index
+                ),
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                detach_hint,
+                "enter re-attaches  ·  d closes the window",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                detach_hint.to_string(),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        Some(crate::app::TerminalsRow::NewSentinel) => {
+            lines.push(kv(
+                "command",
+                &format!("exec $SHELL in {}", app.project_root().display()),
+            ));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "enter opens a new shell",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                detach_hint.to_string(),
                 Style::default().fg(Color::DarkGray),
             )));
         }
         None => {}
     }
+    lines
+}
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+fn render_terminals_preview(preview: Option<&Vec<String>>, frame: &mut Frame, area: Rect) {
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "preview",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ]);
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
+
+    let body: Vec<Line<'static>> = match preview {
+        Some(p) if !p.is_empty() => {
+            let body_height = area.height.saturating_sub(2) as usize;
+            preview_lines(p, body_height)
+        }
+        _ => vec![Line::from(Span::styled(
+            "press enter to attach — preview appears after the first attach",
+            Style::default().fg(Color::DarkGray),
+        ))],
+    };
+
+    frame.render_widget(Paragraph::new(body).block(block), area);
 }
 
 /// Trim a captured pane's visible content to the last `max_rows`
@@ -592,7 +589,7 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         ),
         Span::raw(" "),
     ]);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
 
     let lines: Vec<Line<'static>> = match app.diff_selected_file() {
         Some(f) => match app.diff_cache_for(&f.path) {
@@ -910,28 +907,91 @@ fn run_indicator_style(run: Option<&RunState>) -> Style {
 }
 
 // ─────────────────────── right pane ───────────────────────
+//
+// Two stacked panels: a small "info" panel up top with the kv
+// pairs + description that used to live in the bottom-left
+// details panel, and an "output" panel underneath that hosts the
+// run / service / watcher buffers. Padding is horizontal-only —
+// vertical breathing room comes from blank rows in the body, not
+// from block padding, so we don't waste rows we could be filling.
 
 fn render_right_pane(app: &App, frame: &mut Frame, area: Rect) {
-    // Right pane is purely selection-driven: services tail their
-    // pane, watchers their buffer, recipes / scripts their RunState,
-    // and the synthetic container row hosts compose lifecycle output.
-    // No bottom split — the lifecycle output lives in its own row
-    // now, navigated to like anything else.
-    render_focused_buffer(app, frame, area);
-}
-
-/// Paint the buffer for whatever's selected. Each kind has its own
-/// source.
-fn render_focused_buffer(app: &App, frame: &mut Frame, area: Rect) {
     let Some(item) = app.selected_item() else {
+        // Selection-less state (e.g. an empty config). One panel
+        // spanning the whole right column reads cleaner than an
+        // empty info-over-output split.
         let block = panel_block(" output ");
         frame.render_widget(block, area);
         return;
     };
+
+    let info_inner_width = info_inner_width(area);
+    let info_body = build_info_body(app, item, info_inner_width);
+    let [info_area, output_area] = split_info_output(area, info_body.len());
+    if info_body.is_empty() {
+        // No info to show (e.g. service / container with no
+        // metadata) — give the output panel the whole column so we
+        // don't render an empty bordered slot.
+        render_output_for_item(app, item, frame, area);
+        return;
+    }
+    render_info_panel(item, frame, info_area, info_body);
+    render_output_for_item(app, item, frame, output_area);
+}
+
+/// Stack two panels vertically: info up top, output below. The info
+/// panel sizes to its content (borders + rows) but is capped so the
+/// output always gets at least 5 rows — a recipe with twenty env
+/// vars shouldn't push the buffer off-screen.
+fn split_info_output(area: Rect, info_rows: usize) -> [Rect; 2] {
+    let max_info_height = area.height.saturating_sub(5).max(3);
+    let info_h = ((info_rows as u16) + 2).min(max_info_height);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(info_h), Constraint::Min(1)])
+        .split(area);
+    [chunks[0], chunks[1]]
+}
+
+fn info_inner_width(area: Rect) -> usize {
+    // Borders eat 2 cols, horizontal padding eats 4 (2 each side).
+    (area.width as usize).saturating_sub(2 + 4)
+}
+
+fn render_info_panel(item: &Item, frame: &mut Frame, area: Rect, body: Vec<Line<'static>>) {
+    let title = info_panel_title(item);
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
+    frame.render_widget(Paragraph::new(body).block(block), area);
+}
+
+fn info_panel_title(item: &Item) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            item.name.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            kind_label(item.kind),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ),
+        Span::raw(" "),
+    ])
+}
+
+fn render_output_for_item(app: &App, item: &Item, frame: &mut Frame, area: Rect) {
     match item.kind {
         ItemKind::Container => match app.lifecycle_run() {
             Some(run) => render_run_buffer(run, frame, area),
-            None => render_idle_container(item, frame, area),
+            None => render_idle_output(
+                frame,
+                area,
+                "no lifecycle action has run yet",
+                Some("U up all · D down all · R restart all · S stop all"),
+            ),
         },
         ItemKind::Service => {
             if let Some(service) = app.selected_service() {
@@ -945,67 +1005,34 @@ fn render_focused_buffer(app: &App, frame: &mut Frame, area: Rect) {
         }
         ItemKind::Recipe | ItemKind::Script => match app.selected_run() {
             Some(run) => render_run_buffer(run, frame, area),
-            None => render_idle_buffer(item, frame, area),
+            None => render_idle_output(frame, area, "press enter to run", None),
         },
     }
 }
 
-/// Placeholder for the container row when no lifecycle action has
-/// run yet. Tells the user how to wake the row up.
-fn render_idle_container(item: &Item, frame: &mut Frame, area: Rect) {
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            item.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  idle".to_string(), Style::default().fg(Color::DarkGray)),
-        Span::raw(" "),
-    ]);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
-    let body = Paragraph::new(vec![
-        Line::from(Span::styled(
-            "no lifecycle action has run yet",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "U up all · D down all · R restart all · S stop all",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ])
-    .block(block);
-    frame.render_widget(body, area);
-}
-
-/// Placeholder for a recipe / script that's never been launched in
-/// this session. Tells the user how to start it without leaving the
-/// pane empty.
-fn render_idle_buffer(item: &Item, frame: &mut Frame, area: Rect) {
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            item.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  not yet run".to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::raw(" "),
-    ]);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
-    let body = Paragraph::new(Line::from(Span::styled(
-        "press enter to run",
+/// Idle output panel — used by recipes / scripts / lifecycle row
+/// when nothing has been run yet this session. Title carries an
+/// "idle" badge instead of an exit code or duration.
+fn render_idle_output(frame: &mut Frame, area: Rect, body_text: &str, hint: Option<&str>) {
+    let title = output_pane_title(OutputStatus::Idle);
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
+    let mut lines = vec![Line::from(Span::styled(
+        body_text.to_string(),
         Style::default().fg(Color::DarkGray),
-    )))
-    .block(block);
-    frame.render_widget(body, area);
+    ))];
+    if let Some(h) = hint {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            h.to_string(),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
-    let title = run_pane_title(run);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    let title = output_pane_title(OutputStatus::Run(run));
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = run.buffer.len();
     let start = total.saturating_sub(max_lines);
@@ -1021,61 +1048,14 @@ fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-// ─────────────────────── details panel ───────────────────────
+// ─────────────────────── info panel body ───────────────────────
 
-/// The static "what is this" box that lives under the sidebar list.
-/// Mirrors the data the old right-pane "details" view rendered, but
-/// limited to recipe / script / service / watcher metadata — no
-/// dynamic state (timing / exit code), since the output pane title
-/// already carries that.
-fn render_details(app: &App, frame: &mut Frame, area: Rect) {
-    let block = panel_block(" details ");
-    // Description gets the panel's full inner width minus the kv
-    // indent (2 cols) and the right border breathing room (1 col).
-    // We pre-wrap it ourselves because ratatui's `Wrap` would
-    // also wrap the kv lines, where it loses the hanging indent.
-    let inner_width = area.width.saturating_sub(2 + 2 + 1) as usize;
-    let paragraph = Paragraph::new(build_detail_lines(app, inner_width)).block(block);
-    frame.render_widget(paragraph, area);
-}
-
-/// New layout (per user feedback):
-///   <name>  <kind>          ← header
-///                           ← blank
-///   <description...>        ← wrapped paragraph, full width, no `desc` label
-///   <continuation...>
-///                           ← blank
-///   in              host    ← kv lines
-///   forward_args    true
-///
-/// `run` is omitted entirely — long run-strings dominated the panel,
-/// and the description should explain intent at a higher level than
-/// the literal command anyway.
-fn build_detail_lines(app: &App, wrap_width: usize) -> Vec<Line<'static>> {
-    let Some(item) = app.selected_item() else {
-        return vec![Line::from(Span::styled(
-            "  No commands defined.",
-            Style::default().fg(Color::DarkGray),
-        ))];
-    };
-
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            item.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            kind_label(item.kind),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        ),
-    ]));
-
+/// Body for the info panel that sits above the output pane. The
+/// panel TITLE carries the item name + kind; the body is just the
+/// kv pairs (and description, when one exists). Lines render under
+/// `Padding::horizontal(2)`, so neither the kv builder nor the
+/// description wrap need to add a left gutter themselves.
+fn build_info_body(app: &App, item: &Item, wrap_width: usize) -> Vec<Line<'static>> {
     let (desc, kv_lines) = match item.kind {
         ItemKind::Recipe => app
             .selected_recipe()
@@ -1089,25 +1069,28 @@ fn build_detail_lines(app: &App, wrap_width: usize) -> Vec<Line<'static>> {
             .selected_watcher()
             .map(|w| (None, watcher_kv_lines(w)))
             .unwrap_or_default(),
-        // Container / services don't have config-level descriptions.
+        // Services and containers don't have config-level
+        // descriptions or static kv data worth showing here. Title
+        // already carries the name + kind; status moves into the
+        // output panel header.
         _ => (None, Vec::new()),
     };
 
-    if let Some(text) = desc {
-        lines.push(Line::from(""));
-        for chunk in wrap_words(&text, wrap_width) {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(chunk, Style::default().fg(Color::Gray)),
-            ]));
-        }
-    }
-
+    let mut lines: Vec<Line<'static>> = Vec::new();
     if !kv_lines.is_empty() {
-        lines.push(Line::from(""));
         lines.extend(kv_lines);
     }
-
+    if let Some(text) = desc {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        for chunk in wrap_words(&text, wrap_width) {
+            lines.push(Line::from(Span::styled(
+                chunk,
+                Style::default().fg(Color::Gray),
+            )));
+        }
+    }
     lines
 }
 
@@ -1207,52 +1190,73 @@ fn kind_label(kind: ItemKind) -> &'static str {
 
 fn kv(key: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::raw("  "),
         Span::styled(format!("{key:<14}"), Style::default().fg(Color::DarkGray)),
         Span::raw(value.to_string()),
     ])
 }
 
-// ─────────────────────── service / watcher panes ───────────────────────
+// ─────────────────────── output pane title ───────────────────────
 
-fn run_pane_title(run: &RunState) -> Line<'static> {
+/// Variants the output panel's title bar surfaces. The item name +
+/// kind already live in the info panel above; the output title only
+/// carries dynamic state — exit code, duration, running indicator,
+/// idle/missing/error badges.
+enum OutputStatus<'a> {
+    Idle,
+    Run(&'a RunState),
+    Service(&'a ServicePane),
+    Watcher(&'a WatcherPane),
+}
+
+fn output_pane_title(status: OutputStatus<'_>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = vec![
         Span::raw(" "),
         Span::styled(
-            run.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
+            "output",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  "),
     ];
+    let suffix: Vec<Span<'static>> = match status {
+        OutputStatus::Idle => vec![Span::styled(
+            "  idle ".to_string(),
+            Style::default().fg(Color::DarkGray),
+        )],
+        OutputStatus::Run(run) => run_status_spans(run),
+        OutputStatus::Service(svc) => service_status_spans(svc),
+        OutputStatus::Watcher(w) => watcher_status_spans(w),
+    };
+    spans.extend(suffix);
+    Line::from(spans)
+}
+
+fn run_status_spans(run: &RunState) -> Vec<Span<'static>> {
     let duration = format_duration(run.duration());
     if let Some(code) = run.exit_code {
         if code == 0 {
-            spans.push(Span::styled(
-                format!("✓ exit 0 · {duration} "),
+            return vec![Span::styled(
+                format!("  ✓ exit 0 · {duration} "),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!("✗ exit {code} · {duration} "),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ));
+            )];
         }
-    } else if let Some(err) = &run.error {
-        spans.push(Span::styled(
-            format!("! {err} · {duration} "),
-            Style::default().fg(Color::Red),
-        ));
-    } else {
-        spans.push(Span::styled(
-            format!("● running · {duration} "),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        return vec![Span::styled(
+            format!("  ✗ exit {code} · {duration} "),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )];
     }
-    Line::from(spans)
+    if let Some(err) = &run.error {
+        return vec![Span::styled(
+            format!("  ! {err} · {duration} "),
+            Style::default().fg(Color::Red),
+        )];
+    }
+    vec![Span::styled(
+        format!("  ● running · {duration} "),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )]
 }
 
 /// Compact duration formatter for run-pane titles. Sub-second times
@@ -1288,12 +1292,13 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
 }
 
 fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
-    let title = service_pane_title(service);
+    let title = output_pane_title(OutputStatus::Service(service));
 
-    // Same padding as recipe / lifecycle output panes so all three
-    // sit in the same visual frame. Compose's own `<svc-N> |`
-    // prefix is short and stays readable inside the gutter.
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    // Horizontal-only padding — every output pane sits in the same
+    // visual frame so all three (run / service / lifecycle) read
+    // consistently. Compose's own `<svc-N> |` log prefix lives
+    // inside the body.
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = service.buffer.len();
@@ -1338,54 +1343,44 @@ fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn service_pane_title(service: &ServicePane) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::raw(" "),
-        Span::styled(
-            service.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-    ];
+fn service_status_spans(service: &ServicePane) -> Vec<Span<'static>> {
     if service.tail_error.is_some() {
-        spans.push(Span::styled(
-            "✗ unavailable ",
+        return vec![Span::styled(
+            "  ✗ unavailable ".to_string(),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ));
-    } else {
-        match service.status {
-            Some(ServiceStatus::Running) => spans.push(Span::styled(
-                "● running ",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Some(ServiceStatus::Stopped) => spans.push(Span::styled(
-                "○ stopped ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Some(ServiceStatus::Missing) => spans.push(Span::styled(
-                "✗ missing ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            )),
-            None => spans.push(Span::styled(
-                "? unknown ",
-                Style::default().fg(Color::DarkGray),
-            )),
-        }
+        )];
     }
-    Line::from(spans)
+    match service.status {
+        Some(ServiceStatus::Running) => vec![Span::styled(
+            "  ● running ".to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )],
+        Some(ServiceStatus::Stopped) => vec![Span::styled(
+            "  ○ stopped ".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )],
+        Some(ServiceStatus::Missing) => vec![Span::styled(
+            "  ✗ missing ".to_string(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )],
+        None => vec![Span::styled(
+            "  ? unknown ".to_string(),
+            Style::default().fg(Color::DarkGray),
+        )],
+    }
 }
 
 fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
-    // Watcher meta (recipe / globs / debounce) lives in the details
-    // panel under the sidebar. The output pane is purely the buffer
-    // from the most recent run, with a placeholder when nothing has
-    // run yet — matching the recipe / script / lifecycle pane shape.
-    let title = watcher_pane_title(watcher);
-    let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
+    // Watcher meta (recipe / globs / debounce) lives in the info
+    // panel above. The output pane is purely the buffer from the
+    // most recent run, with a placeholder when nothing has run yet —
+    // matching the recipe / script / lifecycle pane shape.
+    let title = output_pane_title(OutputStatus::Watcher(watcher));
+    let block = panel_block_titled(title).padding(Padding::horizontal(2));
 
     let max_lines = area.height.saturating_sub(2) as usize;
     let total = watcher.buffer.len();
@@ -1418,53 +1413,44 @@ fn render_watcher(watcher: &WatcherPane, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn watcher_pane_title(watcher: &WatcherPane) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::raw(" "),
-        Span::styled(
-            watcher.name.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-    ];
+fn watcher_status_spans(watcher: &WatcherPane) -> Vec<Span<'static>> {
     match watcher.state {
         WatcherState::Idle => match watcher.last_exit_code {
-            None => spans.push(Span::styled(
-                "○ idle ",
+            None => vec![Span::styled(
+                "  ○ idle ".to_string(),
                 Style::default().fg(Color::DarkGray),
-            )),
-            Some(0) => spans.push(Span::styled(
-                "✓ idle (last 0) ",
+            )],
+            Some(0) => vec![Span::styled(
+                "  ✓ idle (last 0) ".to_string(),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
-            )),
-            Some(c) => spans.push(Span::styled(
-                format!("✗ idle (last {c}) "),
+            )],
+            Some(c) => vec![Span::styled(
+                format!("  ✗ idle (last {c}) "),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            )),
+            )],
         },
         WatcherState::Debouncing => {
             let remaining = watcher.pending_remaining_ms().unwrap_or(0);
-            spans.push(Span::styled(
-                format!("◐ cooldown {remaining} ms "),
+            vec![Span::styled(
+                format!("  ◐ cooldown {remaining} ms "),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
-            ));
+            )]
         }
         WatcherState::Running => {
             let elapsed = watcher
                 .last_run_started_at
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
-            spans.push(Span::styled(
-                format!("● running {elapsed:.1}s "),
+            vec![Span::styled(
+                format!("  ● running {elapsed:.1}s "),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ));
+            )]
         }
     }
-    Line::from(spans)
 }
 
 fn watcher_indicator_style(app: &App, name: &str) -> Style {
