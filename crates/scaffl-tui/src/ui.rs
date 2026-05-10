@@ -678,10 +678,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
     // immediately below. The view accent already has plenty of
     // representation (panel titles, status-bar tag, group headers).
     let mut spans: Vec<Span<'static>> = vec![
-        Span::styled(
-            "  scaffl ",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("  scaffl ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];
@@ -1755,8 +1752,19 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, accent: Color, 
 
 fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame: &mut Frame) {
     use crate::app::NewFormField;
-    let height = if form.error.is_some() { 11 } else { 9 };
-    let area = centered_rect(frame.area(), 60, height);
+
+    // Visible branch rows under the input. Cap to 8 so the modal
+    // doesn't grow unbounded on repos with many branches; users
+    // narrow with the filter instead. Plus 1 if the create-new
+    // sentinel is active.
+    const MAX_BRANCH_ROWS: usize = 8;
+    let visible_options = (form.filtered.len() + if form.show_create_sentinel() { 1 } else { 0 })
+        .min(MAX_BRANCH_ROWS + 1);
+    // Two field rows + blank + N options + blank + hint + maybe error.
+    let body_rows = 2 + 1 + visible_options + 1 + 1 + if form.error.is_some() { 2 } else { 0 };
+    // +4 = block borders (2) + vertical padding (2).
+    let height = (body_rows as u16 + 4).min(24);
+    let area = centered_rect(frame.area(), 64, height);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1774,17 +1782,41 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame
     let path_focus = matches!(form.focus, NewFormField::Path);
     let branch_focus = matches!(form.focus, NewFormField::Branch);
 
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(8);
-    lines.push(field_row("path", &form.path_input, path_focus, accent));
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(body_rows);
     lines.push(field_row(
         "branch",
         &form.branch_input,
         branch_focus,
         accent,
     ));
+    lines.push(field_row("path", &form.path_input, path_focus, accent));
+    lines.push(Line::from(""));
+
+    // Branch list. Window onto `filtered` plus the optional sentinel
+    // row. Only the row at `selected` carries the highlight chrome.
+    let total = form.total_options();
+    let (start, end) = list_window(form.selected, MAX_BRANCH_ROWS + 1, total);
+    for option_idx in start..end {
+        let is_sentinel = option_idx == form.filtered.len() && form.show_create_sentinel();
+        let is_selected = branch_focus && option_idx == form.selected;
+        lines.push(branch_row(
+            form,
+            option_idx,
+            is_sentinel,
+            is_selected,
+            accent,
+        ));
+    }
+    if total == 0 {
+        lines.push(Line::from(Span::styled(
+            "  (no branches)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "tab toggle · enter create · esc back",
+        "↑↓ pick · tab edit path · enter create · esc back",
         Style::default().fg(Color::DarkGray),
     )));
     if let Some(err) = form.error.as_ref() {
@@ -1797,6 +1829,69 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame
 
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Render one row of the branch picker. Existing branches show as
+/// `<name>` (with a `[remote]` tag when remote-only); the sentinel
+/// row reads `+ create branch '<input>' off HEAD`.
+fn branch_row(
+    form: &crate::app::NewWorktreeForm,
+    option_idx: usize,
+    is_sentinel: bool,
+    is_selected: bool,
+    accent: Color,
+) -> Line<'static> {
+    let row_style = if is_selected {
+        Style::default()
+            .fg(SELECTION_FG)
+            .bg(SELECTION_BG)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    let prefix = if is_selected { "▶ " } else { "  " };
+    if is_sentinel {
+        return Line::from(vec![
+            Span::styled(prefix.to_string(), row_style),
+            Span::styled(
+                format!("+ create branch '{}' off HEAD", form.branch_input),
+                if is_selected {
+                    row_style
+                } else {
+                    Style::default().fg(accent)
+                },
+            ),
+        ]);
+    }
+    let entry = &form.branches[form.filtered[option_idx]];
+    let mut spans = vec![
+        Span::styled(prefix.to_string(), row_style),
+        Span::styled(entry.name.clone(), row_style),
+    ];
+    if entry.remote_only {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            "[remote]".to_string(),
+            if is_selected {
+                row_style
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Pick a window [start, end) over `total` items keeping `selected`
+/// roughly centered, with a max of `visible` rows. Mirrors the
+/// `window` helper used by the palette / switcher list.
+fn list_window(selected: usize, visible: usize, total: usize) -> (usize, usize) {
+    if total <= visible {
+        return (0, total);
+    }
+    let half = visible / 2;
+    let start = selected.saturating_sub(half).min(total - visible);
+    (start, start + visible)
 }
 
 fn field_row(label: &'static str, value: &str, focused: bool, accent: Color) -> Line<'static> {
@@ -2135,6 +2230,51 @@ mod tests {
     #[test]
     fn wrap_words_empty_input() {
         assert_eq!(wrap_words("", 10), Vec::<String>::new());
+    }
+
+    /// Smoke test: open the switcher → switcher_confirm on the
+    /// "+ new worktree" sentinel → open_create_form. Render must
+    /// not panic, and the rendered buffer must contain the form's
+    /// title chrome plus at least one branch row.
+    #[test]
+    fn renders_create_worktree_form_with_branches() {
+        use crate::app::WorktreeRow;
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(cfg());
+        let entries = vec![WorktreeRow {
+            path: std::path::PathBuf::from("/repo"),
+            branch: Some("main".into()),
+            slug: "main".into(),
+            is_current: true,
+        }];
+        app.open_worktree_switcher(entries);
+        // Move to "+ new worktree" sentinel and confirm.
+        app.switcher_select_next();
+        app.switcher_confirm();
+        // Provide a couple of fake branches.
+        app.open_create_form(vec![
+            scaffl_runtime::BranchEntry {
+                name: "main".into(),
+                remote_only: false,
+            },
+            scaffl_runtime::BranchEntry {
+                name: "feat-x".into(),
+                remote_only: false,
+            },
+        ]);
+        terminal.draw(|f| render(&app, f)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("new worktree"), "title missing:\n{text}");
+        assert!(text.contains("main"), "branch row missing:\n{text}");
+        assert!(text.contains("feat-x"), "second branch missing:\n{text}");
     }
 
     #[test]

@@ -32,6 +32,13 @@ whole stack from a built-in TUI.
   (`origin/HEAD` → local `main` / `master` / `develop`); pin it
   explicitly with `[diff] base = "release/stable"` in `scaffl.toml`
   if your project uses a non-conventional name.
+- **Worktree switcher (`W`).** Modal lists every checkout under the
+  repo and hot-reloads scaffl into a different worktree without
+  restarting. The "+ new worktree" entry opens a branch-first
+  picker: type to filter local + remote branches, pick one to
+  attach, or take the "create branch '<input>' off HEAD" sentinel
+  for `-b`. The path field auto-fills as `<parent>/<slug(branch)>`
+  but Tab into it for a manual override.
 - **Watch mode.** `scaffl watch <recipe>` re-runs the recipe whenever
   watched files change, with a debounce window.
 - **Git hooks, pre-commit-compatible.** `scaffl hooks install` writes a

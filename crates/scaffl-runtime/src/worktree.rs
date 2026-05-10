@@ -182,6 +182,103 @@ pub async fn merge_base(project_root: &Path, trunk: &str) -> Option<String> {
     git_output(project_root, &["merge-base", trunk, "HEAD"]).await
 }
 
+/// One row in the branch picker for the worktree-create form. Bare
+/// short names — what `git worktree add` accepts directly. When
+/// `remote_only` is true, no local branch of this name exists yet;
+/// passing the name to `git worktree add` makes git auto-create a
+/// local tracking branch off the matching remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchEntry {
+    pub name: String,
+    pub remote_only: bool,
+}
+
+/// List branches a user might want to base a new worktree on.
+///
+/// Returns local branches plus remote branches that have no local
+/// counterpart, sorted by committer date descending so the most
+/// recently-touched branch comes first. Symbolic refs like
+/// `origin/HEAD` are skipped.
+///
+/// Empty Vec on any git failure — the caller (the create form)
+/// degrades to "type a branch name freehand" rather than blocking.
+pub async fn list_branches(project_root: &Path) -> Vec<BranchEntry> {
+    use std::collections::HashSet;
+
+    // Tab separator — branch names are git-validated and can't
+    // contain whitespace, so this is robust without escaping.
+    let format = "--format=%(refname:short)\t%(committerdate:unix)";
+
+    let local_raw = git_output(
+        project_root,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            format,
+            "refs/heads",
+        ],
+    )
+    .await
+    .unwrap_or_default();
+    let remote_raw = git_output(
+        project_root,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            format,
+            "refs/remotes",
+        ],
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut entries: Vec<(String, u64, bool)> = Vec::new();
+    let mut local_names: HashSet<String> = HashSet::new();
+
+    for line in local_raw.lines() {
+        let Some((name, date)) = line.split_once('\t') else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let date: u64 = date.parse().unwrap_or(0);
+        local_names.insert(name.to_string());
+        entries.push((name.to_string(), date, false));
+    }
+
+    for line in remote_raw.lines() {
+        let Some((short, date)) = line.split_once('\t') else {
+            continue;
+        };
+        // Skip the symbolic origin/HEAD pointer — it's not a real
+        // branch users would create a worktree from.
+        if short.ends_with("/HEAD") {
+            continue;
+        }
+        // Strip the remote prefix (`origin/feature` → `feature`).
+        // Branch names CAN contain slashes (`feature/auth`), so we
+        // only strip the *first* segment.
+        let Some(slash) = short.find('/') else {
+            continue;
+        };
+        let bare = &short[slash + 1..];
+        if bare.is_empty() || local_names.contains(bare) {
+            continue;
+        }
+        let date: u64 = date.parse().unwrap_or(0);
+        entries.push((bare.to_string(), date, true));
+    }
+
+    // Re-sort merged list by date so a recent remote-only branch
+    // can rank above older local ones.
+    entries.sort_by_key(|b| std::cmp::Reverse(b.1));
+    entries
+        .into_iter()
+        .map(|(name, _, remote_only)| BranchEntry { name, remote_only })
+        .collect()
+}
+
 /// Run `git <args>` in `project_root`. Returns trimmed stdout if the
 /// command succeeded. Any failure (non-zero, missing git, bad utf-8)
 /// collapses to `None`.

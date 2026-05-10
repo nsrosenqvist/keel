@@ -1138,9 +1138,14 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
         KeyCode::Esc => app.close_switcher(),
         KeyCode::Up | KeyCode::Char('k') => app.switcher_select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.switcher_select_next(),
-        KeyCode::Enter => {
-            app.switcher_confirm();
-        }
+        KeyCode::Enter => match app.switcher_confirm() {
+            crate::app::SwitcherConfirm::OpenCreateForm => {
+                let project_root = app.project_root().to_path_buf();
+                let branches = scaffl_runtime::list_branches(&project_root).await;
+                app.open_create_form(branches);
+            }
+            crate::app::SwitcherConfirm::Switched | crate::app::SwitcherConfirm::NoOp => {}
+        },
         _ => {}
     }
 }
@@ -1149,14 +1154,17 @@ async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc => app.switcher_form_cancel(),
         KeyCode::Tab => app.switcher_form_toggle_focus(),
+        KeyCode::Up => app.switcher_form_select_prev(),
+        KeyCode::Down => app.switcher_form_select_next(),
         KeyCode::Backspace => app.switcher_form_pop_char(),
         KeyCode::Enter => {
-            // Snapshot, run git worktree add, report back via finish().
-            let Some(form) = app.switcher_form_snapshot() else {
+            // Resolve the form into (path, BranchSpec); shell out
+            // to git; report back via switcher_form_finish.
+            let Some(action) = app.switcher_form_resolve() else {
                 return;
             };
             let project_root = app.project_root().to_path_buf();
-            let result = create_worktree(&project_root, &form.path_input, &form.branch_input).await;
+            let result = create_worktree(&project_root, &action).await;
             app.switcher_form_finish(result);
         }
         KeyCode::Char(c) => app.switcher_form_push_char(c),
@@ -1164,26 +1172,36 @@ async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
     }
 }
 
-/// Run `git worktree add` for the user's form input. On success
-/// returns the canonicalised path of the new worktree (so the App
-/// rebuild has a stable, absolute target). On failure returns the
-/// trimmed git stderr so the modal can render it.
+/// Run `git worktree add` for the user's resolved form action.
+/// `BranchSpec::Existing(name)` → `git worktree add <path> <name>`
+/// (git auto-creates a tracking branch when `name` matches a
+/// remote-only ref). `BranchSpec::CreateOff(name)` →
+/// `git worktree add <path> -b <name>` (new branch off HEAD).
+///
+/// Returns the canonicalised path on success so the App rebuild
+/// has a stable absolute target; trimmed git stderr on failure so
+/// the modal renders the diagnostic.
 async fn create_worktree(
     project_root: &std::path::Path,
-    path: &str,
-    branch: &str,
+    action: &crate::app::NewWorktreeAction,
 ) -> Result<std::path::PathBuf, String> {
-    let path = path.trim();
-    let branch = branch.trim();
+    use crate::app::BranchSpec;
+    let path = action.path.trim();
     if path.is_empty() {
         return Err("path is required".into());
     }
-    let mut argv: Vec<&str> = vec!["worktree", "add"];
-    if !branch.is_empty() {
-        argv.push("-b");
-        argv.push(branch);
+    let mut argv: Vec<String> = vec!["worktree".into(), "add".into()];
+    match &action.branch {
+        BranchSpec::Existing(name) => {
+            argv.push(path.to_string());
+            argv.push(name.clone());
+        }
+        BranchSpec::CreateOff(name) => {
+            argv.push("-b".into());
+            argv.push(name.clone());
+            argv.push(path.to_string());
+        }
     }
-    argv.push(path);
     let output = tokio::process::Command::new("git")
         .args(&argv)
         .current_dir(project_root)

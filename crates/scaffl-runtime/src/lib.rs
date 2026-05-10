@@ -18,4 +18,7 @@ pub use error::RuntimeError;
 pub use executor::Executor;
 pub use resolver::{Resolution, Resolver, ResolverContext};
 pub use sink::{ChannelSink, InheritSink, OutputLine, OutputSink, OutputStream};
-pub use worktree::{BaseRef, Identity, WorktreeListEntry, detect_trunk, merge_base};
+pub use worktree::{
+    BaseRef, BranchEntry, Identity, WorktreeListEntry, detect_trunk, list_branches, merge_base,
+    slugify,
+};

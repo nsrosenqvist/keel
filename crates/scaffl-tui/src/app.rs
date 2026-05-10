@@ -341,15 +341,43 @@ pub struct KillWindow {
 
 /// Sub-state for the "create new worktree" flow inside the
 /// switcher modal.
+///
+/// Shape: branch-first picker. The user types into `branch_input`,
+/// which fuzzy-filters `branches` (sourced from `git for-each-ref`)
+/// down to `filtered`. A "create new branch" sentinel appears as
+/// the last option whenever the input doesn't exactly match an
+/// existing branch — selecting it triggers `git worktree add -b`.
+///
+/// `path_input` stays auto-synced as `<parent>/<slug(branch)>`
+/// while `path_dirty` is false. The first edit in the path field
+/// flips that flag and the path stops following the branch — the
+/// user owns it from then on.
 #[derive(Debug, Clone)]
 pub struct NewWorktreeForm {
-    /// Path where the new worktree directory will be created.
-    /// Prefilled with `<parent-of-current>/<branch-input>` so
-    /// the user only really needs to type the branch.
-    pub path_input: String,
-    /// Branch to attach. Empty + path naming an existing branch
-    /// → use existing; non-empty → `git worktree add -b <branch>`.
     pub branch_input: String,
+    pub path_input: String,
+    /// True once the user has manually edited the path field. Once
+    /// dirty, branch keystrokes no longer rewrite the path — we
+    /// don't want to clobber what the user typed.
+    pub path_dirty: bool,
+    /// Parent directory new worktrees go under. Defaults to the
+    /// current project root's parent dir; baked in at form-open
+    /// time so the path-derivation code doesn't need to keep
+    /// rerunning the lookup.
+    pub parent: PathBuf,
+    /// All branches the user might want to base a worktree on,
+    /// pre-fetched once when the form opens. Sorted by committer
+    /// date desc; remote-only branches included.
+    pub branches: Vec<scaffl_runtime::BranchEntry>,
+    /// Indices into `branches`, filtered by the current branch
+    /// input. Recomputed on every keystroke that mutates the
+    /// branch field.
+    pub filtered: Vec<usize>,
+    /// Highlighted row in the [filtered ++ sentinel] list. Bound
+    /// to `filtered.len()` (the sentinel slot, when present) at
+    /// the upper end. The renderer/key-handler treats `selected ==
+    /// filtered.len()` as "the create-new-branch sentinel."
+    pub selected: usize,
     pub focus: NewFormField,
     /// Last error from `git worktree add`, if any. Surfaces as a
     /// hint inside the modal so the user can fix and retry without
@@ -357,10 +385,113 @@ pub struct NewWorktreeForm {
     pub error: Option<String>,
 }
 
+impl NewWorktreeForm {
+    /// True when the create-new-branch sentinel should appear as
+    /// the last option. We only show it when:
+    ///   - `branch_input` is non-empty (no point creating a branch
+    ///     called nothing), and
+    ///   - no existing branch in `branches` matches `branch_input`
+    ///     exactly (avoids "create new branch 'main' off HEAD"
+    ///     when `main` already exists).
+    pub fn show_create_sentinel(&self) -> bool {
+        if self.branch_input.is_empty() {
+            return false;
+        }
+        !self.branches.iter().any(|b| b.name == self.branch_input)
+    }
+
+    /// Total selectable rows — filtered branches plus the sentinel
+    /// when applicable. Used by the bounds-check on Up/Down.
+    pub fn total_options(&self) -> usize {
+        self.filtered.len() + if self.show_create_sentinel() { 1 } else { 0 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewFormField {
     Path,
     Branch,
+}
+
+/// What the form's confirm step asks `git worktree add` to do.
+#[derive(Debug, Clone)]
+pub struct NewWorktreeAction {
+    pub path: String,
+    pub branch: BranchSpec,
+}
+
+/// Distinguishes "attach an existing branch" from "create a new
+/// branch off HEAD." Drives whether `git worktree add` gets `-b`.
+#[derive(Debug, Clone)]
+pub enum BranchSpec {
+    /// Use an existing branch — `git worktree add <path> <branch>`.
+    /// For remote-only entries, git auto-creates a tracking branch.
+    Existing(String),
+    /// Create a new branch off HEAD —
+    /// `git worktree add <path> -b <branch>`.
+    CreateOff(String),
+}
+
+/// Outcome of [`App::switcher_confirm`]. The caller (terminal layer)
+/// pattern-matches to decide whether to fetch branches and reopen
+/// the modal in create-form mode, or fall through to the queued
+/// hot-reload, or do nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitcherConfirm {
+    /// Selected row was an existing worktree → switch queued.
+    Switched,
+    /// Selected row was the "+ new worktree" sentinel → fetch
+    /// branches async and call `App::open_create_form`.
+    OpenCreateForm,
+    /// Switcher modal wasn't open → key dispatcher should ignore.
+    NoOp,
+}
+
+/// Recompute `filtered` from the current `branch_input`. Empty
+/// query → every branch in original order; non-empty → case-
+/// insensitive substring match (good enough for v1; can swap in
+/// nucleo-matcher later if anyone asks for fuzzy ordering).
+fn refilter_branches(form: &mut NewWorktreeForm) {
+    if form.branch_input.is_empty() {
+        form.filtered = (0..form.branches.len()).collect();
+    } else {
+        let q = form.branch_input.to_lowercase();
+        form.filtered = form
+            .branches
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.name.to_lowercase().contains(&q))
+            .map(|(i, _)| i)
+            .collect();
+    }
+    // Selection clamps to the new bounds. If the user types until
+    // the list shrinks to just the sentinel, that's selected.
+    let total = form.total_options();
+    form.selected = if total == 0 {
+        0
+    } else {
+        form.selected.min(total - 1)
+    };
+}
+
+/// Auto-fill the path field as `<parent>/<slug(branch)>` whenever
+/// the user is typing in the branch field AND hasn't manually
+/// edited the path yet. Once `path_dirty` is true, we leave the
+/// path alone — the user owns it.
+fn sync_path_from_branch(form: &mut NewWorktreeForm) {
+    if form.path_dirty {
+        return;
+    }
+    let dir = if form.branch_input.is_empty() {
+        String::new()
+    } else {
+        scaffl_runtime::slugify(&form.branch_input)
+    };
+    if dir.is_empty() {
+        form.path_input.clear();
+    } else {
+        form.path_input = form.parent.join(dir).display().to_string();
+    }
 }
 
 /// Whole switcher state. The list always has a sentinel "+ new
@@ -979,40 +1110,55 @@ impl App {
     }
 
     /// Resolve the switcher: if the selected row is an existing
-    /// worktree, queue a hot-reload to its path and close the modal;
-    /// if it's the synthetic "+ new worktree" row, open the
-    /// create-form sub-state instead. Returns true if the switcher
-    /// was acted on (so the caller knows whether to absorb the key).
-    pub fn switcher_confirm(&mut self) -> bool {
+    /// worktree, queue a hot-reload to its path and close the modal.
+    /// If it's the synthetic "+ new worktree" row, signal the
+    /// caller to fetch the branch list and open the create form
+    /// (the branch fetch is async; we don't block the App in here).
+    pub fn switcher_confirm(&mut self) -> SwitcherConfirm {
         let Some(s) = self.switcher.as_ref() else {
-            return false;
+            return SwitcherConfirm::NoOp;
         };
         if s.selected == s.new_row_index() {
-            // Open the create form, prefilled.
-            let parent = self
-                .project_root
-                .parent()
-                .unwrap_or(self.project_root.as_path());
-            let mut form = NewWorktreeForm {
-                path_input: format!("{}/", parent.display()),
-                branch_input: String::new(),
-                focus: NewFormField::Branch,
-                error: None,
-            };
-            // If we know the current branch, default the path to a
-            // sibling dir named after a placeholder so users see
-            // the shape and only need to type the new branch name.
-            form.path_input = parent.join("").display().to_string();
-            self.switcher.as_mut().unwrap().creating = Some(form);
-            return true;
+            return SwitcherConfirm::OpenCreateForm;
         }
-        // Existing worktree row → queue switch.
         let row = s.entries[s.selected].clone();
         if !row.is_current {
             self.pending_switch = Some(row.path);
         }
         self.close_switcher();
-        true
+        SwitcherConfirm::Switched
+    }
+
+    /// Open the create form with a pre-fetched branch list. Caller
+    /// runs `scaffl_runtime::list_branches` first (async) and hands
+    /// the result in here (sync).
+    pub fn open_create_form(&mut self, branches: Vec<scaffl_runtime::BranchEntry>) {
+        let Some(s) = self.switcher.as_mut() else {
+            return;
+        };
+        // `Path::new(".").parent()` returns `Some("")` (the empty
+        // path), which makes `Path::join` drop the parent entirely.
+        // Fall back to the project root when parent is empty too.
+        let parent = match self.project_root.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => self.project_root.clone(),
+        };
+        let filtered: Vec<usize> = (0..branches.len()).collect();
+        let form = NewWorktreeForm {
+            branch_input: String::new(),
+            // Empty until the user types — auto-sync on first
+            // keystroke. Showing `<parent>/` as a teaser would be
+            // nice but ratatui can't render placeholder text.
+            path_input: String::new(),
+            path_dirty: false,
+            parent,
+            branches,
+            filtered,
+            selected: 0,
+            focus: NewFormField::Branch,
+            error: None,
+        };
+        s.creating = Some(form);
     }
 
     /// Mutate the open new-worktree form. Caller dispatches keys to
@@ -1020,8 +1166,15 @@ impl App {
     pub fn switcher_form_push_char(&mut self, c: char) {
         if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
             match form.focus {
-                NewFormField::Path => form.path_input.push(c),
-                NewFormField::Branch => form.branch_input.push(c),
+                NewFormField::Path => {
+                    form.path_input.push(c);
+                    form.path_dirty = true;
+                }
+                NewFormField::Branch => {
+                    form.branch_input.push(c);
+                    refilter_branches(form);
+                    sync_path_from_branch(form);
+                }
             }
             form.error = None;
         }
@@ -1032,9 +1185,12 @@ impl App {
             match form.focus {
                 NewFormField::Path => {
                     form.path_input.pop();
+                    form.path_dirty = true;
                 }
                 NewFormField::Branch => {
                     form.branch_input.pop();
+                    refilter_branches(form);
+                    sync_path_from_branch(form);
                 }
             }
             form.error = None;
@@ -1050,6 +1206,28 @@ impl App {
         }
     }
 
+    /// Move the highlighted branch / sentinel down. Only meaningful
+    /// when focus is on the branch field (the path field has no
+    /// list to navigate).
+    pub fn switcher_form_select_next(&mut self) {
+        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut())
+            && form.focus == NewFormField::Branch
+        {
+            let total = form.total_options();
+            if total > 0 {
+                form.selected = (form.selected + 1).min(total - 1);
+            }
+        }
+    }
+
+    pub fn switcher_form_select_prev(&mut self) {
+        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut())
+            && form.focus == NewFormField::Branch
+        {
+            form.selected = form.selected.saturating_sub(1);
+        }
+    }
+
     pub fn switcher_form_cancel(&mut self) {
         if let Some(s) = self.switcher.as_mut() {
             s.creating = None;
@@ -1061,6 +1239,44 @@ impl App {
     /// [`Self::switcher_form_finish`].
     pub fn switcher_form_snapshot(&self) -> Option<NewWorktreeForm> {
         self.switcher.as_ref().and_then(|s| s.creating.clone())
+    }
+
+    /// What the caller should ask `git worktree add` to do. Folds
+    /// the focus + selection + sentinel logic into a single tuple
+    /// the terminal layer can shell out from.
+    pub fn switcher_form_resolve(&self) -> Option<NewWorktreeAction> {
+        let form = self.switcher.as_ref().and_then(|s| s.creating.as_ref())?;
+        if form.path_input.trim().is_empty() {
+            return None;
+        }
+        let branch = match form.focus {
+            // In path-focus mode the branch list isn't relevant —
+            // submit with whatever was last typed in the branch field.
+            NewFormField::Path => {
+                if form.branch_input.trim().is_empty() {
+                    return None;
+                }
+                if form.branches.iter().any(|b| b.name == form.branch_input) {
+                    BranchSpec::Existing(form.branch_input.clone())
+                } else {
+                    BranchSpec::CreateOff(form.branch_input.clone())
+                }
+            }
+            NewFormField::Branch => {
+                if form.selected < form.filtered.len() {
+                    let idx = form.filtered[form.selected];
+                    BranchSpec::Existing(form.branches[idx].name.clone())
+                } else if form.show_create_sentinel() {
+                    BranchSpec::CreateOff(form.branch_input.clone())
+                } else {
+                    return None;
+                }
+            }
+        };
+        Some(NewWorktreeAction {
+            path: form.path_input.clone(),
+            branch,
+        })
     }
 
     /// Resolve the form after a `git worktree add` attempt. On Ok,
@@ -1938,8 +2154,8 @@ mod tests {
         // Selecting the current worktree → no-op (no pending switch).
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        let acted = app.switcher_confirm();
-        assert!(acted);
+        let outcome = app.switcher_confirm();
+        assert_eq!(outcome, SwitcherConfirm::Switched);
         assert!(app.pending_switch.is_none());
         assert_eq!(app.mode(), Mode::Normal);
     }
@@ -1949,8 +2165,8 @@ mod tests {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
         app.switcher_select_next();
-        let acted = app.switcher_confirm();
-        assert!(acted);
+        let outcome = app.switcher_confirm();
+        assert_eq!(outcome, SwitcherConfirm::Switched);
         assert_eq!(
             app.take_pending_switch(),
             Some(PathBuf::from("/repo-feature"))
@@ -1971,13 +2187,17 @@ mod tests {
     }
 
     #[test]
-    fn switcher_confirm_on_new_row_opens_form() {
+    fn switcher_confirm_on_new_row_signals_open_form() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
         app.switcher_select_next();
         app.switcher_select_next();
-        app.switcher_confirm();
-        // Modal stays open with the form populated.
+        let outcome = app.switcher_confirm();
+        assert_eq!(outcome, SwitcherConfirm::OpenCreateForm);
+        // The form isn't populated yet — terminal layer fetches
+        // branches async, then calls open_create_form.
+        assert!(app.switcher().unwrap().creating.is_none());
+        app.open_create_form(Vec::new());
         assert_eq!(app.mode(), Mode::WorktreeSwitcher);
         assert!(app.switcher().unwrap().creating.is_some());
     }
@@ -1989,6 +2209,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
+        app.open_create_form(Vec::new());
         app.switcher_form_finish(Ok(PathBuf::from("/repo-new")));
         assert_eq!(app.take_pending_switch(), Some(PathBuf::from("/repo-new")));
         assert_eq!(app.mode(), Mode::Normal);
@@ -2001,6 +2222,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
+        app.open_create_form(Vec::new());
         app.switcher_form_finish(Err("git: branch already exists".into()));
         assert_eq!(app.mode(), Mode::WorktreeSwitcher);
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
@@ -2299,9 +2521,103 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
+        app.open_create_form(Vec::new());
         let initial = app.switcher().unwrap().creating.as_ref().unwrap().focus;
         app.switcher_form_toggle_focus();
         let toggled = app.switcher().unwrap().creating.as_ref().unwrap().focus;
         assert_ne!(initial, toggled);
+    }
+
+    /// Branch field auto-syncs the path as `<parent>/<slug(branch)>`
+    /// while the user hasn't manually edited the path. Slugifier
+    /// drops slashes, so `feat/auth` → `feat-auth`.
+    #[test]
+    fn switcher_form_path_auto_syncs_from_branch() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        // Hop to "+ new worktree" sentinel + open the form.
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        app.open_create_form(Vec::new());
+
+        // Type "feat/auth" → path follows along.
+        for c in "feat/auth".chars() {
+            app.switcher_form_push_char(c);
+        }
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.branch_input, "feat/auth");
+        assert!(
+            form.path_input.ends_with("/feat-auth"),
+            "{}",
+            form.path_input
+        );
+        assert!(!form.path_dirty);
+
+        // Tab + edit path → path stops following the branch.
+        app.switcher_form_toggle_focus();
+        app.switcher_form_push_char('/');
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert!(form.path_dirty);
+        let dirty_path = form.path_input.clone();
+
+        // Tab back, type more in the branch — path stays put.
+        app.switcher_form_toggle_focus();
+        app.switcher_form_push_char('-');
+        app.switcher_form_push_char('v');
+        app.switcher_form_push_char('2');
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.branch_input, "feat/auth-v2");
+        assert_eq!(form.path_input, dirty_path);
+    }
+
+    /// Filter narrows the displayed branches as the user types;
+    /// the create-new sentinel appears only when no branch matches
+    /// the input exactly.
+    #[test]
+    fn switcher_form_filter_and_sentinel() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        let branches = vec![
+            scaffl_runtime::BranchEntry {
+                name: "main".into(),
+                remote_only: false,
+            },
+            scaffl_runtime::BranchEntry {
+                name: "feat-x".into(),
+                remote_only: false,
+            },
+            scaffl_runtime::BranchEntry {
+                name: "feat-y".into(),
+                remote_only: false,
+            },
+        ];
+        app.open_create_form(branches);
+
+        // Empty input → all branches visible, no sentinel.
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.filtered.len(), 3);
+        assert!(!form.show_create_sentinel());
+
+        // Type "feat" → 2 matches, no exact branch named "feat" →
+        // sentinel appears.
+        for c in "feat".chars() {
+            app.switcher_form_push_char(c);
+        }
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.filtered.len(), 2);
+        assert!(form.show_create_sentinel());
+        assert_eq!(form.total_options(), 3);
+
+        // Type "-x" so the input becomes "feat-x" — exact match
+        // suppresses the sentinel.
+        app.switcher_form_push_char('-');
+        app.switcher_form_push_char('x');
+        let form = app.switcher().unwrap().creating.as_ref().unwrap();
+        assert_eq!(form.filtered.len(), 1);
+        assert!(!form.show_create_sentinel());
     }
 }
