@@ -1902,7 +1902,7 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         hints.push(("G", "diff"));
         hints.push(("W", "worktree"));
     }
-    hints.push(("/  :", "palette"));
+    hints.push(("/", "palette"));
     hints.push(("q", "quit"));
     hints
 }
@@ -1928,14 +1928,14 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         format!("[{}]", app.view().tag()),
         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
     spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
     for (i, (key, label)) in hints.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  ", Style::default()));
+            spans.push(Span::raw(" "));
             spans.push(Span::styled("·", Style::default().fg(Color::DarkGray)));
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(" "));
         }
         spans.push(Span::styled(
             (*key).to_string(),
