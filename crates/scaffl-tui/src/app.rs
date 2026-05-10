@@ -418,6 +418,11 @@ pub struct App {
     pending_kill_window: Option<KillWindow>,
     /// Diff view state. Lazily populated on first switch / refresh.
     diff: DiffState,
+    /// Diagnostic messages flushed to stderr after the TUI exits.
+    /// Used for issues that disappear from the flash slot before the
+    /// user can read them (e.g. tmux session vanishing on detach
+    /// gets clobbered by the very keypress that produced it).
+    diagnostics: Vec<String>,
 }
 
 impl App {
@@ -449,6 +454,7 @@ impl App {
             pending_attach: None,
             pending_kill_window: None,
             diff: DiffState::default(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -1208,6 +1214,18 @@ impl App {
         });
         self.view = View::Terminals;
         Ok(())
+    }
+
+    /// Buffer a diagnostic message to print after the TUI exits.
+    /// Use for issues whose flash would be clobbered immediately
+    /// (e.g. tmux post-detach failures: the very keypress that
+    /// caused the detach also clears `flash`).
+    pub fn diagnostic(&mut self, msg: impl Into<String>) {
+        self.diagnostics.push(msg.into());
+    }
+
+    pub fn drain_diagnostics(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.diagnostics)
     }
 
     pub fn diff(&self) -> &DiffState {

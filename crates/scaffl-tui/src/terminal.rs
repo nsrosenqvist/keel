@@ -40,6 +40,17 @@ pub async fn run_event_loop(app: &mut App) -> Result<DriveOutcome, TuiError> {
     let mut terminal = enter_terminal(&title)?;
     let result = drive(&mut terminal, app).await;
     leave_terminal(&mut terminal)?;
+    // Print any buffered diagnostics now that the alternate screen
+    // is gone — flashes clear on the next keypress and so were
+    // unreliable for transient failures (tmux session vanishing on
+    // detach, tmux query errors, etc.).
+    let diagnostics = app.drain_diagnostics();
+    if !diagnostics.is_empty() {
+        eprintln!();
+        for line in diagnostics {
+            eprintln!("{line}");
+        }
+    }
     result
 }
 
@@ -322,18 +333,36 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
 async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
     let session = app.terminals().session_name.clone();
     match list_tmux_windows(&session).await {
-        WindowList::Ok(w) => app.terminals_set_windows(w),
+        WindowList::Ok(w) => {
+            if expecting_session {
+                // Buffer a diagnostic regardless of outcome — useful
+                // for confirming the path got hit at all when
+                // debugging "list emptied after detach" reports.
+                app.diagnostic(format!(
+                    "[tmux] post-attach refresh of `{session}`: {} window(s)",
+                    w.len()
+                ));
+                for win in &w {
+                    app.diagnostic(format!("[tmux]   {}: {}", win.index, win.name));
+                }
+            }
+            app.terminals_set_windows(w);
+        }
         WindowList::NoSession(msg) => {
             app.terminals_set_windows(Vec::new());
             if expecting_session {
-                app.flash = Some(format!(
-                    "tmux session `{session}` vanished after detach — check ~/.tmux.conf hooks ({msg})"
-                ));
+                let line = format!(
+                    "tmux session `{session}` vanished after detach — check ~/.tmux.conf hooks: {msg}"
+                );
+                app.flash = Some(line.clone());
+                app.diagnostic(format!("[tmux] {line}"));
             }
         }
         WindowList::SpawnFailed(msg) => {
             app.terminals_set_windows(Vec::new());
-            app.flash = Some(format!("tmux query failed: {msg}"));
+            let line = format!("tmux query failed: {msg}");
+            app.flash = Some(line.clone());
+            app.diagnostic(format!("[tmux] {line}"));
         }
     }
 }
