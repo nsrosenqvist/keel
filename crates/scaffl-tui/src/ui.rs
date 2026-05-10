@@ -185,29 +185,34 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         .constraints(constraints)
         .split(area);
 
+    // Highlight style shared by both groups — same shape as the
+    // control-center sidebar so visited and selected rows read
+    // consistently across views.
+    let highlight = Style::default()
+        .fg(Color::Black)
+        .bg(ACCENT)
+        .add_modifier(Modifier::BOLD);
+
     // Services group
     if services_count > 0 {
         let mut svc_items: Vec<ListItem> = Vec::new();
-        for (idx, row) in rows
+        let mut svc_selected: Option<usize> = None;
+        for (local_idx, (global_idx, row)) in rows
             .iter()
             .enumerate()
             .filter(|(_, r)| matches!(r, crate::app::TerminalsRow::Service(_)))
+            .enumerate()
         {
             let crate::app::TerminalsRow::Service(name) = row else {
                 continue;
             };
+            if global_idx == selected {
+                svc_selected = Some(local_idx);
+            }
             let glyph_style = service_indicator_style(app, name);
-            let row_style = if idx == selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(ACCENT)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
             svc_items.push(ListItem::new(Line::from(vec![
                 Span::styled("● ", glyph_style),
-                Span::styled(name.clone(), row_style),
+                Span::raw(name.clone()),
             ])));
         }
         let title = Line::from(vec![
@@ -223,47 +228,33 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         ]);
         let list = List::new(svc_items)
             .block(panel_block_titled(title))
+            .highlight_style(highlight)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_widget(list, areas[0]);
+        let mut state = ListState::default();
+        state.select(svc_selected);
+        frame.render_stateful_widget(list, areas[0], &mut state);
     }
 
     // Terminals + sentinel group
     let mut term_items: Vec<ListItem> = Vec::new();
-    for (idx, row) in rows.iter().enumerate() {
-        let style = if idx == selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(ACCENT)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
+    let mut term_selected: Option<usize> = None;
+    for (global_idx, row) in rows.iter().enumerate() {
         match row {
             crate::app::TerminalsRow::Service(_) => continue,
             crate::app::TerminalsRow::Window(w) => {
-                // Tmux's automatic-rename keeps `name` in sync with
-                // the running command (`zsh`, `vim`, …) so what
-                // the user sees here matches what their other
-                // terminal tools would show for the same window.
-                term_items.push(ListItem::new(Line::from(vec![
-                    Span::styled("◇ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!("{}: ", w.index),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(w.name.clone(), style),
-                ])));
+                if global_idx == selected {
+                    term_selected = Some(term_items.len());
+                }
+                term_items.push(ListItem::new(window_row_line(w)));
             }
             crate::app::TerminalsRow::NewSentinel => {
-                let new_style = if idx == selected {
-                    style
-                } else {
-                    Style::default().fg(ACCENT)
-                };
-                term_items.push(ListItem::new(Line::from(vec![Span::styled(
-                    "+ new shell".to_string(),
-                    new_style,
-                )])));
+                if global_idx == selected {
+                    term_selected = Some(term_items.len());
+                }
+                term_items.push(ListItem::new(Line::from(Span::styled(
+                    "+ new shell",
+                    Style::default().fg(ACCENT),
+                ))));
             }
         }
     }
@@ -283,12 +274,53 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         areas[0]
     };
-    frame.render_widget(
-        List::new(term_items)
-            .block(panel_block_titled(title))
-            .highlight_spacing(HighlightSpacing::Always),
-        area_for_terms,
-    );
+    let list = List::new(term_items)
+        .block(panel_block_titled(title))
+        .highlight_style(highlight)
+        .highlight_spacing(HighlightSpacing::Always);
+    let mut state = ListState::default();
+    state.select(term_selected);
+    frame.render_stateful_widget(list, area_for_terms, &mut state);
+}
+
+/// Render one window row in the terminals sidebar. Tmux's
+/// automatic-rename keeps `name` in sync with the running command
+/// (`zsh`, `vim`, …); when we have a `cwd` populated, we append
+/// it for the kind of "tab title" feel a real terminal would
+/// show. The cwd is collapsed against $HOME (`~`) to fit narrow
+/// sidebars.
+fn window_row_line(w: &crate::app::TmuxWindow) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled("◇ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}: ", w.index),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(w.name.clone()),
+    ];
+    if let Some(cwd) = w.cwd.as_deref() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            collapse_home(cwd),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Collapse `$HOME` to `~` for friendlier display. Cheap; runs
+/// once per render frame.
+fn collapse_home(path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        if path == home {
+            return "~".to_string();
+        }
+        let with_slash = format!("{home}/");
+        if let Some(rest) = path.strip_prefix(&with_slash) {
+            return format!("~/{rest}");
+        }
+    }
+    path.to_string()
 }
 
 fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
@@ -308,49 +340,96 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     ]);
     let block = panel_block_titled(title).padding(Padding::new(2, 1, 1, 0));
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    // Try to surface a tmux pane preview when one exists — much
+    // more useful than static "press enter to attach" text once
+    // the user has attached at least once.
+    let preview_index = match selected_row {
+        Some(crate::app::TerminalsRow::Window(w)) => Some(w.index),
+        Some(crate::app::TerminalsRow::Service(name)) => app
+            .terminals()
+            .windows
+            .iter()
+            .find(|w| w.name == format!("svc:{name}"))
+            .map(|w| w.index),
+        _ => None,
+    };
+    let preview = preview_index.and_then(|i| app.terminals_preview(i));
+
     let detach_hint = "ctrl+b d returns to scaffl";
+    let mut lines: Vec<Line<'static>> = Vec::new();
     match selected_row {
-        Some(crate::app::TerminalsRow::Service(name)) => {
-            lines.push(Line::from(Span::styled(
-                format!("attach into service `{name}`"),
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("→ docker compose exec -it {name} $SHELL"),
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                detach_hint,
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-        Some(crate::app::TerminalsRow::Window(w)) => {
-            lines.push(Line::from(Span::styled(
-                format!("attach into window `{}`", w.name),
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "→ tmux attach -t {}:{}",
-                    app.terminals().session_name,
-                    w.index
-                ),
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                detach_hint,
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines.push(Line::from(Span::styled(
-                "d to delete this window",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
+        Some(crate::app::TerminalsRow::Service(name)) => match preview {
+            Some(p) if !p.is_empty() => {
+                lines.push(Line::from(Span::styled(
+                    format!("svc:{name}  ·  last visible:"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                let body_height = area.height.saturating_sub(6) as usize;
+                lines.extend(preview_lines(p, body_height));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "enter re-attaches  ·  d closes the window",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            _ => {
+                lines.push(Line::from(Span::styled(
+                    format!("attach into service `{name}`"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("→ docker compose exec -it {name} $SHELL"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    detach_hint,
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        },
+        Some(crate::app::TerminalsRow::Window(w)) => match preview {
+            Some(p) if !p.is_empty() => {
+                let header = match w.cwd.as_deref() {
+                    Some(cwd) => format!("{}  ·  {}", w.name, collapse_home(cwd)),
+                    None => w.name.clone(),
+                };
+                lines.push(Line::from(Span::styled(
+                    header,
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                let body_height = area.height.saturating_sub(6) as usize;
+                lines.extend(preview_lines(p, body_height));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "enter re-attaches  ·  d closes the window",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            _ => {
+                lines.push(Line::from(Span::styled(
+                    format!("attach into window `{}`", w.name),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "→ tmux attach -t {}:{}",
+                        app.terminals().session_name,
+                        w.index
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    detach_hint,
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        },
         Some(crate::app::TerminalsRow::NewSentinel) => {
             lines.push(Line::from(Span::styled(
                 "open a new shell",
@@ -371,6 +450,25 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Trim a captured pane's visible content to the last `max_rows`
+/// non-empty lines (drops a leading run of blank rows so the user
+/// sees content rather than empty space). Falls back to the
+/// original tail when the pane is small.
+fn preview_lines(captured: &[String], max_rows: usize) -> Vec<Line<'static>> {
+    if captured.is_empty() || max_rows == 0 {
+        return Vec::new();
+    }
+    let trimmed: &[String] = match captured.iter().rposition(|l| !l.trim().is_empty()) {
+        Some(last) => &captured[..=last],
+        None => captured,
+    };
+    let start = trimmed.len().saturating_sub(max_rows);
+    trimmed[start..]
+        .iter()
+        .map(|s| Line::from(Span::raw(s.clone())))
+        .collect()
 }
 
 /// Real Diff body: file list sidebar + diff body right pane.
@@ -1962,6 +2060,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
+            cwd: None,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 
@@ -2023,6 +2122,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
+            cwd: None,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 

@@ -263,7 +263,13 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
     // server restart. This is the smallest defensive write that
     // still catches the rebind case.
     for arg_set in [
-        ["set-option", "-t", &req.session, "destroy-unattached", "off"],
+        [
+            "set-option",
+            "-t",
+            &req.session,
+            "destroy-unattached",
+            "off",
+        ],
         ["set-option", "-t", &req.session, "remain-on-exit", "off"],
     ] {
         let _ = Command::new("tmux").args(arg_set).status().await;
@@ -309,7 +315,9 @@ enum WindowList {
     SpawnFailed(String),
 }
 
-/// Query tmux for the current window list of `session`.
+/// Query tmux for the current window list of `session`. Format
+/// uses `\t` between fields so window names / paths with spaces
+/// or colons round-trip cleanly.
 async fn list_tmux_windows(session: &str) -> WindowList {
     use tokio::process::Command;
     let output = match Command::new("tmux")
@@ -318,7 +326,7 @@ async fn list_tmux_windows(session: &str) -> WindowList {
             "-t",
             session,
             "-F",
-            "#{window_index}:#{window_name}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}",
         ])
         .stdin(std::process::Stdio::null())
         .output()
@@ -339,20 +347,51 @@ async fn list_tmux_windows(session: &str) -> WindowList {
     WindowList::Ok(parse_tmux_windows(&stdout))
 }
 
-/// Parse `tmux list-windows -F '#{window_index}:#{window_name}'`
-/// output. Lines look like `0:zsh` or `1:svc:app`. Public for tests.
+/// Capture the visible content of a tmux pane as a `Vec<String>`,
+/// one entry per visible row. Errors / missing panes return an
+/// empty Vec so the renderer can fall back to its hint text.
+async fn capture_pane(session: &str, window: u32) -> Vec<String> {
+    use tokio::process::Command;
+    let target = format!("{session}:{window}");
+    let Ok(output) = Command::new("tmux")
+        .args(["capture-pane", "-p", "-t", &target])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Parse the tab-separated `tmux list-windows -F` output we ask
+/// for. Lines look like `0\tzsh\t/home/me/proj` or
+/// `1\tsvc:app\t/`. The path may be empty for windows that haven't
+/// launched a process yet — preserved as `None`. Public for tests.
 pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
     let mut out = Vec::new();
     for line in input.lines() {
-        let Some((idx_str, name)) = line.split_once(':') else {
+        let mut parts = line.splitn(3, '\t');
+        let Some(idx_str) = parts.next() else {
+            continue;
+        };
+        let Some(name) = parts.next() else {
             continue;
         };
         let Ok(index) = idx_str.parse::<u32>() else {
             continue;
         };
+        let cwd = parts.next().map(str::to_string).filter(|s| !s.is_empty());
         out.push(crate::app::TmuxWindow {
             index,
             name: name.to_string(),
+            cwd,
         });
     }
     out
@@ -380,6 +419,15 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
                 for win in &w {
                     app.diagnostic(format!("[tmux]   {}: {}", win.index, win.name));
                 }
+            }
+            // Capture each window's visible pane content for the
+            // info-pane preview. ~5-15ms per window via
+            // `tmux capture-pane -p`; cheap enough to refresh on
+            // every windows reload.
+            let indices: Vec<u32> = w.iter().map(|win| win.index).collect();
+            for idx in &indices {
+                let lines = capture_pane(&session, *idx).await;
+                app.terminals_set_preview(*idx, lines);
             }
             app.terminals_set_windows(w);
             if expecting_session {
@@ -1227,18 +1275,32 @@ mod tests {
 
     #[test]
     fn parse_tmux_windows_handles_typical_output() {
-        let input = "0:zsh\n1:svc:app\n2:vim\n";
+        // \t-separated: index, window_name, pane_current_path.
+        let input = "0\tzsh\t/home/me/proj\n1\tsvc:app\t/\n2\tvim\t/home/me/proj/src\n";
         let windows = parse_tmux_windows(input);
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].index, 0);
         assert_eq!(windows[0].name, "zsh");
+        assert_eq!(windows[0].cwd.as_deref(), Some("/home/me/proj"));
         assert_eq!(windows[1].name, "svc:app");
+        assert_eq!(windows[1].cwd.as_deref(), Some("/"));
         assert_eq!(windows[2].index, 2);
+        assert_eq!(windows[2].cwd.as_deref(), Some("/home/me/proj/src"));
+    }
+
+    #[test]
+    fn parse_tmux_windows_handles_missing_cwd() {
+        // pane_current_path can be empty for fresh windows.
+        let input = "0\tzsh\t\n";
+        let windows = parse_tmux_windows(input);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].name, "zsh");
+        assert!(windows[0].cwd.is_none());
     }
 
     #[test]
     fn parse_tmux_windows_skips_malformed_lines() {
-        let input = "0:zsh\nnot a window\n2:vim\n";
+        let input = "0\tzsh\t/home/me\nnot a window\n2\tvim\t/home/me/src\n";
         let windows = parse_tmux_windows(input);
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].name, "zsh");

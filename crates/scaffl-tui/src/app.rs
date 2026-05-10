@@ -153,6 +153,11 @@ pub struct TerminalsState {
     /// session doesn't exist yet (sentinel + service rows still
     /// render fine).
     pub windows: Vec<TmuxWindow>,
+    /// Last captured tmux pane content per window index, refreshed
+    /// alongside the windows list. Renders in the right pane as
+    /// a preview of what's running, so the user sees more than
+    /// "press enter to attach" once a window has been used.
+    pub previews: std::collections::HashMap<u32, Vec<String>>,
     /// Selected index across the (services + windows + sentinel)
     /// concatenation that the renderer / keymap iterate.
     pub selected: usize,
@@ -161,10 +166,14 @@ pub struct TerminalsState {
 /// One tmux window as reported by `list-windows`. `name` is what
 /// tmux's `#{window_name}` resolves to right now — for an
 /// auto-renamed window this tracks the running command live.
+/// `cwd` carries the active pane's `pane_current_path` when
+/// available (`tmux list-windows -F`'s response can omit it for
+/// just-spawned windows that haven't launched a process yet).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxWindow {
     pub index: u32,
     pub name: String,
+    pub cwd: Option<String>,
 }
 
 /// One visible row in the Terminals view's sidebar. Services first
@@ -205,6 +214,7 @@ impl TerminalsState {
             tmux_available: None,
             session_name: format!("scaffl-{project}"),
             windows: Vec::new(),
+            previews: std::collections::HashMap::new(),
             selected: 0,
         }
     }
@@ -1082,14 +1092,26 @@ impl App {
     }
 
     /// Replace the cached tmux window list. Caller has just queried
-    /// `tmux list-windows`; we adopt the result and clamp selection
-    /// so it can't dangle past the list's end after a delete.
+    /// `tmux list-windows`; we adopt the result, prune previews
+    /// for windows that no longer exist, and clamp selection so
+    /// it can't dangle past the list's end after a delete.
     pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
+        let live: std::collections::HashSet<u32> = windows.iter().map(|w| w.index).collect();
+        self.terminals.previews.retain(|k, _| live.contains(k));
         self.terminals.windows = windows;
         let total = self.terminals_rows().len();
         if total > 0 && self.terminals.selected >= total {
             self.terminals.selected = total - 1;
         }
+    }
+
+    pub fn terminals_set_preview(&mut self, index: u32, lines: Vec<String>) {
+        self.terminals.previews.insert(index, lines);
+    }
+
+    /// Look up the cached preview for a tmux window index.
+    pub fn terminals_preview(&self, index: u32) -> Option<&Vec<String>> {
+        self.terminals.previews.get(&index)
     }
 
     pub fn terminals_select_next(&mut self) {
@@ -1960,10 +1982,12 @@ mod tests {
             crate::app::TmuxWindow {
                 index: 0,
                 name: "zsh".into(),
+                cwd: None,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "vim".into(),
+                cwd: None,
             },
         ]);
         let rows = app.terminals_rows();
@@ -1984,10 +2008,12 @@ mod tests {
             crate::app::TmuxWindow {
                 index: 0,
                 name: "zsh".into(),
+                cwd: None,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "svc:app".into(),
+                cwd: None,
             },
         ]);
         let rows = app.terminals_rows();
@@ -2016,6 +2042,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 3,
             name: "vim".into(),
+            cwd: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_confirm();
@@ -2033,6 +2060,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
+            cwd: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -2049,6 +2077,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
+            cwd: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -2064,6 +2093,7 @@ mod tests {
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
+            cwd: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
