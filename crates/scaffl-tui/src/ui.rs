@@ -1051,10 +1051,11 @@ fn render_run_buffer(run: &RunState, frame: &mut Frame, area: Rect) {
 // ─────────────────────── info panel body ───────────────────────
 
 /// Body for the info panel that sits above the output pane. The
-/// panel TITLE carries the item name + kind; the body is just the
-/// kv pairs (and description, when one exists). Lines render under
-/// `Padding::horizontal(2)`, so neither the kv builder nor the
-/// description wrap need to add a left gutter themselves.
+/// panel TITLE carries the item name + kind; the body is the
+/// definition list — `desc` (when present) leads as the first row,
+/// followed by the static kv pairs (in / path / forward_args / …).
+/// Lines render under `Padding::horizontal(2)`, so neither the kv
+/// builder nor the desc wrapper add a left gutter themselves.
 fn build_info_body(app: &App, item: &Item, wrap_width: usize) -> Vec<Line<'static>> {
     let (desc, kv_lines) = match item.kind {
         ItemKind::Recipe => app
@@ -1077,20 +1078,10 @@ fn build_info_body(app: &App, item: &Item, wrap_width: usize) -> Vec<Line<'stati
     };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    if !kv_lines.is_empty() {
-        lines.extend(kv_lines);
-    }
     if let Some(text) = desc {
-        if !lines.is_empty() {
-            lines.push(Line::from(""));
-        }
-        for chunk in wrap_words(&text, wrap_width) {
-            lines.push(Line::from(Span::styled(
-                chunk,
-                Style::default().fg(Color::Gray),
-            )));
-        }
+        lines.extend(kv_wrapped("desc", &text, wrap_width));
     }
+    lines.extend(kv_lines);
     lines
 }
 
@@ -1193,6 +1184,34 @@ fn kv(key: &str, value: &str) -> Line<'static> {
         Span::styled(format!("{key:<14}"), Style::default().fg(Color::DarkGray)),
         Span::raw(value.to_string()),
     ])
+}
+
+/// Same as [`kv`] but wraps long values across multiple rows with a
+/// hanging indent so continuation lines align under the value
+/// column. Used for `desc`, which is the only kv whose value can
+/// realistically run wider than the panel.
+fn kv_wrapped(key: &str, value: &str, wrap_width: usize) -> Vec<Line<'static>> {
+    const KEY_COL: usize = 14;
+    let value_width = wrap_width.saturating_sub(KEY_COL).max(1);
+    let chunks = wrap_words(value, value_width);
+    if chunks.is_empty() {
+        return vec![kv(key, "")];
+    }
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            let label = if i == 0 {
+                format!("{key:<KEY_COL$}")
+            } else {
+                " ".repeat(KEY_COL)
+            };
+            Line::from(vec![
+                Span::styled(label, Style::default().fg(Color::DarkGray)),
+                Span::raw(chunk),
+            ])
+        })
+        .collect()
 }
 
 // ─────────────────────── output pane title ───────────────────────
