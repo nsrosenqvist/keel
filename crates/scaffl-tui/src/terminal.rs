@@ -145,6 +145,38 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
                 .await;
         }
     }
+    // Inject the scaffl-flavoured status bar so users always see
+    // the detach hint. Mirrors AOE's layout: session name styled
+    // on the left, then a separator and the detach instruction;
+    // tmux's window list rides on the right of `status-left` as
+    // its built-in `status-window-format` output.
+    //
+    // Set on every attach: idempotent (overwrite-on-set), and
+    // free of "did the user customise tmux globally?" assumptions
+    // — we only touch this one session, leaving global config
+    // alone.
+    let status_left =
+        " #[fg=cyan,bold]#S#[default] #[fg=brightblack]│#[default] ctrl+b d to detach ";
+    let _ = Command::new("tmux")
+        .args([
+            "set-option",
+            "-t",
+            &req.session,
+            "status-left",
+            status_left,
+        ])
+        .status()
+        .await;
+    let _ = Command::new("tmux")
+        .args([
+            "set-option",
+            "-t",
+            &req.session,
+            "status-left-length",
+            "60",
+        ])
+        .status()
+        .await;
     // Attach. Inherits stdio.
     let _ = Command::new("tmux")
         .args(["attach", "-t", &format!("{}:{}", req.session, req.window)])
