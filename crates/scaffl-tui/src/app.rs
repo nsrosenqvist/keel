@@ -2571,6 +2571,43 @@ mod tests {
         assert_eq!(form.path_input, dirty_path);
     }
 
+    /// Up/Down arrows must move selection within the form's branch
+    /// list when focus is on the branch field. (Also covers
+    /// clamping at both ends.)
+    #[test]
+    fn switcher_form_arrow_navigation_moves_selection() {
+        let mut app = App::new(cfg());
+        app.open_worktree_switcher(rows());
+        app.switcher_select_next();
+        app.switcher_select_next();
+        app.switcher_confirm();
+        app.open_create_form(vec![
+            scaffl_runtime::BranchEntry {
+                name: "main".into(),
+                remote_only: false,
+            },
+            scaffl_runtime::BranchEntry {
+                name: "feat-x".into(),
+                remote_only: false,
+            },
+            scaffl_runtime::BranchEntry {
+                name: "feat-y".into(),
+                remote_only: false,
+            },
+        ]);
+        let sel = |a: &App| a.switcher().unwrap().creating.as_ref().unwrap().selected;
+        assert_eq!(sel(&app), 0);
+        app.switcher_form_select_next();
+        assert_eq!(sel(&app), 1);
+        app.switcher_form_select_next();
+        assert_eq!(sel(&app), 2);
+        // Clamp at end.
+        app.switcher_form_select_next();
+        assert_eq!(sel(&app), 2);
+        app.switcher_form_select_prev();
+        assert_eq!(sel(&app), 1);
+    }
+
     /// Filter narrows the displayed branches as the user types;
     /// the create-new sentinel appears only when no branch matches
     /// the input exactly.

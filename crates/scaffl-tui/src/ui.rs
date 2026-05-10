@@ -1753,15 +1753,15 @@ fn render_switcher_list(switcher: &crate::app::WorktreeSwitcher, accent: Color, 
 fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame: &mut Frame) {
     use crate::app::NewFormField;
 
-    // Visible branch rows under the input. Cap to 8 so the modal
-    // doesn't grow unbounded on repos with many branches; users
-    // narrow with the filter instead. Plus 1 if the create-new
-    // sentinel is active.
+    // Cap visible branch rows so a repo with hundreds of branches
+    // doesn't blow up the modal — users narrow with the filter.
     const MAX_BRANCH_ROWS: usize = 8;
-    let visible_options = (form.filtered.len() + if form.show_create_sentinel() { 1 } else { 0 })
-        .min(MAX_BRANCH_ROWS + 1);
-    // Two field rows + blank + N options + blank + hint + maybe error.
-    let body_rows = 2 + 1 + visible_options + 1 + 1 + if form.error.is_some() { 2 } else { 0 };
+    let total_options = form.total_options();
+    let list_rows = total_options.clamp(1, MAX_BRANCH_ROWS);
+    // Body layout (inside the block, after vertical padding):
+    //   1 row branch field + 1 row path field + 1 row blank +
+    //   list_rows + 1 row blank + 1 row hint + 2 rows error?
+    let body_rows = 2 + 1 + list_rows + 1 + 1 + if form.error.is_some() { 2 } else { 0 };
     // +4 = block borders (2) + vertical padding (2).
     let height = (body_rows as u16 + 4).min(24);
     let area = centered_rect(frame.area(), 64, height);
@@ -1782,116 +1782,128 @@ fn render_switcher_form(form: &crate::app::NewWorktreeForm, accent: Color, frame
     let path_focus = matches!(form.focus, NewFormField::Path);
     let branch_focus = matches!(form.focus, NewFormField::Branch);
 
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(body_rows);
-    lines.push(field_row(
-        "branch",
-        &form.branch_input,
-        branch_focus,
-        accent,
-    ));
-    lines.push(field_row("path", &form.path_input, path_focus, accent));
-    lines.push(Line::from(""));
-
-    // Branch list. Window onto `filtered` plus the optional sentinel
-    // row. Only the row at `selected` carries the highlight chrome.
-    let total = form.total_options();
-    let (start, end) = list_window(form.selected, MAX_BRANCH_ROWS + 1, total);
-    for option_idx in start..end {
-        let is_sentinel = option_idx == form.filtered.len() && form.show_create_sentinel();
-        let is_selected = branch_focus && option_idx == form.selected;
-        lines.push(branch_row(
-            form,
-            option_idx,
-            is_sentinel,
-            is_selected,
-            accent,
-        ));
-    }
-    if total == 0 {
-        lines.push(Line::from(Span::styled(
-            "  (no branches)",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "↑↓ pick · tab edit path · enter create · esc back",
-        Style::default().fg(Color::DarkGray),
-    )));
-    if let Some(err) = form.error.as_ref() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            err.clone(),
-            Style::default().fg(Color::Red),
-        )));
-    }
-
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Slice the inner area into the layout we sized `height` for.
+    // Stateful list in the middle gets full-width row highlights —
+    // the previous Paragraph-based layout only colored the styled
+    // span content, leaving the rest of the row uncolored.
+    let mut constraints: Vec<Constraint> = vec![
+        Constraint::Length(1), // branch field
+        Constraint::Length(1), // path field
+        Constraint::Length(1), // blank
+        Constraint::Length(list_rows as u16),
+        Constraint::Length(1), // blank
+        Constraint::Length(1), // hint
+    ];
+    if form.error.is_some() {
+        constraints.push(Constraint::Length(1)); // blank
+        constraints.push(Constraint::Length(1)); // error
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(field_row(
+            "branch",
+            &form.branch_input,
+            branch_focus,
+            accent,
+        )),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(field_row("path", &form.path_input, path_focus, accent)),
+        chunks[1],
+    );
+
+    if total_options == 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "(no branches)",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            chunks[3],
+        );
+    } else {
+        let items: Vec<ListItem> = (0..total_options)
+            .map(|option_idx| ListItem::new(branch_row(form, option_idx, accent)))
+            .collect();
+        // Highlight only when the branch field is the focused one.
+        // Path-focus mode still renders the list (so users see what
+        // they'd be picking) but with no active row.
+        let highlight_style = if branch_focus {
+            Style::default()
+                .fg(SELECTION_FG)
+                .bg(SELECTION_BG)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let list = List::new(items)
+            .highlight_style(highlight_style)
+            .highlight_spacing(HighlightSpacing::Always);
+        let mut state = ListState::default();
+        state.select(if branch_focus {
+            Some(form.selected)
+        } else {
+            None
+        });
+        frame.render_stateful_widget(list, chunks[3], &mut state);
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "↑↓ pick · tab edit path · enter create · esc back",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[5],
+    );
+    if let Some(err) = form.error.as_ref() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                err.clone(),
+                Style::default().fg(Color::Red),
+            ))),
+            chunks[7],
+        );
+    }
 }
 
-/// Render one row of the branch picker. Existing branches show as
-/// `<name>` (with a `[remote]` tag when remote-only); the sentinel
-/// row reads `+ create branch '<input>' off HEAD`.
+/// Render one row of the branch picker as a `Line`. The parent
+/// `List` widget paints the full-width highlight when the row is
+/// selected, so we don't need a per-row "▶ " marker. Existing
+/// branches show as `<name>` (with a `[remote]` tag when remote-
+/// only); the sentinel row reads `+ create branch '<input>' off HEAD`.
 fn branch_row(
     form: &crate::app::NewWorktreeForm,
     option_idx: usize,
-    is_sentinel: bool,
-    is_selected: bool,
     accent: Color,
 ) -> Line<'static> {
-    let row_style = if is_selected {
-        Style::default()
-            .fg(SELECTION_FG)
-            .bg(SELECTION_BG)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    let prefix = if is_selected { "▶ " } else { "  " };
+    let is_sentinel = option_idx == form.filtered.len() && form.show_create_sentinel();
     if is_sentinel {
         return Line::from(vec![
-            Span::styled(prefix.to_string(), row_style),
+            Span::raw(" "),
             Span::styled(
                 format!("+ create branch '{}' off HEAD", form.branch_input),
-                if is_selected {
-                    row_style
-                } else {
-                    Style::default().fg(accent)
-                },
+                Style::default().fg(accent),
             ),
         ]);
     }
     let entry = &form.branches[form.filtered[option_idx]];
-    let mut spans = vec![
-        Span::styled(prefix.to_string(), row_style),
-        Span::styled(entry.name.clone(), row_style),
-    ];
+    let mut spans = vec![Span::raw(" "), Span::raw(entry.name.clone())];
     if entry.remote_only {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             "[remote]".to_string(),
-            if is_selected {
-                row_style
-            } else {
-                Style::default().fg(Color::DarkGray)
-            },
+            Style::default().fg(Color::DarkGray),
         ));
     }
     Line::from(spans)
-}
-
-/// Pick a window [start, end) over `total` items keeping `selected`
-/// roughly centered, with a max of `visible` rows. Mirrors the
-/// `window` helper used by the palette / switcher list.
-fn list_window(selected: usize, visible: usize, total: usize) -> (usize, usize) {
-    if total <= visible {
-        return (0, total);
-    }
-    let half = visible / 2;
-    let start = selected.saturating_sub(half).min(total - visible);
-    (start, start + visible)
 }
 
 fn field_row(label: &'static str, value: &str, focused: bool, accent: Color) -> Line<'static> {
