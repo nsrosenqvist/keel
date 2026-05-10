@@ -158,7 +158,7 @@ fn render_tmux_missing(frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(Span::styled(
-            "  then press T again or restart scaffl.",
+            "  then press T again, or restart scaffl.",
             Style::default().fg(Color::DarkGray),
         )),
     ])
@@ -1782,14 +1782,14 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             ("↑↓", "nav"),
             ("enter", "attach"),
             ("d", "delete"),
-            ("c", "control"),
+            ("C", "control"),
             ("W", "worktree"),
             ("q", "quit"),
         ],
         crate::app::View::Diff => vec![
             ("↑↓", "nav"),
             ("r", "refresh"),
-            ("c", "control"),
+            ("C", "control"),
             ("W", "worktree"),
             ("q", "quit"),
         ],
@@ -1820,7 +1820,7 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         // View / worktree switches at the end so they never compete
         // with the action keys above for short-list real estate.
         hints.push(("T", "terminals"));
-        hints.push(("g", "diff"));
+        hints.push(("G", "diff"));
         hints.push(("W", "worktree"));
     }
     hints.push(("/  :", "palette"));

@@ -192,23 +192,21 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         return;
     }
 
-    // Top-level view switches. Apply before per-view dispatch so a
-    // view's own keymap can't shadow them. `g` is dedicated to the
-    // diff view; users wanting "jump to first row" use `Home`
-    // (vim's `gg` would conflict with the chord-less single-press
-    // model the rest of the keymap uses).
+    // Top-level view switches. All uppercase for one consistent
+    // mental model — view changes are deliberate, shift-modified
+    // keys; lowercase letters stay free for per-view actions.
     match code {
         KeyCode::Char('T') => {
             app.switch_view(crate::app::View::Terminals);
             ensure_tmux_probed(app).await;
             return;
         }
-        KeyCode::Char('g') => {
+        KeyCode::Char('G') => {
             app.switch_view(crate::app::View::Diff);
             ensure_diff_loaded(app).await;
             return;
         }
-        KeyCode::Char('c') if app.view() != crate::app::View::ControlCenter => {
+        KeyCode::Char('C') if app.view() != crate::app::View::ControlCenter => {
             app.switch_view(crate::app::View::ControlCenter);
             return;
         }
@@ -232,7 +230,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Home => app.select_first(),
-        KeyCode::Char('G') | KeyCode::End => app.select_last(),
+        KeyCode::End => app.select_last(),
         // Palette: `:` (vim-style), `/` (fuzzy-search-style).
         KeyCode::Char(':') | KeyCode::Char('/') => app.open_palette(),
         // Service controls follow a single rule:
@@ -939,10 +937,11 @@ mod tests {
         assert_eq!(app.selected_index(), 1);
         handle_event(&mut app, press(KeyCode::Down)).await;
         assert_eq!(app.selected_index(), 2);
-        handle_event(&mut app, press(KeyCode::Char('G'))).await;
+        // End jumps to last; Home jumps to first. `G` was vim-style
+        // last-row but is now the diff-view switcher (uppercase
+        // letters are reserved for view switches).
+        handle_event(&mut app, press(KeyCode::End)).await;
         assert_eq!(app.selected_index(), 2);
-        // Home jumps to first row. (`g` used to do this; now it's
-        // the diff-view switcher.)
         handle_event(&mut app, press(KeyCode::Home)).await;
         assert_eq!(app.selected_index(), 0);
     }
@@ -956,10 +955,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lowercase_g_switches_to_diff_view() {
+    async fn capital_g_switches_to_diff_view() {
+        let mut app = app_with("[command.x]\nrun = \"true\"\n");
+        handle_event(&mut app, press(KeyCode::Char('G'))).await;
+        assert_eq!(app.view(), crate::app::View::Diff);
+    }
+
+    #[tokio::test]
+    async fn lowercase_g_does_not_switch_views() {
+        // Used to switch to diff; now reserved (uppercase only for
+        // view changes). Asserts we don't accidentally rewire it.
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('g'))).await;
-        assert_eq!(app.view(), crate::app::View::Diff);
+        assert_eq!(app.view(), crate::app::View::ControlCenter);
     }
 
     #[test]
@@ -990,10 +998,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lowercase_c_returns_to_control_center() {
+    async fn capital_c_returns_to_control_center() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         app.switch_view(crate::app::View::Diff);
-        handle_event(&mut app, press(KeyCode::Char('c'))).await;
+        handle_event(&mut app, press(KeyCode::Char('C'))).await;
         assert_eq!(app.view(), crate::app::View::ControlCenter);
     }
 
