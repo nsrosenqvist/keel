@@ -63,6 +63,28 @@ pub enum Command {
         #[arg(long)]
         template: Option<commands::init::Template>,
     },
+    /// Run the project's install steps (first-time setup, idempotent on re-run).
+    Install {
+        /// Optional step name — run only that step in isolation. Useful
+        /// when a maintainer adds one new step that every teammate
+        /// needs to apply (migration-style).
+        step: Option<String>,
+        /// Non-interactive resume from the first unresolved step.
+        #[arg(long, conflicts_with_all = ["restart", "step"])]
+        resume: bool,
+        /// Wipe install state and run every step from scratch.
+        #[arg(long, conflicts_with_all = ["resume", "step"])]
+        restart: bool,
+        /// Print the resolved step plan without executing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Print the plan plus the last-known status per step.
+        #[arg(long)]
+        list: bool,
+        /// Force-refresh external hook repo caches.
+        #[arg(long)]
+        update_hooks: bool,
+    },
     /// Open the TUI dashboard.
     Ui,
     /// Manage git hooks (install / run / uninstall).
@@ -224,6 +246,30 @@ pub async fn run(cli: Cli) -> Result<()> {
                     std::process::exit(code);
                 }
             },
+            Command::Install {
+                step,
+                resume,
+                restart,
+                dry_run,
+                list,
+                update_hooks,
+            } => {
+                let code = dispatch_install(
+                    Arc::clone(&cfg_arc),
+                    project_root.clone(),
+                    commands::install::InstallArgs {
+                        step,
+                        resume,
+                        restart,
+                        dry_run,
+                        list,
+                        update_hooks,
+                        assume_fresh: false,
+                    },
+                )
+                .await?;
+                std::process::exit(code);
+            }
         };
     }
 
@@ -281,6 +327,72 @@ pub async fn run(cli: Cli) -> Result<()> {
             anyhow::bail!("no such command `{name}`");
         }
     }
+}
+
+/// Build the install plan, write the auto-managed `.scaffl/.gitignore`,
+/// handle the resume prompt when state is mid-flight, then hand off to
+/// the install runner.
+async fn dispatch_install(
+    config: Arc<Config>,
+    project_root: PathBuf,
+    mut args: commands::install::InstallArgs,
+) -> Result<i32> {
+    let plan = commands::install::plan::resolve(&config, &project_root)?;
+
+    // Refresh the gitignore on every invocation. Idempotent; cheap.
+    ensure_scaffl_gitignore(&config, &project_root).context("update .scaffl/.gitignore")?;
+
+    let bypass_prompt =
+        args.resume || args.restart || args.dry_run || args.list || args.step.is_some();
+    if !bypass_prompt
+        && let Some(state) = commands::install::state::InstallState::load(&project_root)?
+        && let Some(idx) = state.first_unresolved()
+    {
+        let name = plan
+            .get(idx)
+            .map(|s| s.name.as_str())
+            .unwrap_or("<unknown>");
+        let prompt = format!("Previous install stopped at `{name}`. Resume from there? [Y/n]");
+        // Use dialoguer for the prompt, but only when stdin is a tty —
+        // otherwise act as if the user said "yes" (CI runs and piped
+        // invocations want non-interactive resume by default).
+        let want_resume = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            dialoguer::Confirm::new()
+                .with_prompt(prompt)
+                .default(true)
+                .interact()
+                .unwrap_or(true)
+        } else {
+            true
+        };
+        if want_resume {
+            args.resume = true;
+        } else {
+            args.assume_fresh = true;
+        }
+    }
+
+    let backend = build_backend(&config).await?;
+    commands::install::run(config, project_root, backend, plan, args).await
+}
+
+/// Write the project-managed `.scaffl/.gitignore` block. Path is
+/// configurable via `[install].gitignore` (default `.scaffl/.gitignore`).
+fn ensure_scaffl_gitignore(config: &Config, project_root: &Path) -> Result<()> {
+    let rel = &config.install.gitignore;
+    let p = Path::new(rel);
+    let path = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        project_root.join(p)
+    };
+    // The block lives inside `.scaffl/` by default, so the ignore
+    // patterns are relative to that directory. Users moving the file
+    // elsewhere are responsible for prefixing the patterns themselves.
+    let body = "local.toml\nworktrees/\ncache/\ninstall.state.json\n";
+    scaffl_config::managed_block::write(&path, body)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
 
 /// Build a fully-configured Executor for CLI dispatch: detects the
