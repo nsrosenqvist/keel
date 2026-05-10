@@ -19,6 +19,6 @@ pub use executor::Executor;
 pub use resolver::{Resolution, Resolver, ResolverContext};
 pub use sink::{ChannelSink, InheritSink, OutputLine, OutputSink, OutputStream};
 pub use worktree::{
-    BaseRef, BranchEntry, Identity, WorktreeListEntry, detect_trunk, list_branches, merge_base,
-    slugify,
+    BaseRef, BranchEntry, Identity, WorktreeListEntry, detect_trunk, git_toplevel, list_branches,
+    merge_base, slugify,
 };

@@ -1142,7 +1142,14 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
             crate::app::SwitcherConfirm::OpenCreateForm => {
                 let project_root = app.project_root().to_path_buf();
                 let branches = scaffl_runtime::list_branches(&project_root).await;
-                app.open_create_form(branches);
+                // Anchor new worktrees against the git toplevel's
+                // parent so they land next to the repo no matter
+                // where scaffl was invoked from (e.g. running in
+                // `<repo>/tmp/test` shouldn't push them into tmp/).
+                let parent = scaffl_runtime::git_toplevel(&project_root)
+                    .await
+                    .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
+                app.open_create_form(branches, parent);
             }
             crate::app::SwitcherConfirm::Switched | crate::app::SwitcherConfirm::NoOp => {}
         },

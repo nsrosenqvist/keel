@@ -2270,16 +2270,19 @@ mod tests {
         app.switcher_select_next();
         app.switcher_confirm();
         // Provide a couple of fake branches.
-        app.open_create_form(vec![
-            scaffl_runtime::BranchEntry {
-                name: "main".into(),
-                remote_only: false,
-            },
-            scaffl_runtime::BranchEntry {
-                name: "feat-x".into(),
-                remote_only: false,
-            },
-        ]);
+        app.open_create_form(
+            vec![
+                scaffl_runtime::BranchEntry {
+                    name: "main".into(),
+                    remote_only: false,
+                },
+                scaffl_runtime::BranchEntry {
+                    name: "feat-x".into(),
+                    remote_only: false,
+                },
+            ],
+            None,
+        );
         terminal.draw(|f| render(&app, f)).unwrap();
         let buffer = terminal.backend().buffer();
         let mut text = String::new();

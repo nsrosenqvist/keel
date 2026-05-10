@@ -182,6 +182,21 @@ pub async fn merge_base(project_root: &Path, trunk: &str) -> Option<String> {
     git_output(project_root, &["merge-base", trunk, "HEAD"]).await
 }
 
+/// Resolve the top of the current git working tree —
+/// `git rev-parse --show-toplevel`. This is the right anchor for
+/// "where should a new worktree go?" because it normalises away
+/// the user's invocation cwd: scaffl run from a subdir, a linked
+/// worktree, or the main checkout all collapse to the same answer
+/// (the worktree's root), and its parent is the natural sibling
+/// directory for `git worktree add <path>`.
+///
+/// Returns None outside a git repo or on `git` failure.
+pub async fn git_toplevel(project_root: &Path) -> Option<std::path::PathBuf> {
+    git_output(project_root, &["rev-parse", "--show-toplevel"])
+        .await
+        .map(std::path::PathBuf::from)
+}
+
 /// One row in the branch picker for the worktree-create form. Bare
 /// short names — what `git worktree add` accepts directly. When
 /// `remote_only` is true, no local branch of this name exists yet;

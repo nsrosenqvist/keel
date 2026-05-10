@@ -1132,17 +1132,29 @@ impl App {
     /// Open the create form with a pre-fetched branch list. Caller
     /// runs `scaffl_runtime::list_branches` first (async) and hands
     /// the result in here (sync).
-    pub fn open_create_form(&mut self, branches: Vec<scaffl_runtime::BranchEntry>) {
+    ///
+    /// `parent_override` is where new worktrees should be placed by
+    /// default (Some = use this, None = fall back to the parent of
+    /// the App's project root). The terminal layer typically passes
+    /// `Some(git_toplevel.parent())` so a new worktree lands next
+    /// to the repo regardless of where scaffl was invoked from —
+    /// running scaffl in `<repo>/tmp/test` shouldn't make new
+    /// worktrees land under `tmp/`.
+    pub fn open_create_form(
+        &mut self,
+        branches: Vec<scaffl_runtime::BranchEntry>,
+        parent_override: Option<std::path::PathBuf>,
+    ) {
         let Some(s) = self.switcher.as_mut() else {
             return;
         };
         // `Path::new(".").parent()` returns `Some("")` (the empty
         // path), which makes `Path::join` drop the parent entirely.
         // Fall back to the project root when parent is empty too.
-        let parent = match self.project_root.parent() {
+        let parent = parent_override.unwrap_or_else(|| match self.project_root.parent() {
             Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
             _ => self.project_root.clone(),
-        };
+        });
         let filtered: Vec<usize> = (0..branches.len()).collect();
         let form = NewWorktreeForm {
             branch_input: String::new(),
@@ -2197,7 +2209,7 @@ mod tests {
         // The form isn't populated yet — terminal layer fetches
         // branches async, then calls open_create_form.
         assert!(app.switcher().unwrap().creating.is_none());
-        app.open_create_form(Vec::new());
+        app.open_create_form(Vec::new(), None);
         assert_eq!(app.mode(), Mode::WorktreeSwitcher);
         assert!(app.switcher().unwrap().creating.is_some());
     }
@@ -2209,7 +2221,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
-        app.open_create_form(Vec::new());
+        app.open_create_form(Vec::new(), None);
         app.switcher_form_finish(Ok(PathBuf::from("/repo-new")));
         assert_eq!(app.take_pending_switch(), Some(PathBuf::from("/repo-new")));
         assert_eq!(app.mode(), Mode::Normal);
@@ -2222,7 +2234,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
-        app.open_create_form(Vec::new());
+        app.open_create_form(Vec::new(), None);
         app.switcher_form_finish(Err("git: branch already exists".into()));
         assert_eq!(app.mode(), Mode::WorktreeSwitcher);
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
@@ -2521,7 +2533,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
-        app.open_create_form(Vec::new());
+        app.open_create_form(Vec::new(), None);
         let initial = app.switcher().unwrap().creating.as_ref().unwrap().focus;
         app.switcher_form_toggle_focus();
         let toggled = app.switcher().unwrap().creating.as_ref().unwrap().focus;
@@ -2539,7 +2551,7 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
-        app.open_create_form(Vec::new());
+        app.open_create_form(Vec::new(), None);
 
         // Type "feat/auth" → path follows along.
         for c in "feat/auth".chars() {
@@ -2581,20 +2593,23 @@ mod tests {
         app.switcher_select_next();
         app.switcher_select_next();
         app.switcher_confirm();
-        app.open_create_form(vec![
-            scaffl_runtime::BranchEntry {
-                name: "main".into(),
-                remote_only: false,
-            },
-            scaffl_runtime::BranchEntry {
-                name: "feat-x".into(),
-                remote_only: false,
-            },
-            scaffl_runtime::BranchEntry {
-                name: "feat-y".into(),
-                remote_only: false,
-            },
-        ]);
+        app.open_create_form(
+            vec![
+                scaffl_runtime::BranchEntry {
+                    name: "main".into(),
+                    remote_only: false,
+                },
+                scaffl_runtime::BranchEntry {
+                    name: "feat-x".into(),
+                    remote_only: false,
+                },
+                scaffl_runtime::BranchEntry {
+                    name: "feat-y".into(),
+                    remote_only: false,
+                },
+            ],
+            None,
+        );
         let sel = |a: &App| a.switcher().unwrap().creating.as_ref().unwrap().selected;
         assert_eq!(sel(&app), 0);
         app.switcher_form_select_next();
@@ -2632,7 +2647,7 @@ mod tests {
                 remote_only: false,
             },
         ];
-        app.open_create_form(branches);
+        app.open_create_form(branches, None);
 
         // Empty input → all branches visible, no sentinel.
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
