@@ -1946,4 +1946,100 @@ mod tests {
         app.open_palette();
         terminal.draw(|f| render(&app, f)).unwrap();
     }
+
+    /// Reproduces the user's report: enter terminals view, create a
+    /// new shell, detach, refresh shows 1 window. The sidebar must
+    /// render that window — if the row is missing the test asserts
+    /// here. Buffer dump on failure tells us where it actually
+    /// landed.
+    #[test]
+    fn terminals_view_renders_a_window_row() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(cfg());
+        app.set_tmux_available(true);
+        app.switch_view(crate::app::View::Terminals);
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+        }]);
+        terminal.draw(|f| render(&app, f)).unwrap();
+
+        // Dump the rendered buffer into a string so we can search
+        // it for the window's name. The test fixture has no
+        // services, so the row should land in the only sidebar
+        // group.
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(
+            text.contains("zsh"),
+            "expected 'zsh' in rendered sidebar, got:\n{text}"
+        );
+        assert!(
+            text.contains("new shell"),
+            "expected '+ new shell' sentinel, got:\n{text}"
+        );
+    }
+
+    /// Same as the previous test but with services in the sidebar
+    /// (matching the user's tmp/test fixture which auto-discovers
+    /// `app` and `worker` from docker-compose). The terminals
+    /// group has to share vertical real estate with services here
+    /// — if the constraint math is wrong, the window row gets
+    /// pushed out of the visible area.
+    #[test]
+    fn terminals_view_renders_window_alongside_services() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let cfg = Arc::new(
+            scaffl_config::parse_str(
+                r#"
+                [project]
+                name = "tuitest"
+
+                [containers]
+                backend = "none"
+
+                [[ui.pane]]
+                type    = "service"
+                service = "app"
+
+                [[ui.pane]]
+                type    = "service"
+                service = "worker"
+            "#,
+            )
+            .unwrap(),
+        );
+        let mut app = App::new(cfg);
+        app.set_tmux_available(true);
+        app.switch_view(crate::app::View::Terminals);
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+        }]);
+        terminal.draw(|f| render(&app, f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(
+            text.contains("zsh"),
+            "expected 'zsh' alongside services, got:\n{text}"
+        );
+        // Always print so we can eyeball the actual layout — passes
+        // either way; failure already prints text.
+        println!("---rendered buffer---\n{text}---end---");
+    }
 }

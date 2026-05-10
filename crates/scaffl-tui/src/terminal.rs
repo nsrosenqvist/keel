@@ -335,9 +335,6 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
     match list_tmux_windows(&session).await {
         WindowList::Ok(w) => {
             if expecting_session {
-                // Buffer a diagnostic regardless of outcome — useful
-                // for confirming the path got hit at all when
-                // debugging "list emptied after detach" reports.
                 app.diagnostic(format!(
                     "[tmux] post-attach refresh of `{session}`: {} window(s)",
                     w.len()
@@ -347,6 +344,24 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
                 }
             }
             app.terminals_set_windows(w);
+            if expecting_session {
+                // Cross-check: dump what scaffl will *render* in the
+                // sidebar. If this list disagrees with what tmux
+                // returned, the bug is in our row assembly /
+                // filter, not tmux.
+                let rows = app.terminals_rows();
+                app.diagnostic(format!("[ui] sidebar rows: {} total", rows.len()));
+                for (i, row) in rows.iter().enumerate() {
+                    let label = match row {
+                        crate::app::TerminalsRow::Service(name) => format!("Service({name})"),
+                        crate::app::TerminalsRow::Window(w) => {
+                            format!("Window({}: {})", w.index, w.name)
+                        }
+                        crate::app::TerminalsRow::NewSentinel => "NewSentinel".into(),
+                    };
+                    app.diagnostic(format!("[ui]   {i}: {label}"));
+                }
+            }
         }
         WindowList::NoSession(msg) => {
             app.terminals_set_windows(Vec::new());
