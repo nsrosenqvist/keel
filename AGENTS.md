@@ -227,6 +227,37 @@ Without one of those reasons, omit the block — auto-discovery does
 the same job and the redundant declarations rot when the
 docker-compose.yml service list changes.
 
+## Diff view
+
+The diff view (`G`) is a built-in branch-review surface anchored to
+the merge-base with the project's trunk branch. Scope: every file
+that differs from the merge-base — committed-since-branching plus
+working-tree changes plus untracked files (filtered through
+`.gitignore`). Not the working-tree-vs-last-commit slice that `git
+diff HEAD` shows.
+
+Trunk resolution order:
+
+1. `[diff] base = "..."` in `scaffl.toml` if set.
+2. `git symbolic-ref refs/remotes/origin/HEAD` — the remote default
+   branch when a remote is configured.
+3. Local fallback: `main`, `master`, `develop`, `trunk`, in order.
+4. None of the above → fall back to `git diff HEAD` so the view
+   still works in repos with no trunk yet (fresh `git init`,
+   detached repos, etc.).
+
+The chosen trunk is surfaced in the top bar as `<branch> vs <trunk>`
+so users always see what the file count and per-file diffs are
+anchored against. The merge-base SHA is recomputed on every
+refresh (`r` in the diff view, or any view-switch back to it), so
+`git pull origin main` advancing the trunk shifts subsequent
+comparisons forward instead of staying pinned.
+
+Override exists for projects that don't follow the conventional
+trunk names — `release/stable`, `dev`, etc. Set `[diff] base =
+"release/stable"` and detection short-circuits before any git
+lookup.
+
 ## Layout
 
 ```

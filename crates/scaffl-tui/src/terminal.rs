@@ -835,11 +835,29 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
 /// at startup; the diff view's normal lazy-load path takes over from
 /// there.
 pub(crate) async fn preload_diff_status(app: &mut App) {
+    refresh_diff_anchor(app).await;
     let project_root = app.project_root().to_path_buf();
-    match load_diff_files(&project_root).await {
+    let anchor = app.diff().anchor.clone();
+    match load_diff_files(&project_root, anchor.as_deref()).await {
         Ok(files) => app.diff_set_files(files),
         Err(msg) => app.diff_set_error(msg),
     }
+}
+
+/// Resolve the trunk branch (config override → remote default →
+/// local fallback) and its merge-base with HEAD, then store both on
+/// the app. Cheap enough to redo on every diff refresh — the trunk
+/// can move forward (`git pull origin main`) and we want subsequent
+/// diffs to anchor against the new merge-base.
+async fn refresh_diff_anchor(app: &mut App) {
+    let project_root = app.project_root().to_path_buf();
+    let configured = app.config().diff.base.clone();
+    let trunk = scaffl_runtime::detect_trunk(&project_root, configured.as_deref()).await;
+    let anchor = match trunk.as_deref() {
+        Some(t) => scaffl_runtime::merge_base(&project_root, t).await,
+        None => None,
+    };
+    app.diff_set_anchor(trunk, anchor);
 }
 
 /// Populate the diff file list if it hasn't been loaded yet, and
@@ -847,8 +865,13 @@ pub(crate) async fn preload_diff_status(app: &mut App) {
 /// subsequent calls thanks to the per-file cache.
 async fn ensure_diff_loaded(app: &mut App) {
     if !app.diff().loaded {
+        // Refresh anchor on every reload so a freshly-pulled trunk
+        // shifts the comparison forward instead of staying pinned to
+        // the merge-base we resolved at startup.
+        refresh_diff_anchor(app).await;
         let project_root = app.project_root().to_path_buf();
-        match load_diff_files(&project_root).await {
+        let anchor = app.diff().anchor.clone();
+        match load_diff_files(&project_root, anchor.as_deref()).await {
             Ok(files) => app.diff_set_files(files),
             Err(msg) => app.diff_set_error(msg),
         }
@@ -864,11 +887,80 @@ async fn ensure_diff_for_selected(app: &mut App) {
         return;
     }
     let project_root = app.project_root().to_path_buf();
-    let lines = load_diff_for_file(&project_root, &file).await;
+    let anchor = app.diff().anchor.clone();
+    let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
     app.diff_set_cache(file.path.clone(), lines);
 }
 
+/// Build the changed-file list. With `anchor` set, we want
+/// "everything that differs from the merge-base, plus untracked
+/// files" — that's `git diff --name-status <anchor>` (committed
+/// since branching + working-tree changes against tracked files)
+/// merged with `git ls-files --others --exclude-standard`
+/// (currently-untracked files). Without an anchor, fall back to
+/// `git status --porcelain` so we still work in repos where no
+/// trunk could be detected (e.g. fresh `git init` with no commits
+/// past HEAD).
 async fn load_diff_files(
+    project_root: &std::path::Path,
+    anchor: Option<&str>,
+) -> Result<Vec<crate::app::DiffFile>, String> {
+    use std::collections::BTreeMap;
+    let Some(anchor) = anchor else {
+        return load_diff_files_fallback(project_root).await;
+    };
+
+    // Tracked changes against the anchor.
+    let diff_out = tokio::process::Command::new("git")
+        .args(["diff", "--name-status", anchor])
+        .current_dir(project_root)
+        .output()
+        .await
+        .map_err(|e| format!("git diff --name-status failed: {e}"))?;
+    if !diff_out.status.success() {
+        // Anchor invalid (rare — `merge_base` already returned Some)
+        // — fall back to porcelain so the view still works.
+        return load_diff_files_fallback(project_root).await;
+    }
+
+    // Untracked files (not yet `git add`-ed). `--exclude-standard`
+    // applies .gitignore so we don't surface build artifacts.
+    let untracked_out = tokio::process::Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(project_root)
+        .output()
+        .await
+        .map_err(|e| format!("git ls-files failed: {e}"))?;
+
+    // Merge into a BTreeMap keyed by path so a file that's both
+    // tracked-modified AND showing up in ls-files (shouldn't happen,
+    // but defensive) doesn't appear twice.
+    let mut files: BTreeMap<String, crate::app::DiffStatus> = BTreeMap::new();
+    let diff_text = String::from_utf8_lossy(&diff_out.stdout);
+    for entry in parse_diff_name_status(&diff_text) {
+        files.insert(entry.path, entry.status);
+    }
+    if untracked_out.status.success() {
+        let untracked_text = String::from_utf8_lossy(&untracked_out.stdout);
+        for path in untracked_text.lines() {
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            files
+                .entry(path.to_string())
+                .or_insert(crate::app::DiffStatus::Untracked);
+        }
+    }
+    Ok(files
+        .into_iter()
+        .map(|(path, status)| crate::app::DiffFile { path, status })
+        .collect())
+}
+
+/// Old behaviour, kept as a fallback when no trunk could be
+/// detected: list whatever the working tree differs from HEAD on.
+async fn load_diff_files_fallback(
     project_root: &std::path::Path,
 ) -> Result<Vec<crate::app::DiffFile>, String> {
     let output = tokio::process::Command::new("git")
@@ -885,6 +977,49 @@ async fn load_diff_files(
     }
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(parse_status_porcelain(&stdout))
+}
+
+/// Parse `git diff --name-status <anchor>` output. Each line is one
+/// status letter + tab + path (rename = `R<similarity>\told\tnew`).
+/// Untracked files don't appear here — the caller pulls them
+/// separately from `git ls-files --others`.
+pub(crate) fn parse_diff_name_status(input: &str) -> Vec<DiffNameStatusEntry> {
+    use crate::app::DiffStatus;
+    let mut out = Vec::new();
+    for line in input.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let Some(status_field) = parts.next() else {
+            continue;
+        };
+        let letter = status_field.chars().next().unwrap_or(' ');
+        let status = match letter {
+            'A' => DiffStatus::Added,
+            'D' => DiffStatus::Deleted,
+            'M' => DiffStatus::Modified,
+            'R' => DiffStatus::Renamed,
+            'C' => DiffStatus::Other, // copy
+            _ => DiffStatus::Other,
+        };
+        // Rename rows have two paths; we want the *destination*.
+        // Empty path field → malformed; skip rather than emit a row
+        // with an empty path that would render as a blank sidebar
+        // entry.
+        let path = match (parts.next(), parts.next()) {
+            (Some(_old), Some(new)) if !new.is_empty() => new.to_string(),
+            (Some(p), None) if !p.is_empty() => p.to_string(),
+            _ => continue,
+        };
+        out.push(DiffNameStatusEntry { path, status });
+    }
+    out
+}
+
+pub(crate) struct DiffNameStatusEntry {
+    pub path: String,
+    pub status: crate::app::DiffStatus,
 }
 
 /// Parse `git status --porcelain=v1` output. Each line is two
@@ -923,16 +1058,18 @@ pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::app::DiffFile> {
 async fn load_diff_for_file(
     project_root: &std::path::Path,
     file: &crate::app::DiffFile,
+    anchor: Option<&str>,
 ) -> Vec<crate::app::DiffLine> {
     use crate::app::{DiffLine, DiffLineKind, DiffStatus};
-    // Untracked files don't exist in HEAD — `git diff HEAD <path>`
+    // Untracked files don't exist in HEAD or the anchor — git diff
     // would error. Synthesise a file-as-added view with the file
     // contents prefixed by `+`.
     if file.status == DiffStatus::Untracked {
         return load_untracked_as_diff(project_root, &file.path).await;
     }
+    let base = anchor.unwrap_or("HEAD");
     let output = match tokio::process::Command::new("git")
-        .args(["diff", "HEAD", "--", &file.path])
+        .args(["diff", base, "--", &file.path])
         .current_dir(project_root)
         .output()
         .await
@@ -1396,6 +1533,29 @@ mod tests {
         // Renames carry the destination as the path.
         assert_eq!(files[4].status, DiffStatus::Renamed);
         assert_eq!(files[4].path, "new.txt");
+    }
+
+    #[test]
+    fn parse_diff_name_status_basic() {
+        use crate::app::DiffStatus;
+        let input = "M\tsrc/main.rs\nA\tsrc/lib.rs\nD\tCargo.toml\nR090\told.txt\tnew.txt\n";
+        let entries = parse_diff_name_status(input);
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].status, DiffStatus::Modified);
+        assert_eq!(entries[0].path, "src/main.rs");
+        assert_eq!(entries[1].status, DiffStatus::Added);
+        assert_eq!(entries[2].status, DiffStatus::Deleted);
+        // Renames take the destination path, not the source.
+        assert_eq!(entries[3].status, DiffStatus::Renamed);
+        assert_eq!(entries[3].path, "new.txt");
+    }
+
+    #[test]
+    fn parse_diff_name_status_skips_blank_and_malformed() {
+        let input = "\nM\n\t\nM\tok.rs\n";
+        let entries = parse_diff_name_status(input);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "ok.rs");
     }
 
     #[tokio::test]

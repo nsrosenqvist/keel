@@ -698,6 +698,20 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
             branch.to_string(),
             Style::default().fg(Color::Gray),
         ));
+        // "vs <trunk>" — surfaces what the diff view is anchored
+        // against so users know whether `●3` means "3 working-tree
+        // changes" or "3 files differ from main." Hidden when the
+        // current branch IS the trunk (showing "main vs main" reads
+        // odd) and when no trunk could be detected.
+        if let Some(trunk) = app.diff().trunk.as_deref()
+            && trunk != branch
+        {
+            spans.push(Span::styled(" vs ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                trunk.to_string(),
+                Style::default().fg(Color::Gray),
+            ));
+        }
         let dirty = app.diff().files.len();
         if app.diff().loaded && dirty > 0 {
             spans.push(Span::raw(" "));

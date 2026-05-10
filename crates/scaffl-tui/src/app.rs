@@ -233,6 +233,16 @@ pub struct DiffState {
     pub loaded: bool,
     /// Last error from `git status` / `git diff`, if any.
     pub error: Option<String>,
+    /// Trunk branch the diff is scoped against (e.g. "main"). None
+    /// when no trunk could be detected — diff falls back to
+    /// `git diff HEAD` and the top bar omits the `vs <trunk>` slot.
+    pub trunk: Option<String>,
+    /// SHA of the merge-base between `trunk` and HEAD. The diff
+    /// commands compare working tree against this anchor so users
+    /// see "everything I've changed since branching off trunk"
+    /// rather than just the working-tree-vs-last-commit slice.
+    /// None → fall back to HEAD as the anchor.
+    pub anchor: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1316,6 +1326,15 @@ impl App {
     pub fn diff_set_error(&mut self, msg: String) {
         self.diff.error = Some(msg);
         self.diff.loaded = true;
+    }
+
+    /// Pin the trunk branch + merge-base SHA the diff loaders should
+    /// use as their anchor. Either may be None: a trunk without a
+    /// merge-base means the trunk exists but has no shared history
+    /// (rare); no trunk at all means we degrade to `git diff HEAD`.
+    pub fn diff_set_anchor(&mut self, trunk: Option<String>, anchor: Option<String>) {
+        self.diff.trunk = trunk;
+        self.diff.anchor = anchor;
     }
 
     pub fn diff_select_next(&mut self) {

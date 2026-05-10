@@ -138,6 +138,50 @@ async fn detect_base_ref(project_root: &Path) -> BaseRef {
     BaseRef::None
 }
 
+/// Resolve the trunk branch the diff view should use as its
+/// merge-base anchor.
+///
+/// Order:
+/// 1. Caller-supplied `override_branch` (from `[diff] base = ...`
+///    in `scaffl.toml`).
+/// 2. `git symbolic-ref refs/remotes/origin/HEAD` — the canonical
+///    "remote default branch" answer when a remote is configured.
+/// 3. Local-branch fallback: `main`, `master`, `develop`, `trunk`,
+///    in that order. Returns the first one that exists.
+///
+/// Returns `None` when nothing matches — caller (the TUI) treats
+/// that as "no trunk found" and degrades to `git diff HEAD`.
+pub async fn detect_trunk(project_root: &Path, override_branch: Option<&str>) -> Option<String> {
+    if let Some(b) = override_branch
+        && !b.is_empty()
+    {
+        return Some(b.to_string());
+    }
+    if let Some(out) = git_output(project_root, &["symbolic-ref", "refs/remotes/origin/HEAD"]).await
+        && let Some(rest) = out.strip_prefix("refs/remotes/origin/")
+    {
+        return Some(rest.to_string());
+    }
+    for candidate in ["main", "master", "develop", "trunk"] {
+        if git_output(
+            project_root,
+            &["rev-parse", "--verify", "--quiet", candidate],
+        )
+        .await
+        .is_some()
+        {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+/// Compute the merge-base SHA between `trunk` and HEAD. None on
+/// failure (no shared history, trunk doesn't exist locally, etc.).
+pub async fn merge_base(project_root: &Path, trunk: &str) -> Option<String> {
+    git_output(project_root, &["merge-base", trunk, "HEAD"]).await
+}
+
 /// Run `git <args>` in `project_root`. Returns trimmed stdout if the
 /// command succeeded. Any failure (non-zero, missing git, bad utf-8)
 /// collapses to `None`.
@@ -321,6 +365,28 @@ detached
         let entries = parse_worktree_porcelain(input);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "/a");
+    }
+
+    #[tokio::test]
+    async fn detect_trunk_override_wins_short_circuit() {
+        // Override-set short-circuits before any git invocation, so
+        // a nonsense path still yields the override. Confirms the
+        // priority order documented on `detect_trunk`.
+        let path = std::path::Path::new("/nonexistent-scaffl-test-path");
+        let result = detect_trunk(path, Some("release/stable")).await;
+        assert_eq!(result.as_deref(), Some("release/stable"));
+    }
+
+    #[tokio::test]
+    async fn detect_trunk_empty_override_falls_through() {
+        // Empty string override is treated as "unset" — not a valid
+        // branch name, and forcing `Some("")` would short-circuit
+        // detection where users probably meant None.
+        let path = std::path::Path::new("/nonexistent-scaffl-test-path");
+        let result = detect_trunk(path, Some("")).await;
+        // Falls through to git lookups, which fail on nonexistent
+        // path → None.
+        assert_eq!(result, None);
     }
 
     #[test]

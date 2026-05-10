@@ -48,6 +48,12 @@ pub struct Config {
     #[serde(default)]
     pub worktrees: WorktreesConfig,
 
+    /// Diff-view settings. Lets the user pin the trunk branch the
+    /// diff view uses as its merge-base anchor when auto-detection
+    /// can't pick the right one.
+    #[serde(default)]
+    pub diff: DiffConfig,
+
     /// Non-container services scaffl tracks alongside whatever the
     /// container backend manages (compose, podman, etc.). Lets the
     /// TUI and the lifecycle keymap operate on a system Postgres,
@@ -279,6 +285,29 @@ pub struct ProjectConfig {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+/// Diff-view configuration.
+///
+/// The diff view scopes its file list and per-file diffs against a
+/// merge-base with the project's trunk branch — i.e. "everything
+/// I've changed since I diverged from main." When `base` is unset,
+/// scaffl picks a trunk via:
+///   1. `git symbolic-ref refs/remotes/origin/HEAD` (the remote
+///      default branch — the canonical answer).
+///   2. Local fallback: `main`, `master`, `develop`, `trunk` (in
+///      that order, first match wins).
+///   3. If none exist: fall back to `git diff HEAD` (current
+///      working-tree-vs-last-commit behaviour).
+///
+/// Set `base` to override the trunk explicitly. Useful for projects
+/// that don't follow a conventional trunk name (e.g. `release/stable`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DiffConfig {
+    /// Branch name to use as the diff base. None → auto-detect.
+    #[serde(default)]
+    pub base: Option<String>,
 }
 
 /// Container-runtime configuration: which backend to talk to

@@ -26,6 +26,12 @@ whole stack from a built-in TUI.
 - **TUI dashboard.** Bare `scaffl` opens a browseable view of every recipe
   and script. Press Enter on a host recipe to launch it; output streams
   into a dedicated pane.
+- **Diff view (`G`).** A built-in branch-review surface anchored to your
+  trunk's merge-base — files changed since you diverged from `main`,
+  not just the working-tree-vs-last-commit slice. Trunk is auto-detected
+  (`origin/HEAD` → local `main` / `master` / `develop`); pin it
+  explicitly with `[diff] base = "release/stable"` in `scaffl.toml`
+  if your project uses a non-conventional name.
 - **Watch mode.** `scaffl watch <recipe>` re-runs the recipe whenever
   watched files change, with a debounce window.
 - **Git hooks, pre-commit-compatible.** `scaffl hooks install` writes a
