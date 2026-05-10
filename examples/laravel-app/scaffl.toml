@@ -156,6 +156,38 @@ pre-commit = ["check"]
 # `post-merge` so `.env` stays fresh after branch switches even
 # when you run docker compose directly. No extra recipe needed.
 
+# ----- Install flow -----
+#
+# `scaffl install` runs the steps under `.scaffl/install/` in
+# filename order, then installs git-hook shims and pre-fetches any
+# external hook repos referenced by `.pre-commit-config.yaml` into
+# `.scaffl/cache/hooks/`. Discovered scripts are picked up
+# automatically — listing them under `[install].steps` is only
+# needed to reorder, add `[command.*]` recipes, or interleave
+# inline shell.
+#
+# Three example scripts ship with this project:
+#   01-copy-env          — non-interactive: seed .env from example
+#   02-confirm-seed      — interactive: scaffl lib confirm, optional
+#   03-pick-php-version  — interactive: scaffl lib select
+#
+# A few inline-step examples (commented out) to show the shapes:
+#
+# [[install.steps]]
+# name = "composer-install"
+# run  = "composer install --no-interaction"
+# in   = "app"          # runs inside the compose service
+#
+# [[install.steps]]
+# name = "migrate"
+# run  = "php artisan migrate --force"
+# in   = "app"
+# optional = true       # failure logs a warning, doesn't halt install
+#
+# [install]
+# install_git_hooks = true              # default — set false to skip
+# gitignore         = ".scaffl/.gitignore"
+
 # ----- TUI panes -----
 #
 # `app` and `worker` are auto-discovered from docker-compose.yml; we

@@ -66,6 +66,26 @@ whole stack from a built-in TUI.
   managed block) on every scaffl invocation, and `scaffl hooks
   install` auto-wires `post-checkout` / `post-merge` so the file
   stays fresh even when you run `docker compose up` directly.
+- **First-time setup with `scaffl install`.** Drop shell files into
+  `.scaffl/install/` (numeric prefixes order them: `01-copy-env`,
+  `02-composer-install`, …) and `scaffl install` runs them in order
+  with a line-redraw progress UI, success-gated between steps. The
+  outcome of each step is recorded in `.scaffl/install.state.json`,
+  so re-running after a failure prompts "Resume from `<step>`?".
+  `scaffl install <step>` runs a single step in isolation
+  (migration-style for new teammates). Marking a step `# @optional:
+  yes` lets it fail without halting the rest. `# @interactive:
+  yes` hands the terminal to the step so `scaffl lib *` prompts
+  work. External `.pre-commit-config.yaml` repos are cloned into
+  `.scaffl/cache/hooks/<rev>/` and run natively — no dependency on
+  the `pre-commit` binary.
+- **Shell utilities.** `scaffl lib ask`, `scaffl lib confirm`,
+  `scaffl lib password`, `scaffl lib select [--multi]`, and
+  `scaffl lib filter` are interactive prompts you can call from
+  any shell script. The prompt goes to stderr, the answer to
+  stdout — `EMAIL=$(scaffl lib ask "Email")` works as expected.
+  Non-tty invocations honour `--default`, so the same scripts
+  run cleanly in CI.
 
 ## Install
 
@@ -122,6 +142,12 @@ scaffl test --filter Login  # forwards to composer test
 scaffl env                  # print resolved environment
 scaffl doctor               # validate backend / deps / env files
 scaffl hooks install        # writes .git/hooks/pre-commit
+scaffl install              # run .scaffl/install/* + git hooks
+scaffl install --list       # show plan + last-known status per step
+scaffl install migrate      # re-run a single step (migration-style)
+scaffl install --restart    # wipe state, run every step from scratch
+scaffl lib ask "Email"      # prompt; answer to stdout (use in scripts)
+scaffl lib confirm "Seed?"  # exit 0 = yes, 1 = no
 scaffl watch test           # re-run on file changes
 scaffl worktree status      # current worktree's slug + offset
 scaffl worktree list        # every git worktree + offsets

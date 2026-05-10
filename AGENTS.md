@@ -258,6 +258,83 @@ trunk names — `release/stable`, `dev`, etc. Set `[diff] base =
 "release/stable"` and detection short-circuits before any git
 lookup.
 
+## Install flow
+
+`scaffl install` is the project-bootstrap surface: a teammate clones
+the repo, runs one command, and gets a working dev environment.
+
+### Step plan
+
+The plan is resolved from two sources, in this precedence:
+
+1. `[install].steps = [...]` in `scaffl.toml`. Each entry is either
+   a name (resolves to a `[command.*]` recipe or to a discovered
+   step file) or an inline `{ name, run, in, env, cwd, optional,
+   interactive }` table.
+2. Files discovered under `.scaffl/install/`. Same `# @key:`
+   frontmatter parser as `.scaffl/commands/`, plus install-only
+   keys `cwd`, `optional`, `interactive`. When `[install].steps` is
+   empty, discovered files **are** the plan (file-name sorted).
+
+A synthetic `install-hooks` step is appended automatically unless
+`[install] install_git_hooks = false`. It installs git hook shims
+and prefetches any external `.pre-commit-config.yaml` repos into
+`.scaffl/cache/hooks/<rev>/`.
+
+Install steps are deliberately separate from `Config.scripts` /
+`Config.commands` — they do not appear in `scaffl list` or the TUI
+sidebar.
+
+### State and resume
+
+Every successful or failed step is recorded in
+`.scaffl/install.state.json`. On a subsequent `scaffl install`:
+
+- If every step is `ok` or `skipped`, the plan re-runs from step 1.
+- Otherwise the user is prompted "Resume from `<step>`?". `--resume`
+  bypasses the prompt; `--restart` wipes state and starts fresh.
+
+`scaffl install <step>` runs one step in isolation and updates only
+that step's record. Useful when a maintainer adds a new step that
+every teammate needs to apply ("everyone please run `scaffl install
+rebuild-search-index` once").
+
+### Renderer
+
+A small crossterm line-redraw printer in
+`crates/scaffl-cli/src/commands/install/renderer.rs` — **not** a
+TUI. Each step gets a row that updates in place (◐ running with
+spinner → ✓ ok / ✗ failed / → skipped, plus duration). The active
+step's tail output (last 3 lines) shows below its row.
+
+Interactive steps (`# @interactive: yes`) pause the renderer and
+inherit the parent's stdio for the duration of the step. That's how
+`scaffl lib ask | confirm | password | select | filter` work inside
+install steps without an IPC sentinel protocol — the step really
+does have the terminal.
+
+### Hook auto-fetch (no `pre-commit` dependency)
+
+External repos in `.pre-commit-config.yaml` are cloned into
+`.scaffl/cache/hooks/<slug(url)-rev>/` by `scaffl-hooks/src/cache.rs`.
+The runner reads `.pre-commit-hooks.yaml` inside the clone to find
+each hook's `entry` and `language`, merges with the user's
+`HookSpec`, and runs it natively. **No** fallback to the `pre-commit`
+binary; that path is deleted. Unsupported `language:` values
+(`python`, `node`, `ruby`, …) and `repo: meta` error at install time
+with a clear message instead of silently skipping.
+
+### `.scaffl/.gitignore`
+
+`scaffl install` writes a marker-delimited managed block in
+`.scaffl/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
+and `install.state.json`. Idempotent — re-running install when the
+file is already correct leaves the mtime alone. Path is
+configurable via `[install] gitignore = "..."`. The shared
+`crates/scaffl-config/src/managed_block.rs` helper is the single
+implementation of the marker pattern (also used by the worktree
+dotenv writer).
+
 ## Layout
 
 ```
@@ -267,7 +344,7 @@ crates/
   scaffl-runtime/    # recipe resolution; supervision; preflight
   scaffl-container/  # Backend trait; compose / docker / podman impls
   scaffl-tui/        # ratatui app; panes; palette
-  scaffl-hooks/      # .pre-commit-config.yaml reader; git hook installer
+  scaffl-hooks/      # .pre-commit-config.yaml reader; git hook installer; cache
 examples/            # fixture projects used by integration tests
 ```
 

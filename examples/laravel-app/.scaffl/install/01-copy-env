@@ -1,0 +1,12 @@
+#!/bin/sh
+# @desc: Seed .env from .env.example if missing
+# Idempotent: skips when .env already exists. The `cp -n` form is
+# universally supported across BSD/GNU coreutils; trailing `:` makes
+# the step succeed even when there's nothing to copy.
+set -eu
+if [ -f "$SCAFFL_PROJECT_DIR/.env" ]; then
+  echo ".env already exists; nothing to copy."
+else
+  cp "$SCAFFL_PROJECT_DIR/.env.example" "$SCAFFL_PROJECT_DIR/.env"
+  echo "Created .env from .env.example."
+fi
