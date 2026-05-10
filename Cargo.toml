@@ -6,6 +6,7 @@ members = [
     "crates/scaffl-container",
     "crates/scaffl-runtime",
     "crates/scaffl-tui",
+    "crates/scaffl-cache",
     "crates/scaffl-hooks",
 ]
 
@@ -24,6 +25,7 @@ readme = "README.md"
 scaffl-config = { path = "crates/scaffl-config", version = "0.0.1" }
 scaffl-container = { path = "crates/scaffl-container", version = "0.0.1" }
 scaffl-runtime = { path = "crates/scaffl-runtime", version = "0.0.1" }
+scaffl-cache = { path = "crates/scaffl-cache", version = "0.0.1" }
 scaffl-hooks = { path = "crates/scaffl-hooks", version = "0.0.1" }
 scaffl-tui = { path = "crates/scaffl-tui", version = "0.0.1" }
 

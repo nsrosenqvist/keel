@@ -1,6 +1,6 @@
 [package]
-name = "scaffl-hooks"
-description = "Git hook installation and pre-commit-config compatibility for scaffl"
+name = "scaffl-cache"
+description = "Content-addressed git cache for scaffl (hooks, agents, …)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,18 +11,10 @@ homepage.workspace = true
 readme.workspace = true
 
 [dependencies]
-scaffl-cache = { workspace = true }
-scaffl-config = { workspace = true }
-scaffl-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml_ng = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-regex = { workspace = true }
-shell-words = { workspace = true }
-tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-pretty_assertions = { workspace = true }

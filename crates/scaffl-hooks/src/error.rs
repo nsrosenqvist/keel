@@ -1,8 +1,12 @@
+use scaffl_cache::CacheError;
 use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum HookError {
+    #[error(transparent)]
+    Cache(#[from] CacheError),
+
     #[error("io error at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -56,16 +60,6 @@ pub enum HookError {
     MetaRepoNotSupported,
 
     #[error(
-        "failed to clone {repo} at rev `{rev}` into cache: {message}. \
-         Make sure `git` is on PATH and the repo URL is reachable."
-    )]
-    CloneFailed {
-        repo: String,
-        rev: String,
-        message: String,
-    },
-
-    #[error(
         "hook `{hook}` references repo {repo} at rev `{rev}` but its `.pre-commit-hooks.yaml` \
          does not define an id matching `{hook}`."
     )]
@@ -74,9 +68,6 @@ pub enum HookError {
         rev: String,
         hook: String,
     },
-
-    #[error("repo `{repo}` is missing a `rev` — external hook repos must pin a revision")]
-    MissingRev { repo: String },
 
     #[error(transparent)]
     Other(#[from] std::io::Error),

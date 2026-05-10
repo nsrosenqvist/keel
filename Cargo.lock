@@ -1154,6 +1154,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "scaffl-cache"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "scaffl-cli"
 version = "0.0.1"
 dependencies = [
@@ -1210,6 +1221,7 @@ version = "0.0.1"
 dependencies = [
  "pretty_assertions",
  "regex",
+ "scaffl-cache",
  "scaffl-config",
  "scaffl-runtime",
  "serde",

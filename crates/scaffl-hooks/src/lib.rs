@@ -33,3 +33,4 @@ pub use config::{HookLanguage, HookSpec, PreCommitConfig, Repo, UpstreamHook};
 pub use error::HookError;
 pub use installer::{SCAFFL_HOOK_MARKER, install, install_one, uninstall};
 pub use runner::{HookOutcome, run_pre_commit};
+pub use scaffl_cache::CacheError;

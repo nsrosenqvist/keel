@@ -1,358 +1,54 @@
-//! Local cache for external pre-commit hook repos.
+//! Pre-commit-flavoured wrapper around the `scaffl-cache` crate.
 //!
-//! scaffl owns the cache — it does not delegate to `pre-commit install`.
-//! The cache lives at `<project>/.scaffl/cache/hooks/<key>/`, one
-//! directory per (url, rev) pair. Cache contents survive across runs
-//! and `scaffl install` invocations; `scaffl install --update-hooks`
-//! deletes a key and re-clones it.
-//!
-//! Layout per cached repo:
-//!
-//! ```text
-//! .scaffl/cache/hooks/<key>/
-//!   ├── <clone>           // the actual git worktree, depth-1
-//!   └── meta.json         // resolved SHA + clone timestamp
-//! ```
-//!
-//! Cache keys are derived from the URL and rev using a deterministic
-//! slug that's safe as a path segment: every non-`[A-Za-z0-9._-]`
-//! character is replaced with `_`, and the result is bounded to a
-//! reasonable length to avoid filesystem limits.
+//! `scaffl-cache` does the actual cloning and on-disk caching. This
+//! shim translates the hooks-side `Repo` value object into a plain
+//! `RepoRef` and forwards through, so callers in `scaffl-hooks` and
+//! `scaffl-cli` don't need to know about the cache crate's API.
 
 use crate::config::Repo;
 use crate::error::HookError;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use tokio::process::Command;
+use scaffl_cache::{CacheError, CacheKind, RepoRef};
 
-const CLONE_SUBDIR: &str = "clone";
-const META_FILE: &str = "meta.json";
+pub use scaffl_cache::{CacheMeta, CachedRepo};
 
-/// Resolved cache entry for an external repo.
-#[derive(Debug, Clone)]
-pub struct CachedRepo {
-    /// Directory holding the cloned worktree (the `<key>/clone` path).
-    pub clone_dir: PathBuf,
-    /// SHA the cached clone points at. May equal `repo.rev` when the
-    /// rev was already a full sha; otherwise this is the result of
-    /// `git rev-parse HEAD` against the cloned worktree.
-    pub resolved_sha: String,
-}
-
-/// Persisted alongside each cached repo; lets the resolver report what
-/// SHA `rev = v4.5.0` ended up at without re-running git.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CacheMeta {
-    pub repo: String,
-    pub rev: String,
-    pub resolved_sha: String,
-}
-
-/// Return the cache directory used for a project. The directory is
-/// created on demand by [`clone_or_reuse`]; callers don't need to
-/// pre-create it.
-pub fn cache_root(project_root: &Path) -> PathBuf {
-    project_root.join(".scaffl").join("cache").join("hooks")
+/// Cache root for hook repos. Equivalent to
+/// `<project>/.scaffl/cache/hooks/`.
+pub fn cache_root(project_root: &std::path::Path) -> std::path::PathBuf {
+    scaffl_cache::cache_root(project_root, CacheKind::Hooks)
 }
 
 /// Clone `repo` into the project's hook cache, or return the existing
-/// entry if it's already cached. `force` deletes and re-clones,
-/// implementing the `--update-hooks` flag.
-///
-/// External repos must pin a `rev`; floating references aren't allowed
-/// in the cache layer (the caller wants reproducible installs).
+/// entry. `force = true` wipes and re-clones (the `--update-hooks`
+/// flag).
 pub async fn clone_or_reuse(
-    project_root: &Path,
+    project_root: &std::path::Path,
     repo: &Repo,
     force: bool,
 ) -> Result<CachedRepo, HookError> {
-    let rev = repo.rev.as_deref().ok_or_else(|| HookError::MissingRev {
+    let rev = repo.rev.as_deref().ok_or_else(|| CacheError::MissingRev {
         repo: repo.repo.clone(),
     })?;
-
-    let key = cache_key(&repo.repo, rev);
-    let entry_dir = cache_root(project_root).join(&key);
-    let clone_dir = entry_dir.join(CLONE_SUBDIR);
-    let meta_path = entry_dir.join(META_FILE);
-
-    if force && entry_dir.exists() {
-        std::fs::remove_dir_all(&entry_dir).map_err(|source| HookError::Io {
-            path: entry_dir.clone(),
-            source,
-        })?;
-    }
-
-    if clone_dir.is_dir() && meta_path.is_file() {
-        let meta_raw = std::fs::read_to_string(&meta_path).map_err(|source| HookError::Io {
-            path: meta_path.clone(),
-            source,
-        })?;
-        if let Ok(meta) = serde_json::from_str::<CacheMeta>(&meta_raw) {
-            return Ok(CachedRepo {
-                clone_dir,
-                resolved_sha: meta.resolved_sha,
-            });
-        }
-        // Meta corrupted but clone exists — fall through to re-clone.
-        std::fs::remove_dir_all(&entry_dir).map_err(|source| HookError::Io {
-            path: entry_dir.clone(),
-            source,
-        })?;
-    }
-
-    std::fs::create_dir_all(&entry_dir).map_err(|source| HookError::Io {
-        path: entry_dir.clone(),
-        source,
-    })?;
-
-    run_clone(&repo.repo, rev, &clone_dir).await?;
-    let resolved_sha = run_rev_parse(&clone_dir).await?;
-
-    let meta = CacheMeta {
-        repo: repo.repo.clone(),
-        rev: rev.to_string(),
-        resolved_sha: resolved_sha.clone(),
-    };
-    let meta_raw = serde_json::to_string_pretty(&meta).expect("CacheMeta serialises");
-    std::fs::write(&meta_path, meta_raw).map_err(|source| HookError::Io {
-        path: meta_path,
-        source,
-    })?;
-
-    Ok(CachedRepo {
-        clone_dir,
-        resolved_sha,
-    })
-}
-
-async fn run_clone(repo: &str, rev: &str, dest: &Path) -> Result<(), HookError> {
-    // `--depth 1 --branch <rev>` resolves both tags and branches. For
-    // a raw SHA the `--branch` form fails on most servers; we retry
-    // with a full fetch-and-checkout in that case.
-    let depth_attempt = Command::new("git")
-        .args(["clone", "--depth", "1", "--branch", rev])
-        .arg(repo)
-        .arg(dest)
-        .output()
-        .await
-        .map_err(|e| HookError::CloneFailed {
-            repo: repo.to_string(),
+    Ok(scaffl_cache::clone_or_reuse(
+        project_root,
+        &RepoRef {
+            repo: repo.repo.clone(),
             rev: rev.to_string(),
-            message: format!("spawn git: {e}"),
-        })?;
-
-    if depth_attempt.status.success() {
-        return Ok(());
-    }
-
-    // Clean up the partial directory if the shallow attempt left one
-    // behind, then fall back to a full clone + checkout.
-    if dest.exists() {
-        let _ = std::fs::remove_dir_all(dest);
-    }
-
-    let full_clone = Command::new("git")
-        .args(["clone"])
-        .arg(repo)
-        .arg(dest)
-        .output()
-        .await
-        .map_err(|e| HookError::CloneFailed {
-            repo: repo.to_string(),
-            rev: rev.to_string(),
-            message: format!("spawn git (fallback): {e}"),
-        })?;
-    if !full_clone.status.success() {
-        let stderr = String::from_utf8_lossy(&full_clone.stderr)
-            .trim()
-            .to_string();
-        return Err(HookError::CloneFailed {
-            repo: repo.to_string(),
-            rev: rev.to_string(),
-            message: stderr,
-        });
-    }
-
-    let checkout = Command::new("git")
-        .args(["checkout", "--detach", rev])
-        .current_dir(dest)
-        .output()
-        .await
-        .map_err(|e| HookError::CloneFailed {
-            repo: repo.to_string(),
-            rev: rev.to_string(),
-            message: format!("spawn git checkout: {e}"),
-        })?;
-    if !checkout.status.success() {
-        let stderr = String::from_utf8_lossy(&checkout.stderr).trim().to_string();
-        return Err(HookError::CloneFailed {
-            repo: repo.to_string(),
-            rev: rev.to_string(),
-            message: stderr,
-        });
-    }
-    Ok(())
-}
-
-async fn run_rev_parse(repo_dir: &Path) -> Result<String, HookError> {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(repo_dir)
-        .output()
-        .await
-        .map_err(|e| HookError::GitFailed(format!("rev-parse: {e}")))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(HookError::GitFailed(format!("rev-parse: {stderr}")));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// Map (url, rev) → a path-safe slug.
-///
-/// Two repos with the same (url, rev) collapse to the same key; that's
-/// the cache identity. The slug intentionally uses only characters
-/// that round-trip cleanly through every filesystem we target.
-fn cache_key(repo: &str, rev: &str) -> String {
-    fn slug(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut last_underscore = false;
-        for ch in s.chars() {
-            let safe = ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-');
-            if safe {
-                out.push(ch);
-                last_underscore = false;
-            } else if !last_underscore {
-                out.push('_');
-                last_underscore = true;
-            }
-        }
-        out.trim_matches('_').to_string()
-    }
-    let mut key = format!("{}-{}", slug(repo), slug(rev));
-    // Filesystem-safe bound — most filesystems cap path segments at
-    // 255 bytes; we leave room for ` /clone` (the subdir) and any
-    // future suffixes.
-    if key.len() > 200 {
-        key.truncate(200);
-    }
-    key
+        },
+        force,
+        CacheKind::Hooks,
+    )
+    .await?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HookSpec, Repo};
+    use crate::config::Repo;
+    use scaffl_cache::CacheError;
     use tempfile::TempDir;
-    use tokio::process::Command as TokioCommand;
-
-    /// Build a tiny throwaway upstream repo and return its path. Lets
-    /// `clone_or_reuse` exercise the real git CLI without touching the
-    /// network — the URL passed to git is just the filesystem path.
-    async fn make_fixture_repo(name: &str) -> TempDir {
-        let dir = tempfile::Builder::new().prefix(name).tempdir().unwrap();
-        TokioCommand::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        TokioCommand::new("git")
-            .args(["config", "user.email", "test@example.com"])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        TokioCommand::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        std::fs::write(
-            dir.path().join(".pre-commit-hooks.yaml"),
-            "- id: ws\n  name: trim trailing ws\n  language: system\n  entry: 'true'\n",
-        )
-        .unwrap();
-        TokioCommand::new("git")
-            .args(["add", "."])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        TokioCommand::new("git")
-            .args(["commit", "-q", "-m", "seed"])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        TokioCommand::new("git")
-            .args(["tag", "v0.1.0"])
-            .current_dir(dir.path())
-            .status()
-            .await
-            .unwrap();
-        dir
-    }
-
-    fn _dummy_hook() -> HookSpec {
-        HookSpec {
-            id: "ws".into(),
-            name: None,
-            language: crate::config::HookLanguage::System,
-            entry: None,
-            args: vec![],
-            files: None,
-            exclude: None,
-            pass_filenames: true,
-            stages: vec![],
-            always_run: false,
-        }
-    }
 
     #[tokio::test]
-    async fn clone_then_reuse_returns_cached_entry() {
-        let upstream = make_fixture_repo("upstream").await;
-        let project = TempDir::new().unwrap();
-        let repo = Repo {
-            repo: upstream.path().to_string_lossy().to_string(),
-            rev: Some("v0.1.0".into()),
-            hooks: vec![],
-        };
-
-        let first = clone_or_reuse(project.path(), &repo, false).await.unwrap();
-        assert!(first.clone_dir.is_dir());
-        assert_eq!(first.resolved_sha.len(), 40);
-        let first_sha = first.resolved_sha.clone();
-
-        // Touch the clone dir's mtime, then re-call: cached path
-        // returns without re-cloning.
-        let second = clone_or_reuse(project.path(), &repo, false).await.unwrap();
-        assert_eq!(second.resolved_sha, first_sha);
-        assert_eq!(second.clone_dir, first.clone_dir);
-    }
-
-    #[tokio::test]
-    async fn force_reclones_existing_entry() {
-        let upstream = make_fixture_repo("upstream-force").await;
-        let project = TempDir::new().unwrap();
-        let repo = Repo {
-            repo: upstream.path().to_string_lossy().to_string(),
-            rev: Some("v0.1.0".into()),
-            hooks: vec![],
-        };
-
-        let first = clone_or_reuse(project.path(), &repo, false).await.unwrap();
-        let marker = first.clone_dir.join("FORCE_MARKER");
-        std::fs::write(&marker, "x").unwrap();
-        assert!(marker.exists());
-
-        let _ = clone_or_reuse(project.path(), &repo, true).await.unwrap();
-        assert!(!marker.exists(), "force should have wiped the cache entry");
-    }
-
-    #[tokio::test]
-    async fn missing_rev_is_an_error() {
+    async fn missing_rev_surfaces_through_hookerror() {
         let project = TempDir::new().unwrap();
         let repo = Repo {
             repo: "https://example.com/foo".into(),
@@ -362,23 +58,9 @@ mod tests {
         let err = clone_or_reuse(project.path(), &repo, false)
             .await
             .unwrap_err();
-        assert!(matches!(err, HookError::MissingRev { .. }));
-    }
-
-    #[test]
-    fn cache_key_is_deterministic_and_path_safe() {
-        let a = cache_key("https://github.com/foo/bar", "v1.0");
-        let b = cache_key("https://github.com/foo/bar", "v1.0");
-        assert_eq!(a, b);
-        assert!(!a.contains('/'));
-        assert!(!a.contains(':'));
-        assert!(!a.contains(' '));
-    }
-
-    #[test]
-    fn cache_key_caps_length() {
-        let big = "x".repeat(500);
-        let key = cache_key(&big, "v1");
-        assert!(key.len() <= 200);
+        assert!(matches!(
+            err,
+            HookError::Cache(CacheError::MissingRev { .. })
+        ));
     }
 }
