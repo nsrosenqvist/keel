@@ -4,6 +4,7 @@
 //! validated, and then handed (immutable) to the runtime. They expose no
 //! behaviour beyond accessors. Behaviour lives in `scaffl-runtime`.
 
+use crate::agents::AgentsConfig;
 use crate::install::InstallConfig;
 use crate::scripts::ScriptCommand;
 use serde::Deserialize;
@@ -73,6 +74,12 @@ pub struct Config {
     /// "no steps, hooks still installed automatically".
     #[serde(default)]
     pub install: InstallConfig,
+
+    /// Agent-instruction sources: `[[agents.sources]]` entries plus the
+    /// `[agents]` knobs that control them. Drives `scaffl agents
+    /// install/update` and the synthetic install step.
+    #[serde(default)]
+    pub agents: AgentsConfig,
 }
 
 /// Worktree isolation configuration.
@@ -179,6 +186,7 @@ impl Config {
                 ));
             }
         }
+        self.agents.validate()?;
         Ok(())
     }
 }
