@@ -86,6 +86,22 @@ whole stack from a built-in TUI.
   stdout — `EMAIL=$(scaffl lib ask "Email")` works as expected.
   Non-tty invocations honour `--default`, so the same scripts
   run cleanly in CI.
+- **Agent instructions and skills from upstream repos.** Declare
+  one or more `[[agents.sources]]` in `scaffl.toml` and `scaffl
+  agents install` pulls `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`
+  (or anything else the upstream maps) into the project, byte-for-byte
+  from the pinned revision. The upstream ships a self-describing
+  `scaffl-agents.toml` manifest; the downstream can override individual
+  mappings by `dest`. Whole-file ownership: scaffl tracks every file
+  it writes in `.scaffl/agents.state.json` and uses per-file SHA-256
+  for drift detection and orphan removal. Floating refs (`rev =
+  "main"`) auto-refetch on `scaffl agents update`; pinned tags / SHAs
+  reuse the local cache at `.scaffl/cache/agents/<rev>/`. Local
+  edits go in sibling files (e.g. `CLAUDE.local.md`) — scaffl never
+  touches them. `mode = "once"` is a per-mapping opt-out for seed
+  files the project takes ownership of after first write. See
+  [`examples/agents-upstream`](./examples/agents-upstream/) for a
+  ready-to-clone upstream layout.
 
 ## Install
 
@@ -142,7 +158,11 @@ scaffl test --filter Login  # forwards to composer test
 scaffl env                  # print resolved environment
 scaffl doctor               # validate backend / deps / env files
 scaffl hooks install        # writes .git/hooks/pre-commit
-scaffl install              # run .scaffl/install/* + git hooks
+scaffl agents install       # pull agent instructions from upstream sources
+scaffl agents update        # re-resolve revs (auto-refetches floating refs)
+scaffl agents status        # per-source pinned rev + per-file drift
+scaffl agents diff          # what would change on a fresh apply
+scaffl install              # run .scaffl/install/* + agents + git hooks
 scaffl install --list       # show plan + last-known status per step
 scaffl install migrate      # re-run a single step (migration-style)
 scaffl install --restart    # wipe state, run every step from scratch
@@ -163,6 +183,9 @@ Anything not matched as a recipe / script / built-in falls through to
 - [`examples/minimal`](./examples/minimal/) — smallest useful config.
 - [`examples/laravel-app`](./examples/laravel-app/) — Laravel + Docker
   Compose, modeled on what scaffl was built to replace.
+- [`examples/agents-upstream`](./examples/agents-upstream/) — sample
+  upstream-source layout an org can fork to ship shared agent
+  instructions and skills.
 
 ## Documentation
 
@@ -178,7 +201,9 @@ crates/
   scaffl-runtime/    recipe resolver, executor, output sinks
   scaffl-container/  Backend trait; Compose + Null impls
   scaffl-tui/        ratatui dashboard, runner, pane rendering
+  scaffl-cache/      content-addressed git cache shared by hooks + agents
   scaffl-hooks/      .pre-commit-config.yaml parser, native runner, installer
+  scaffl-agents/     upstream-sourced agent instructions / skills pipeline
 ```
 
 ## License

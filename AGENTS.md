@@ -328,12 +328,43 @@ with a clear message instead of silently skipping.
 
 `scaffl install` writes a marker-delimited managed block in
 `.scaffl/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
-and `install.state.json`. Idempotent — re-running install when the
-file is already correct leaves the mtime alone. Path is
-configurable via `[install] gitignore = "..."`. The shared
-`crates/scaffl-config/src/managed_block.rs` helper is the single
-implementation of the marker pattern (also used by the worktree
-dotenv writer).
+`install.state.json`, and `agents.state.json`. Idempotent —
+re-running install when the file is already correct leaves the
+mtime alone. Path is configurable via `[install] gitignore = "..."`.
+The shared `crates/scaffl-config/src/managed_block.rs` helper is the
+single implementation of the marker pattern (also used by the
+worktree dotenv writer).
+
+## Agent instructions and skills (`scaffl agents`)
+
+`[[agents.sources]]` declarations point at upstream git repos that
+ship agent instructions (`CLAUDE.md`, `AGENTS.md`, `.claude/skills/`,
+…). The pipeline:
+
+1. `scaffl-cache::clone_or_reuse` (the same primitive the hooks
+   subsystem uses) caches the upstream at
+   `.scaffl/cache/agents/<slug(url)-rev>/`. Floating refs (anything
+   that isn't a 7-40 hex SHA or a semver-shaped tag) auto-refetch
+   on every `scaffl agents update`; pinned refs reuse the cache.
+2. The upstream's `scaffl-agents.toml` declares `[[file]]` and
+   `[[dir]]` mappings (src → dest, optional `mode = "once"`).
+   Downstream `[[agents.sources.overrides]]` patches mappings by
+   their upstream-declared `dest` (skip / relocate).
+3. The apply pipeline (`crates/scaffl-agents/src/apply.rs`) computes
+   write / update / remove / unchanged actions against
+   `.scaffl/agents.state.json` and writes via temp-file-and-rename.
+   Cross-source destination collisions: later-declared source wins,
+   loser names reported. Drift (a hand-edited scaffl-owned file) is
+   left alone unless `--force-overwrite-drift`. A non-state file in
+   a `[[dir]]` target with the same name as an upstream file is a
+   `LocalShadow` error with a rename suggestion.
+4. `scaffl install` runs an `apply-agents` synthetic step before
+   `install-hooks` when `[agents].install_with_setup = true` (the
+   default) and at least one source is declared.
+
+Whole-file ownership: every file scaffl writes is byte-for-byte from
+upstream and tracked with a SHA-256 in state. Local overrides go in
+sibling files (e.g. `CLAUDE.local.md`); scaffl never touches them.
 
 ## Layout
 
@@ -344,7 +375,9 @@ crates/
   scaffl-runtime/    # recipe resolution; supervision; preflight
   scaffl-container/  # Backend trait; compose / docker / podman impls
   scaffl-tui/        # ratatui app; panes; palette
-  scaffl-hooks/      # .pre-commit-config.yaml reader; git hook installer; cache
+  scaffl-cache/      # content-addressed git cache shared by hooks + agents
+  scaffl-hooks/      # .pre-commit-config.yaml reader; git hook installer
+  scaffl-agents/     # upstream-sourced agent instructions / skills pipeline
 examples/            # fixture projects used by integration tests
 ```
 
