@@ -22,6 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub mod ansi;
 pub mod app;
 pub mod palette;
 pub mod runner;

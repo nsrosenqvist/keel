@@ -377,8 +377,11 @@ async fn list_tmux_windows(session: &str) -> WindowList {
 async fn capture_pane(session: &str, window: u32) -> Vec<String> {
     use tokio::process::Command;
     let target = format!("{session}:{window}");
+    // `-e` keeps SGR escape sequences in the dump so the renderer
+    // can reapply prompt / ls / cargo coloring; `-p` writes to stdout
+    // instead of a paste buffer.
     let Ok(output) = Command::new("tmux")
-        .args(["capture-pane", "-p", "-t", &target])
+        .args(["capture-pane", "-e", "-p", "-t", &target])
         .stdin(std::process::Stdio::null())
         .output()
         .await

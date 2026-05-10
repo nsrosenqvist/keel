@@ -460,6 +460,8 @@ fn preview_lines(captured: &[String], max_rows: usize) -> Vec<Line<'static>> {
     if captured.is_empty() || max_rows == 0 {
         return Vec::new();
     }
+    // Trim trailing blank rows but leave leading blanks alone so the
+    // capture's vertical alignment is preserved.
     let trimmed: &[String] = match captured.iter().rposition(|l| !l.trim().is_empty()) {
         Some(last) => &captured[..=last],
         None => captured,
@@ -467,7 +469,7 @@ fn preview_lines(captured: &[String], max_rows: usize) -> Vec<Line<'static>> {
     let start = trimmed.len().saturating_sub(max_rows);
     trimmed[start..]
         .iter()
-        .map(|s| Line::from(Span::raw(s.clone())))
+        .map(|s| crate::ansi::ansi_to_line(s, Style::default()))
         .collect()
 }
 
@@ -669,10 +671,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
                 Style::default().fg(Color::Yellow),
             ));
         } else if app.diff().loaded {
-            spans.push(Span::styled(
-                " clean",
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::styled(" clean", Style::default().fg(Color::DarkGray)));
         }
     }
 
@@ -1274,11 +1273,18 @@ fn format_duration(d: std::time::Duration) -> String {
 }
 
 fn render_captured_line(line: &CapturedLine) -> Line<'static> {
-    let style = match line.stream {
+    // Stream tint is the *base* style: stderr stays red when the
+    // line carries no ANSI of its own (most of our captures don't,
+    // since piping disables color in most CLIs), and SGR resets
+    // (`ESC[0m`) inside a line drop back to that base rather than
+    // ratatui's default. Programs that do emit color (e.g. invoked
+    // with FORCE_COLOR=1, or anything routed through the tmux
+    // preview path) get rendered with their own palette on top.
+    let base = match line.stream {
         OutputStream::Stdout => Style::default(),
         OutputStream::Stderr => Style::default().fg(Color::Red),
     };
-    Line::from(Span::styled(line.text.clone(), style))
+    crate::ansi::ansi_to_line(&line.text, base)
 }
 
 fn render_service_logs(service: &ServicePane, frame: &mut Frame, area: Rect) {
