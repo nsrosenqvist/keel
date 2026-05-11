@@ -599,12 +599,12 @@ fn render_diff_header(app: &App, frame: &mut Frame, area: Rect) {
             format!("{n} {}", if n == 1 { "file" } else { "files" }),
             Style::default().fg(Color::White).dim(),
         ),
-        Span::styled("  · ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("+{}", diff.additions_total),
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  "),
+        Span::raw(" "),
         Span::styled(
             format!("−{}", diff.deletions_total),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
