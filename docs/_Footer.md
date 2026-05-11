@@ -1,0 +1,1 @@
+scaffl is dual-licensed under [MIT](https://github.com/nsrosenqvist/scaffl/blob/main/LICENSE-MIT) or [Apache 2.0](https://github.com/nsrosenqvist/scaffl/blob/main/LICENSE-APACHE). Source: [github.com/nsrosenqvist/scaffl](https://github.com/nsrosenqvist/scaffl). [Back to Home](./Home.md).
