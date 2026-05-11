@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# @desc: Seed optional development data
+# @optional: yes
+set -euo pipefail
+
+mkdir -p state
+
+# Real seeders touch a database; here we simulate failure half the
+# time so you can see how `@optional: yes` interacts with the
+# install runner. Non-zero exit is recorded as `skipped`, the plan
+# continues.
+if [ -n "${INSTALL_FLOW_FORCE_SEED_FAIL:-}" ]; then
+  echo "simulated seed failure" >&2
+  exit 1
+fi
+
+echo "seeded development fixtures"
+touch state/03-seed-db.done

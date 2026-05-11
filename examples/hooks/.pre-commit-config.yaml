@@ -1,0 +1,40 @@
+# Standard pre-commit-format file. scaffl parses it directly — no
+# `pre-commit` binary required. External repos are cloned into
+# `.scaffl/cache/hooks/<rev>/` and run natively.
+#
+# scaffl runs hooks whose effective `language` is `system` or
+# `script`. Anything else (`python`, `node`, `ruby`, `golang`, …)
+# errors at install time with a clear message — wrap the tool with
+# a shell script and use `language: script`, or pick a tool already
+# on PATH with `language: system`.
+
+repos:
+  # `repo: local` — entries you author here. The whitespace check
+  # below uses `language: system` so the entry's `entry:` line is
+  # invoked as-is via the shell.
+  - repo: local
+    hooks:
+      - id: trim-trailing-ws
+        name: trim trailing whitespace
+        entry: bash -c 'for f in "$@"; do sed -i "s/[[:space:]]*$//" "$f"; done' --
+        language: system
+        files: \.(md|toml|yml|yaml|sh|rs)$
+
+      - id: no-tabs-in-yaml
+        name: reject tabs in YAML
+        entry: bash -c 'for f in "$@"; do grep -lP "\t" "$f" && exit 1; done; exit 0' --
+        language: system
+        files: \.ya?ml$
+
+  # External repo. `rev:` is the pinned tag; scaffl clones the repo
+  # into .scaffl/cache/hooks/<slug(url)-rev>/ and reads the upstream
+  # `.pre-commit-hooks.yaml` to find each hook's `entry` and
+  # `language`. The hooks below all resolve to `language: system`
+  # (shell utilities), so they run natively.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']

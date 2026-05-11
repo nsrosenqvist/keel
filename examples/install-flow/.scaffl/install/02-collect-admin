@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# @desc: Capture an admin email (interactive)
+# @interactive: yes
+set -euo pipefail
+
+mkdir -p state
+
+# `scaffl lib ask` honours --default in non-tty contexts so this
+# step works under CI as well as a developer's terminal.
+EMAIL=$(scaffl lib ask "Admin email" --default "admin@example.com")
+
+# Append to .env without duplicating the key on re-runs.
+if grep -q '^ADMIN_EMAIL=' .env 2>/dev/null; then
+  sed -i "s|^ADMIN_EMAIL=.*$|ADMIN_EMAIL=${EMAIL}|" .env
+else
+  echo "ADMIN_EMAIL=${EMAIL}" >> .env
+fi
+echo "recorded admin email"
+touch state/02-collect-admin.done

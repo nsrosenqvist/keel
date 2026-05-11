@@ -1,0 +1,7 @@
+# Artefacts produced by the install demo. The marker files are
+# regenerated on every run; .env is per-developer.
+state/
+.env
+
+# scaffl itself manages everything below in .scaffl/.gitignore
+# (created by `scaffl install`).

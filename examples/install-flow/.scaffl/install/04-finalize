@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# @desc: Print a ready banner
+set -euo pipefail
+
+mkdir -p state
+echo
+echo "  ✓ install-flow demo: setup complete"
+echo "    .env keys: $(grep -c '=' .env || echo 0)"
+echo "    state files: $(ls state/ 2>/dev/null | wc -l | tr -d ' ')"
+echo
+touch state/04-finalize.done

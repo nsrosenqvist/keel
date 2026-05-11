@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# @desc: Seed a sample .env file
+set -euo pipefail
+
+mkdir -p state
+if [ ! -f .env ]; then
+  cat > .env <<'EOF'
+APP_ENV=local
+DEBUG=true
+EOF
+  echo "created .env"
+else
+  echo ".env already present — leaving it alone"
+fi
+touch state/01-copy-env.done
