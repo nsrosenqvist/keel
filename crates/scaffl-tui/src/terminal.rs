@@ -340,16 +340,45 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
     // free of "did the user customise tmux globally?" assumptions
     // — we only touch this one session, leaving global config
     // alone.
+    // Color schema mirrors the terminals view in the TUI: accent
+    // `colour79` (mint teal, matches `view_accent(View::Terminals)`),
+    // muted foreground, and the terminal's default background so the
+    // bar blends in instead of wearing tmux's loud default green.
     let status_left =
-        " #[fg=cyan,bold]#S#[default] #[fg=brightblack]│#[default] ctrl+b d to detach ";
-    let _ = Command::new("tmux")
-        .args(["set-option", "-t", &req.session, "status-left", status_left])
-        .status()
-        .await;
-    let _ = Command::new("tmux")
-        .args(["set-option", "-t", &req.session, "status-left-length", "60"])
-        .status()
-        .await;
+        " #[fg=colour79,bold]#S#[default] #[fg=brightblack]│#[default] ctrl+b d to detach ";
+    for arg_set in [
+        [
+            "set-option",
+            "-t",
+            &req.session,
+            "status-style",
+            "bg=default,fg=colour250",
+        ],
+        ["set-option", "-t", &req.session, "status-left", status_left],
+        [
+            "set-option",
+            "-t",
+            &req.session,
+            "status-left-length",
+            "60",
+        ],
+        [
+            "set-option",
+            "-t",
+            &req.session,
+            "window-status-current-style",
+            "fg=colour79,bold",
+        ],
+        [
+            "set-option",
+            "-t",
+            &req.session,
+            "window-status-style",
+            "fg=colour250",
+        ],
+    ] {
+        let _ = Command::new("tmux").args(arg_set).status().await;
+    }
     // Attach. Inherits stdio.
     let _ = Command::new("tmux")
         .args(["attach", "-t", &target])
