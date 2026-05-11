@@ -168,10 +168,10 @@ async fn poll_tmux(session: Option<&str>, snap_tx: &mpsc::UnboundedSender<Worker
     let Some(session) = session else {
         return;
     };
-    let windows = match crate::tui::terminal::list_tmux_windows(session).await {
-        crate::tui::terminal::WindowList::Ok(w) => w,
-        crate::tui::terminal::WindowList::NoSession(_)
-        | crate::tui::terminal::WindowList::SpawnFailed(_) => Vec::new(),
+    let windows = match crate::tui::views::terminals::tmux::list_tmux_windows(session).await {
+        crate::tui::views::terminals::tmux::WindowList::Ok(w) => w,
+        crate::tui::views::terminals::tmux::WindowList::NoSession(_)
+        | crate::tui::views::terminals::tmux::WindowList::SpawnFailed(_) => Vec::new(),
     };
     let _ = snap_tx.send(WorkerSnapshot::TmuxWindows(windows));
 }

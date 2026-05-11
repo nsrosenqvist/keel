@@ -18,7 +18,7 @@ use crate::tui::views::control_center::state::{Item, ItemKind};
 use crate::tui::views::diff::state::{
     BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, ReadLine, ReadLineKind,
 };
-use crate::tui::views::terminals::state::{TerminalsRow, TmuxWindow};
+use crate::tui::views::terminals::state::{TerminalsRow, TerminalsView, TmuxWindow};
 use crate::tui::watchers::{WatcherError, WatcherPane};
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
@@ -98,56 +98,6 @@ pub enum Mode {
 /// is part of the key.
 pub type RunKey = (ItemKind, String);
 
-/// State for the Terminals view (`T`). Tmux-backed; one session per
-/// worktree. Windows are tmux's source of truth — we don't track
-/// names ourselves; tmux's automatic-rename keeps `window_name` in
-/// sync with the running foreground program (`zsh`, `vim`, …).
-#[derive(Debug, Clone)]
-pub struct TerminalsState {
-    /// `None` until probed; `Some(false)` when tmux is missing.
-    pub tmux_available: Option<bool>,
-    /// `keel-<project>-<slug>` — stable per worktree.
-    pub session_name: String,
-    /// Live window list from `tmux list-windows`. Refreshed on view
-    /// entry, after each attach return, and after a delete. Empty
-    /// until the first refresh — and stays empty when the tmux
-    /// session doesn't exist yet (sentinel + service rows still
-    /// render fine).
-    pub windows: Vec<TmuxWindow>,
-    /// Last captured tmux pane content per window index, refreshed
-    /// alongside the windows list. Renders in the right pane as
-    /// a preview of what's running, so the user sees more than
-    /// "press enter to attach" once a window has been used.
-    pub previews: std::collections::HashMap<u32, Vec<String>>,
-    /// Selected index across the (services + windows + sentinel)
-    /// concatenation that the renderer / keymap iterate.
-    pub selected: usize,
-    /// Last-observed `has_bell` per window. Drives edge-triggered
-    /// bell forwarding: when a window goes false→true we emit BEL
-    /// to the outer terminal so the user's terminal emulator can
-    /// trigger its own notification action (audible bell, OS
-    /// notification, dock badge, etc.). Pruned to the live window
-    /// set on every update.
-    pub previous_bell: std::collections::HashMap<u32, bool>,
-    /// True when `terminals_set_windows` just observed at least one
-    /// false→true bell transition. The render loop consumes this
-    /// after the next draw via [`App::take_pending_bell`] and
-    /// writes `\x07` to stdout — once per event, no matter how many
-    /// windows flipped at the same time.
-    pub pending_bell_emit: bool,
-    /// Set when the next `terminals_set_windows` call should
-    /// resync `previous_bell` without emitting. Used right after
-    /// attach return: bells that fired during the attach already
-    /// played through tmux's `bell-action any`, so we don't want
-    /// keel to beep again on its way back to the TUI.
-    pub suppress_next_bell_emit: bool,
-    /// Per-row rects for the sidebar (services + windows + sentinel),
-    /// in the same global-index order the keymap uses. Populated by
-    /// the renderer each frame; hit-tested by the mouse handler to
-    /// route clicks to a row index.
-    pub row_rects: std::cell::RefCell<Vec<Rect>>,
-}
-
 /// Single-quote a path for safe shell embedding (tmux send-window
 /// commands run through `sh -c`).
 fn shell_escape(s: String) -> String {
@@ -162,28 +112,6 @@ fn shell_escape(s: String) -> String {
     }
     out.push('\'');
     out
-}
-
-impl TerminalsState {
-    /// Build initial state for a project. The window list starts
-    /// empty — the view populates it on first entry by querying
-    /// tmux. Session name is derived from the project name; slug-
-    /// aware naming would require the runtime identity, which the
-    /// caller can layer in via `with_project_root`.
-    pub fn default_for(config: &Config) -> Self {
-        let project = config.project.name.as_deref().unwrap_or("keel");
-        Self {
-            tmux_available: None,
-            session_name: format!("keel-{project}"),
-            windows: Vec::new(),
-            previews: std::collections::HashMap::new(),
-            selected: 0,
-            previous_bell: std::collections::HashMap::new(),
-            pending_bell_emit: false,
-            suppress_next_bell_emit: false,
-            row_rects: std::cell::RefCell::new(Vec::new()),
-        }
-    }
 }
 
 /// State for the Diff view (`g`). Populated lazily on first
@@ -513,7 +441,7 @@ pub struct App {
     /// Terminals view state (lazily initialised — empty Vec until
     /// the user first opens the view; the session name + tmux probe
     /// happen on first switch).
-    terminals: TerminalsState,
+    terminals: TerminalsView,
     /// Pending attach request from the Terminals view. The event
     /// loop drains this between ticks: drops the events reader,
     /// leaves alternate screen, runs tmux attach, re-enters.
@@ -568,7 +496,7 @@ impl App {
     pub fn new(config: Arc<Config>) -> Self {
         let items = build_items(&config);
         let services = collect_service_panes(&config);
-        let terminals = TerminalsState::default_for(&config);
+        let terminals = TerminalsView::default_for(&config);
         Self {
             config,
             items,
@@ -1333,16 +1261,12 @@ impl App {
         self.pending_switch.take()
     }
 
-    pub fn terminals(&self) -> &TerminalsState {
+    pub fn terminals(&self) -> &TerminalsView {
         &self.terminals
     }
 
-    pub fn terminals_mut(&mut self) -> &mut TerminalsState {
+    pub fn terminals_mut(&mut self) -> &mut TerminalsView {
         &mut self.terminals
-    }
-
-    pub fn set_tmux_available(&mut self, available: bool) {
-        self.terminals.tmux_available = Some(available);
     }
 
     /// Stable list of rows the Terminals view shows: every service
@@ -1365,68 +1289,21 @@ impl App {
         rows
     }
 
-    /// Replace the cached tmux window list. Caller has just queried
-    /// `tmux list-windows`; we adopt the result, prune previews and
-    /// the bell baseline for windows that no longer exist, and
-    /// clamp selection so it can't dangle past the list's end after
-    /// a delete.
-    ///
-    /// Side effect: detects per-window `has_bell` transitions from
-    /// false→true against `previous_bell` and arms `pending_bell_emit`
-    /// when at least one fresh bell lands, so the render loop emits
-    /// `\x07` once on the next pass. If `suppress_next_bell_emit` is
-    /// set (e.g. right after attach return), we resync the baseline
-    /// without arming — those bells already played through tmux's
-    /// `bell-action any` during the attach.
+    /// Replace the cached tmux window list and clamp selection to
+    /// the new row count. Thin wrapper around
+    /// [`TerminalsView::set_windows`] that supplies the row total
+    /// (services + windows + sentinel) the view itself can't know.
     pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
-        let live: std::collections::HashSet<u32> = windows.iter().map(|w| w.index).collect();
-        let mut fresh_bell = false;
-        for w in &windows {
-            let prev = self
-                .terminals
-                .previous_bell
-                .get(&w.index)
-                .copied()
-                .unwrap_or(false);
-            if w.has_bell && !prev {
-                fresh_bell = true;
-            }
-            self.terminals.previous_bell.insert(w.index, w.has_bell);
-        }
-        self.terminals.previous_bell.retain(|k, _| live.contains(k));
-        if self.terminals.suppress_next_bell_emit {
-            self.terminals.suppress_next_bell_emit = false;
-        } else if fresh_bell {
-            self.terminals.pending_bell_emit = true;
-        }
-        self.terminals.previews.retain(|k, _| live.contains(k));
-        self.terminals.windows = windows;
-        let total = self.terminals_rows().len();
-        if total > 0 && self.terminals.selected >= total {
-            self.terminals.selected = total - 1;
-        }
-    }
-
-    /// True if a fresh bell transition has been observed and not yet
-    /// drained by the render loop. Clears on read. Render loop calls
-    /// this after each draw and writes `\x07` to stdout when it
-    /// returns true.
-    pub fn take_pending_bell(&mut self) -> bool {
-        std::mem::replace(&mut self.terminals.pending_bell_emit, false)
-    }
-
-    /// Arm the silence flag so the next `terminals_set_windows` call
-    /// resyncs the bell baseline without emitting. Used by the
-    /// attach-return path — those bells already rang through tmux's
-    /// `bell-action any`.
-    pub fn silence_next_bell(&mut self) {
-        self.terminals.suppress_next_bell_emit = true;
+        let non_service_windows = windows.iter().filter(|w| !w.name.starts_with("svc:")).count();
+        // services count + window rows + 1 sentinel
+        let total_after = self.services.len() + non_service_windows + 1;
+        self.terminals.set_windows(windows, total_after);
     }
 
     /// Drop any tmux snapshots the worker queued while the user was
-    /// detached, without applying them. Pairs with `silence_next_bell`
-    /// to keep stale "had-bell mid-attach" snapshots from re-firing
-    /// the BEL on return.
+    /// detached, without applying them. Pairs with
+    /// [`TerminalsView::silence_next_bell`] to keep stale "had-bell
+    /// mid-attach" snapshots from re-firing the BEL on return.
     pub fn discard_pending_tmux_snapshots(&mut self) {
         let Some(w) = self.worker.as_mut() else {
             return;
@@ -1448,42 +1325,19 @@ impl App {
         }
     }
 
-    pub fn terminals_set_preview(&mut self, index: u32, lines: Vec<String>) {
-        self.terminals.previews.insert(index, lines);
-    }
-
-    /// Look up the cached preview for a tmux window index.
-    pub fn terminals_preview(&self, index: u32) -> Option<&Vec<String>> {
-        self.terminals.previews.get(&index)
-    }
-
     pub fn terminals_select_next(&mut self) {
         let total = self.terminals_rows().len();
-        if total > 0 {
-            self.terminals.selected = (self.terminals.selected + 1).min(total - 1);
-        }
-    }
-
-    pub fn terminals_select_prev(&mut self) {
-        self.terminals.selected = self.terminals.selected.saturating_sub(1);
+        self.terminals.select_next(total);
     }
 
     /// Set the Terminals-view selection to `idx`, clamped to the last
-    /// row. No-op when the row list is empty (it never is during
-    /// normal operation — the `+ new shell` sentinel always renders —
-    /// but guarding here keeps the public API uniform with the
-    /// other `select_at` variants).
+    /// row. Wrapper around [`TerminalsView::select_at`] that supplies
+    /// the row total.
     pub fn terminals_select_at(&mut self, idx: usize) {
         let total = self.terminals_rows().len();
-        if total == 0 {
-            return;
-        }
-        self.terminals.selected = idx.min(total - 1);
+        self.terminals.select_at(idx, total);
     }
 
-    /// Resolve the selected row in the Terminals view: queue an
-    /// attach for service / custom rows; open the create form for
-    /// the sentinel.
     /// Resolve the selected row in the Terminals view.
     ///
     ///   service row   → queue an attach into the compose service
@@ -3138,7 +2992,7 @@ mod tests {
             has_bell: false,
             workspace: None,
         }]);
-        assert!(!app.take_pending_bell());
+        assert!(!app.terminals_mut().take_pending_bell());
         // Bell flips on.
         app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
             index: 0,
@@ -3147,9 +3001,9 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(app.take_pending_bell(), "fresh bell should arm emit");
+        assert!(app.terminals_mut().take_pending_bell(), "fresh bell should arm emit");
         // take_pending_bell clears the flag.
-        assert!(!app.take_pending_bell());
+        assert!(!app.terminals_mut().take_pending_bell());
     }
 
     /// A window whose bell stays set across snapshots should NOT
@@ -3165,7 +3019,7 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(app.take_pending_bell(), "first observation arms");
+        assert!(app.terminals_mut().take_pending_bell(), "first observation arms");
         app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
@@ -3173,7 +3027,7 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(!app.take_pending_bell(), "still-set bell should not re-arm");
+        assert!(!app.terminals_mut().take_pending_bell(), "still-set bell should not re-arm");
     }
 
     /// `silence_next_bell` resyncs the baseline without arming —
@@ -3190,7 +3044,7 @@ mod tests {
             has_bell: false,
             workspace: None,
         }]);
-        app.silence_next_bell();
+        app.terminals_mut().silence_next_bell();
         // This transition would normally arm — silence drops it.
         app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
             index: 0,
@@ -3200,7 +3054,7 @@ mod tests {
             workspace: None,
         }]);
         assert!(
-            !app.take_pending_bell(),
+            !app.terminals_mut().take_pending_bell(),
             "silence flag should suppress this one emit"
         );
         // Subsequent transitions arm again. Clear, then re-fire.
@@ -3219,7 +3073,7 @@ mod tests {
             workspace: None,
         }]);
         assert!(
-            app.take_pending_bell(),
+            app.terminals_mut().take_pending_bell(),
             "silence is single-shot — next transition should arm"
         );
     }
