@@ -86,6 +86,13 @@ pub fn render(app: &App, frame: &mut Frame) {
 
     // Body delegated by view. Each view owns its sidebar + right
     // pane; only the chrome (top bar, status bar) is shared.
+    // Clear stale diff pane rects when leaving the diff view so a
+    // mouse click in another view can't accidentally hit a rect
+    // populated by a previous frame.
+    if app.view() != crate::app::View::Diff {
+        app.diff().files_rect.set(None);
+        app.diff().body_rect.set(None);
+    }
     match app.view() {
         crate::app::View::ControlCenter => render_control_center(app, frame, outer[1]),
         crate::app::View::Terminals => render_terminals_placeholder(app, frame, outer[1]),
@@ -534,6 +541,11 @@ fn render_diff_placeholder(app: &App, frame: &mut Frame, area: Rect) {
         .constraints([Constraint::Length(4), Constraint::Min(0)])
         .split(body[0]);
     render_diff_header(app, frame, left[0]);
+    // Stash the file-list and body rects so the mouse handler can
+    // hit-test wheel/click events. Updated every frame so a window
+    // resize is reflected on the next click.
+    app.diff().files_rect.set(Some(left[1]));
+    app.diff().body_rect.set(Some(body[1]));
     render_diff_files(app, frame, left[1]);
     render_diff_body(app, frame, body[1]);
 }

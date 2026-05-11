@@ -10,7 +10,7 @@ use crate::ui;
 use crossterm::{
     event::{
         DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{
@@ -598,8 +598,58 @@ async fn handle_event(app: &mut App, event: Event) {
                 }
             }
         }
+        // Mouse capture is only on in the diff view; events from
+        // any other context are stray (e.g. a click landing in the
+        // brief window before DisableMouseCapture takes effect) and
+        // are dropped to keep behavior predictable.
+        Event::Mouse(me)
+            if app.view() == crate::app::View::Diff
+                && app.mode() == crate::app::Mode::Normal =>
+        {
+            handle_mouse_diff(app, me);
+        }
         Event::Resize(_, _) => {
             // The next draw call already adapts to the new size.
+        }
+        _ => {}
+    }
+}
+
+fn rect_contains(rect: ratatui::layout::Rect, col: u16, row: u16) -> bool {
+    col >= rect.x
+        && col < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+/// Mouse handler for the diff view: scroll-wheel scrolls the body
+/// or moves the file selection depending on which pane the cursor
+/// is over. Clicks are intentionally not handled — pane-bounded
+/// text selection isn't viable in a terminal grid anyway, so we
+/// reserve clicks for a future visual-selection mode.
+fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
+    let files_rect = app.diff().files_rect.get();
+    let body_rect = app.diff().body_rect.get();
+
+    let over_body = body_rect.is_some_and(|r| rect_contains(r, me.column, me.row));
+    let over_files = files_rect.is_some_and(|r| rect_contains(r, me.column, me.row));
+
+    // Three lines per wheel notch matches the j/k cadence closely
+    // enough that mixing keyboard and wheel doesn't feel jumpy.
+    const WHEEL_LINES: i32 = 3;
+
+    match me.kind {
+        MouseEventKind::ScrollDown if over_body => app.diff_body_scroll_by(WHEEL_LINES),
+        MouseEventKind::ScrollUp if over_body => app.diff_body_scroll_by(-WHEEL_LINES),
+        MouseEventKind::ScrollDown if over_files => {
+            for _ in 0..WHEEL_LINES {
+                app.diff_select_next();
+            }
+        }
+        MouseEventKind::ScrollUp if over_files => {
+            for _ in 0..WHEEL_LINES {
+                app.diff_select_prev();
+            }
         }
         _ => {}
     }
@@ -1665,6 +1715,10 @@ fn launch_message(rejection: crate::app::LaunchRejection) -> String {
 fn enter_terminal(title: &str) -> Result<Terminal<CrosstermBackend<Stdout>>, TuiError> {
     enable_raw_mode()?;
     let mut out = stdout();
+    // Mouse capture is on so the diff view can react to scroll-wheel
+    // events. Drag-selection of text doesn't really work in a
+    // side-by-side TUI anyway (the terminal selects across pane
+    // boundaries), so keeping capture on globally costs nothing.
     execute!(
         out,
         EnterAlternateScreen,

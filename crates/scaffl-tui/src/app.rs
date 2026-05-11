@@ -6,6 +6,7 @@ use crate::palette::Palette;
 use crate::runner::RunState;
 use crate::services::ServicePane;
 use crate::watchers::{WatcherError, WatcherPane};
+use ratatui::layout::Rect;
 use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
 use scaffl_container::Backend;
 use scaffl_runtime::Executor;
@@ -305,6 +306,13 @@ pub struct DiffState {
     /// renderer can write through `&App`. Read by PgUp/PgDn and G
     /// to size half-pages and clamp to the bottom of the diff.
     pub body_height: std::cell::Cell<u16>,
+    /// Last frame's outer rect for the files-list pane and the
+    /// diff-body pane. None when the diff view isn't being rendered,
+    /// so a stale rect from a previous view can't match a wheel
+    /// event against the current view's geometry. Mouse routing
+    /// hit-tests against these.
+    pub files_rect: std::cell::Cell<Option<Rect>>,
+    pub body_rect: std::cell::Cell<Option<Rect>>,
     /// Wrap long diff lines (`w`). Off by default — most diffs are
     /// readable without wrapping and horizontal "loss" is preferred
     /// over visual jitter. On for narrow terminals.
