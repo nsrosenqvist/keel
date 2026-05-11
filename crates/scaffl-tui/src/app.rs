@@ -2052,11 +2052,8 @@ impl App {
         let configured_base = self.config.diff.base.clone();
         let (diff_tx, diff_rx) = oneshot::channel();
         tokio::spawn(async move {
-            let trunk = scaffl_runtime::detect_trunk(
-                &project_root_owned,
-                configured_base.as_deref(),
-            )
-            .await;
+            let trunk =
+                scaffl_runtime::detect_trunk(&project_root_owned, configured_base.as_deref()).await;
             let anchor = match trunk.as_deref() {
                 Some(t) => scaffl_runtime::merge_base(&project_root_owned, t).await,
                 None => None,
@@ -2184,10 +2181,7 @@ impl App {
                             added = true;
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                "watcher pane `{}` failed to start: {e}",
-                                result.name
-                            );
+                            tracing::warn!("watcher pane `{}` failed to start: {e}", result.name);
                         }
                     },
                     Err(mpsc::error::TryRecvError::Empty) => break,
@@ -2264,7 +2258,9 @@ impl App {
     /// the next tick would still pick the change up within ~2 s.
     pub fn poke_worker_status(&self) {
         if let Some(w) = self.worker.as_ref() {
-            let _ = w.cmd_tx.send(crate::worker::WorkerCommand::PokeServiceStatus);
+            let _ = w
+                .cmd_tx
+                .send(crate::worker::WorkerCommand::PokeServiceStatus);
         }
     }
 

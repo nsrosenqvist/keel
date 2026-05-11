@@ -602,7 +602,9 @@ fn render_diff_header(app: &App, frame: &mut Frame, area: Rect) {
         Span::styled(" · ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("+{}", diff.additions_total),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(
@@ -705,9 +707,7 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
             let path = elide_left(&f.path, path_w);
             let path_pad = path_w.saturating_sub(path.chars().count());
             let churn = if f.binary {
-                vec![
-                    Span::styled("  bin", Style::default().fg(Color::DarkGray)),
-                ]
+                vec![Span::styled("  bin", Style::default().fg(Color::DarkGray))]
             } else if f.status == DiffStatus::Untracked {
                 vec![Span::styled(
                     format!("  +{}", f.additions),
@@ -720,10 +720,7 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
                         Style::default().fg(Color::Green),
                     ),
                     Span::raw(" "),
-                    Span::styled(
-                        format!("−{}", f.deletions),
-                        Style::default().fg(Color::Red),
-                    ),
+                    Span::styled(format!("−{}", f.deletions), Style::default().fg(Color::Red)),
                 ]
             };
             let mut spans: Vec<Span<'static>> = vec![
@@ -817,11 +814,7 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
     // length so 4-digit lines aren't squashed against the sigil.
     let max_lineno = lines
         .iter()
-        .filter_map(|l| {
-            l.new_lineno
-                .map(u64::from)
-                .or(l.old_lineno.map(u64::from))
-        })
+        .filter_map(|l| l.new_lineno.map(u64::from).or(l.old_lineno.map(u64::from)))
         .max()
         .unwrap_or(0);
     let gutter_w = max_lineno.to_string().len().max(1);
@@ -912,7 +905,9 @@ fn render_diff_body_line(line: &crate::app::DiffLine, gutter_w: usize) -> Line<'
         gutter_style = gutter_style.bg(bg);
     }
     spans.push(Span::styled(gutter, gutter_style));
-    let mut sigil_style = Style::default().fg(sigil_color).add_modifier(Modifier::BOLD);
+    let mut sigil_style = Style::default()
+        .fg(sigil_color)
+        .add_modifier(Modifier::BOLD);
     if let Some(bg) = bg_tint {
         sigil_style = sigil_style.bg(bg);
     }
@@ -2354,11 +2349,7 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     use crate::app::DiffFocus;
     let mut hints: Vec<(&'static str, &'static str)> = match app.diff_focus() {
-        DiffFocus::Files => vec![
-            ("↑↓", "file"),
-            ("tab", "body"),
-            ("]/[", "hunk"),
-        ],
+        DiffFocus::Files => vec![("↑↓", "file"), ("tab", "body"), ("]/[", "hunk")],
         DiffFocus::Body => vec![
             ("↑↓", "scroll"),
             ("tab", "files"),

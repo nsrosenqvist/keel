@@ -176,7 +176,6 @@ impl ServicePane {
             self.buffer.clear();
         }
     }
-
 }
 
 fn format_error(e: &BackendError) -> String {

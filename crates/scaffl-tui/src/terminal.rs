@@ -355,13 +355,7 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
             "bg=default,fg=colour250",
         ],
         ["set-option", "-t", &req.session, "status-left", status_left],
-        [
-            "set-option",
-            "-t",
-            &req.session,
-            "status-left-length",
-            "60",
-        ],
+        ["set-option", "-t", &req.session, "status-left-length", "60"],
         [
             "set-option",
             "-t",
@@ -934,9 +928,9 @@ async fn refresh_diff_anchor(app: &mut App) {
         None => None,
     };
     let branch = current_branch(&project_root).await;
-    let anchor_short = anchor.as_deref().map(|sha| {
-        sha.chars().take(7).collect::<String>()
-    });
+    let anchor_short = anchor
+        .as_deref()
+        .map(|sha| sha.chars().take(7).collect::<String>());
     app.diff_set_anchor(trunk, anchor, branch, anchor_short);
 }
 
@@ -954,7 +948,11 @@ pub(crate) async fn current_branch(project_root: &std::path::Path) -> Option<Str
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() || s == "HEAD" { None } else { Some(s) }
+    if s.is_empty() || s == "HEAD" {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 /// Populate the diff file list if it hasn't been loaded yet, and
@@ -1027,8 +1025,7 @@ pub(crate) async fn load_diff_files(
         .args(["ls-files", "--others", "--exclude-standard"])
         .current_dir(project_root)
         .output();
-    let (diff_out, numstat_out, untracked_out) =
-        tokio::join!(diff_fut, numstat_fut, untracked_fut);
+    let (diff_out, numstat_out, untracked_out) = tokio::join!(diff_fut, numstat_fut, untracked_fut);
     let diff_out = diff_out.map_err(|e| format!("git diff --name-status failed: {e}"))?;
     if !diff_out.status.success() {
         // Anchor invalid (rare — `merge_base` already returned Some)
@@ -1900,7 +1897,10 @@ mod tests {
         // (old_start, new_start) — the counts after the comma are
         // ignored because we only need the starting offsets.
         assert_eq!(parse_hunk_header("@@ -1,7 +1,9 @@"), Some((1, 1)));
-        assert_eq!(parse_hunk_header("@@ -100 +200 @@ fn foo()"), Some((100, 200)));
+        assert_eq!(
+            parse_hunk_header("@@ -100 +200 @@ fn foo()"),
+            Some((100, 200))
+        );
         assert_eq!(parse_hunk_header("not a hunk"), None);
     }
 
@@ -1926,10 +1926,12 @@ index abc..def 100644
         // Filter to the kinds we care about for line-number tracking.
         let pick: Vec<(&str, Option<u32>, Option<u32>)> = lines
             .iter()
-            .filter(|l| matches!(
-                l.kind,
-                DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context,
-            ))
+            .filter(|l| {
+                matches!(
+                    l.kind,
+                    DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context,
+                )
+            })
             .map(|l| (l.text.as_str(), l.old_lineno, l.new_lineno))
             .collect();
         assert_eq!(
