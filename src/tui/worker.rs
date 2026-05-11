@@ -67,7 +67,7 @@ pub enum WorkerSnapshot {
     ServiceStatus { name: String, status: ServiceStatus },
     /// Updated window list for the active tmux session. Replaces
     /// `app.terminals.windows` wholesale on the next drain.
-    TmuxWindows(Vec<crate::tui::app::TmuxWindow>),
+    TmuxWindows(Vec<crate::tui::views::terminals::state::TmuxWindow>),
 }
 
 /// Endpoints the App holds for talking to the worker.

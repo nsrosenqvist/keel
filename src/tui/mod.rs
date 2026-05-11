@@ -24,20 +24,24 @@ use thiserror::Error;
 
 pub mod ansi;
 pub mod app;
+pub mod dialogs;
 pub mod palette;
 pub mod runner;
 pub mod services;
+pub mod shared;
 pub mod syntax;
 pub mod ui;
+pub mod views;
 pub mod watchers;
 pub mod worker;
 
 mod lazygit;
 mod terminal;
 
-pub use app::{App, Item, ItemKind, View};
+pub use app::{App, View};
 pub use runner::{CapturedLine, RunState};
 pub use services::ServicePane;
+pub use views::control_center::state::{Item, ItemKind};
 pub use watchers::{WatcherPane, WatcherState};
 
 #[derive(Debug, Error)]

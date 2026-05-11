@@ -8,7 +8,7 @@
 //! respective modules. The terminal layer mutates a [`Palette`] in
 //! response to key events; the renderer reads from it.
 
-use crate::tui::app::{Item, ItemKind};
+use crate::tui::views::control_center::state::{Item, ItemKind};
 use nucleo_matcher::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},

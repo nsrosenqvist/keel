@@ -6,9 +6,19 @@ use crate::config::{Config, Recipe, ScriptCommand, model::UiPane};
 use crate::container::Backend;
 use crate::container::devcontainer::DevcontainerBackend;
 use crate::runtime::Executor;
+use crate::tui::dialogs::args_prompt::ArgsPrompt;
+use crate::tui::dialogs::confirm::{ConfirmAction, ConfirmDialog};
+use crate::tui::dialogs::switcher::{
+    BranchSpec, NewFormField, NewWorktreeAction, NewWorktreeForm, SwitcherConfirm, WorktreeRow,
+};
 use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
 use crate::tui::services::ServicePane;
+use crate::tui::views::control_center::state::{Item, ItemKind};
+use crate::tui::views::diff::state::{
+    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, ReadLine, ReadLineKind,
+};
+use crate::tui::views::terminals::state::{TerminalsRow, TmuxWindow};
 use crate::tui::watchers::{WatcherError, WatcherPane};
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
@@ -61,27 +71,6 @@ pub enum ClickTarget {
     SwitcherRow(usize),
 }
 
-/// What kind of thing a sidebar item points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ItemKind {
-    /// The configured container runtime itself — a single synthetic
-    /// row that hosts backend lifecycle output (`U` / `D` / `R` /
-    /// `S` for compose). One such row exists when the configured
-    /// backend is non-`none`.
-    Runtime,
-    Service,
-    Watcher,
-    Recipe,
-    Script,
-}
-
-/// A single sidebar entry.
-#[derive(Debug, Clone)]
-pub struct Item {
-    pub name: String,
-    pub kind: ItemKind,
-}
-
 /// Why a run attempt was rejected.
 #[derive(Debug, Clone)]
 pub enum LaunchRejection {
@@ -108,56 +97,6 @@ pub enum Mode {
 /// theoretically collide with service / watcher names, so the kind
 /// is part of the key.
 pub type RunKey = (ItemKind, String);
-
-/// Pending decision when the user tries to launch a running command.
-/// Kept simple: only one in-flight question at a time, only one kind
-/// of question (kill-and-restart). New question shapes get added here
-/// when they arrive.
-#[derive(Debug, Clone)]
-pub struct ConfirmDialog {
-    pub title: String,
-    pub body: String,
-    /// Currently-focused choice. `true` = Yes (the default).
-    pub yes_focused: bool,
-    pub action: ConfirmAction,
-}
-
-#[derive(Debug, Clone)]
-pub enum ConfirmAction {
-    /// Abort the named run and relaunch it.
-    KillAndRestart { key: RunKey },
-    /// Kill a tmux window in the Terminals view. Carries the
-    /// session + index so the action survives any navigation the
-    /// user does while the modal is open.
-    KillTmuxWindow {
-        session: String,
-        index: u32,
-        /// Window name as it was when the modal opened — purely
-        /// for the dialog body so the user sees what they're
-        /// killing.
-        name: String,
-    },
-}
-
-/// Open args prompt for a `forward_args = true` row. Only one is
-/// open at a time; selection is locked while the prompt is up.
-#[derive(Debug, Clone)]
-pub struct ArgsPrompt {
-    pub item_name: String,
-    pub kind: ItemKind,
-    pub input: String,
-}
-
-/// One row in the worktree switcher list. Slug is computed by the
-/// runtime crate; `is_current` flags the worktree keel is
-/// currently bound to so we can render it differently.
-#[derive(Debug, Clone)]
-pub struct WorktreeRow {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-    pub slug: String,
-    pub is_current: bool,
-}
 
 /// State for the Terminals view (`T`). Tmux-backed; one session per
 /// worktree. Windows are tmux's source of truth — we don't track
@@ -209,41 +148,6 @@ pub struct TerminalsState {
     pub row_rects: std::cell::RefCell<Vec<Rect>>,
 }
 
-/// One tmux window as reported by `list-windows`. `name` is what
-/// tmux's `#{window_name}` resolves to right now — for an
-/// auto-renamed window this tracks the running command live.
-/// `cwd` carries the active pane's `pane_current_path` when
-/// available (`tmux list-windows -F`'s response can omit it for
-/// just-spawned windows that haven't launched a process yet).
-/// `has_bell` mirrors tmux's `#{window_bell_flag}` — set when a
-/// program in the window emitted BEL (coding agents do this to
-/// grab attention) and auto-cleared by tmux when the window
-/// becomes current.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TmuxWindow {
-    pub index: u32,
-    pub name: String,
-    pub cwd: Option<String>,
-    pub has_bell: bool,
-    /// Devcontainer workspace folder, read from the `@keel_workspace`
-    /// tmux window option keel set when it created the window.
-    /// Empty for windows keel didn't tag (host shells, service
-    /// attaches, pre-existing windows). Surfaces in the sidebar in
-    /// place of the host-side `cwd` since the latter is just the
-    /// docker client's pwd, not anything useful to the user.
-    pub workspace: Option<String>,
-}
-
-/// One visible row in the Terminals view's sidebar. Services first
-/// (mapped to compose-exec windows when active), then user shell
-/// windows, then the `+ new shell` sentinel.
-#[derive(Debug, Clone)]
-pub enum TerminalsRow {
-    Service(String),
-    Window(TmuxWindow),
-    NewSentinel,
-}
-
 /// Single-quote a path for safe shell embedding (tmux send-window
 /// commands run through `sh -c`).
 fn shell_escape(s: String) -> String {
@@ -280,17 +184,6 @@ impl TerminalsState {
             row_rects: std::cell::RefCell::new(Vec::new()),
         }
     }
-}
-
-/// Which pane in the diff view has the keyboard focus. Files-pane
-/// is the default — discoverable, mirrors the implicit selection
-/// users already had in v1. Body-pane focus enables line-by-line
-/// scroll, hunk navigation, and gg/G.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DiffFocus {
-    #[default]
-    Files,
-    Body,
 }
 
 /// State for the Diff view (`g`). Populated lazily on first
@@ -391,142 +284,6 @@ pub struct DiffState {
     pub read_scroll: std::collections::HashMap<String, usize>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DiffFile {
-    pub path: String,
-    pub status: DiffStatus,
-    /// Lines added / removed against the anchor. `(0, 0)` until
-    /// numstat lands; `(0, 0)` permanently for binary files (we set
-    /// `binary = true` so the file list can render `bin` instead of
-    /// `+0 −0`).
-    pub additions: usize,
-    pub deletions: usize,
-    pub binary: bool,
-    /// For renames (R rows in `--name-status`): the path the file
-    /// had at the anchor. Threaded into `load_diff_for_file` so the
-    /// per-file diff command can resolve the rename and report
-    /// similarity + actual content delta instead of "new file at
-    /// <new_path>, +N lines".
-    pub old_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiffStatus {
-    Modified,
-    Added,
-    Deleted,
-    Renamed,
-    Untracked,
-    Other,
-}
-
-impl DiffStatus {
-    pub fn letter(self) -> char {
-        match self {
-            DiffStatus::Modified => 'M',
-            DiffStatus::Added => 'A',
-            DiffStatus::Deleted => 'D',
-            DiffStatus::Renamed => 'R',
-            DiffStatus::Untracked => 'U',
-            DiffStatus::Other => '?',
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DiffLine {
-    pub kind: DiffLineKind,
-    pub text: String,
-    /// Old-side line number. None on Added / Hunk / Header lines.
-    pub old_lineno: Option<u32>,
-    /// New-side line number. None on Removed / Hunk / Header lines.
-    pub new_lineno: Option<u32>,
-    /// Pre-computed syntect spans for the inner code text (after
-    /// stripping the leading `+`/`-`/` ` sigil). Empty for hunk
-    /// and header lines.
-    pub spans: Vec<crate::tui::syntax::HighlightedSpan>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiffLineKind {
-    Added,
-    Removed,
-    Context,
-    Hunk,
-    Header,
-}
-
-/// One line of a file rendered in read mode: no diff sigil, single
-/// line-number gutter. Spans are syntect-highlighted up front so
-/// the renderer doesn't redo the syntax pass per frame.
-#[derive(Debug, Clone)]
-pub struct ReadLine {
-    pub kind: ReadLineKind,
-    pub lineno: u32,
-    pub text: String,
-    pub spans: Vec<crate::tui::syntax::HighlightedSpan>,
-}
-
-/// Background-tint classification for a read-mode row. `Plain` is
-/// unchanged context; `Added`/`Modified` map to real lines in the
-/// new file; `Separator` is a synthetic row inserted between two
-/// surviving lines to mark "N lines were deleted here". The
-/// classification comes from walking the diff cache, so it
-/// requires the diff to be loaded first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReadLineKind {
-    #[default]
-    Plain,
-    Added,
-    Modified,
-    Separator {
-        removed: usize,
-    },
-}
-
-/// What the diff view's right-hand pane is currently showing.
-/// `Diff` is the default unified-diff view; `Read` shows the full
-/// file (working-tree contents for present files, `git show
-/// <anchor>:<path>` for deleted files). Global across files —
-/// toggling switches both panes' currently-selected file
-/// simultaneously.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BodyMode {
-    #[default]
-    Diff,
-    Read,
-}
-
-impl DiffLineKind {
-    pub fn classify(line: &str) -> Self {
-        if line.starts_with("@@") {
-            return DiffLineKind::Hunk;
-        }
-        if line.starts_with("diff --git")
-            || line.starts_with("index ")
-            || line.starts_with("--- ")
-            || line.starts_with("+++ ")
-            || line.starts_with("Binary files")
-            || line.starts_with("new file mode")
-            || line.starts_with("deleted file mode")
-            || line.starts_with("similarity index")
-            || line.starts_with("rename from")
-            || line.starts_with("rename to")
-            || line.starts_with("copy from")
-            || line.starts_with("copy to")
-        {
-            return DiffLineKind::Header;
-        }
-        if line.starts_with('+') {
-            return DiffLineKind::Added;
-        }
-        if line.starts_with('-') {
-            return DiffLineKind::Removed;
-        }
-        DiffLineKind::Context
-    }
-}
-
 /// One-shot signal from the Terminals view to the event loop:
 /// "leave the alternate screen, attach to this tmux window, come
 /// back when the user detaches." Created (or, if needed, sent
@@ -585,114 +342,6 @@ impl std::fmt::Debug for EnsureDevcontainer {
 pub struct KillWindow {
     pub session: String,
     pub index: u32,
-}
-
-/// Sub-state for the "create new worktree" flow inside the
-/// switcher modal.
-///
-/// Shape: branch-first picker. The user types into `branch_input`,
-/// which fuzzy-filters `branches` (sourced from `git for-each-ref`)
-/// down to `filtered`. A "create new branch" sentinel appears as
-/// the last option whenever the input doesn't exactly match an
-/// existing branch — selecting it triggers `git worktree add -b`.
-///
-/// `path_input` stays auto-synced as `<parent>/<slug(branch)>`
-/// while `path_dirty` is false. The first edit in the path field
-/// flips that flag and the path stops following the branch — the
-/// user owns it from then on.
-#[derive(Debug, Clone)]
-pub struct NewWorktreeForm {
-    pub branch_input: String,
-    pub path_input: String,
-    /// True once the user has manually edited the path field. Once
-    /// dirty, branch keystrokes no longer rewrite the path — we
-    /// don't want to clobber what the user typed.
-    pub path_dirty: bool,
-    /// Parent directory new worktrees go under. Defaults to the
-    /// current project root's parent dir; baked in at form-open
-    /// time so the path-derivation code doesn't need to keep
-    /// rerunning the lookup.
-    pub parent: PathBuf,
-    /// All branches the user might want to base a worktree on,
-    /// pre-fetched once when the form opens. Sorted by committer
-    /// date desc; remote-only branches included.
-    pub branches: Vec<crate::runtime::BranchEntry>,
-    /// Indices into `branches`, filtered by the current branch
-    /// input. Recomputed on every keystroke that mutates the
-    /// branch field.
-    pub filtered: Vec<usize>,
-    /// Highlighted row in the [filtered ++ sentinel] list. Bound
-    /// to `filtered.len()` (the sentinel slot, when present) at
-    /// the upper end. The renderer/key-handler treats `selected ==
-    /// filtered.len()` as "the create-new-branch sentinel."
-    pub selected: usize,
-    pub focus: NewFormField,
-    /// Last error from `git worktree add`, if any. Surfaces as a
-    /// hint inside the modal so the user can fix and retry without
-    /// the modal closing.
-    pub error: Option<String>,
-}
-
-impl NewWorktreeForm {
-    /// True when the create-new-branch sentinel should appear as
-    /// the last option. We only show it when:
-    ///   - `branch_input` is non-empty (no point creating a branch
-    ///     called nothing), and
-    ///   - no existing branch in `branches` matches `branch_input`
-    ///     exactly (avoids "create new branch 'main' off HEAD"
-    ///     when `main` already exists).
-    pub fn show_create_sentinel(&self) -> bool {
-        if self.branch_input.is_empty() {
-            return false;
-        }
-        !self.branches.iter().any(|b| b.name == self.branch_input)
-    }
-
-    /// Total selectable rows — filtered branches plus the sentinel
-    /// when applicable. Used by the bounds-check on Up/Down.
-    pub fn total_options(&self) -> usize {
-        self.filtered.len() + if self.show_create_sentinel() { 1 } else { 0 }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NewFormField {
-    Path,
-    Branch,
-}
-
-/// What the form's confirm step asks `git worktree add` to do.
-#[derive(Debug, Clone)]
-pub struct NewWorktreeAction {
-    pub path: String,
-    pub branch: BranchSpec,
-}
-
-/// Distinguishes "attach an existing branch" from "create a new
-/// branch off HEAD." Drives whether `git worktree add` gets `-b`.
-#[derive(Debug, Clone)]
-pub enum BranchSpec {
-    /// Use an existing branch — `git worktree add <path> <branch>`.
-    /// For remote-only entries, git auto-creates a tracking branch.
-    Existing(String),
-    /// Create a new branch off HEAD —
-    /// `git worktree add <path> -b <branch>`.
-    CreateOff(String),
-}
-
-/// Outcome of [`App::switcher_confirm`]. The caller (terminal layer)
-/// pattern-matches to decide whether to fetch branches and reopen
-/// the modal in create-form mode, or fall through to the queued
-/// hot-reload, or do nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwitcherConfirm {
-    /// Selected row was an existing worktree → switch queued.
-    Switched,
-    /// Selected row was the "+ new worktree" sentinel → fetch
-    /// branches async and call `App::open_create_form`.
-    OpenCreateForm,
-    /// Switcher modal wasn't open → key dispatcher should ignore.
-    NoOp,
 }
 
 /// Recompute `filtered` from the current `branch_input`. Empty
@@ -3090,6 +2739,7 @@ fn collect_service_panes(config: &Config) -> BTreeMap<String, ServicePane> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::views::diff::state::DiffStatus;
     use pretty_assertions::assert_eq;
 
     /// Test cfg with no container backend, so the synthetic container

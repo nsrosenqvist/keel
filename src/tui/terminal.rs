@@ -5,8 +5,15 @@
 //! application semantics live in [`crate::tui::app`].
 
 use crate::tui::TuiError;
-use crate::tui::app::App;
+use crate::tui::app::{
+    App, AttachRequest, ClickTarget, DOUBLE_CLICK_WINDOW, LaunchRejection, Mode, View,
+};
+use crate::tui::dialogs::switcher::{BranchSpec, NewWorktreeAction, SwitcherConfirm, WorktreeRow};
 use crate::tui::ui;
+use crate::tui::views::diff::state::{
+    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
+};
+use crate::tui::views::terminals::state::TmuxWindow;
 use crossterm::{
     event::{
         DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -35,13 +42,13 @@ pub enum DriveOutcome {
     Quit,
     SwitchWorktree {
         path: std::path::PathBuf,
-        view: crate::tui::app::View,
+        view: View,
     },
 }
 
 pub async fn run_event_loop(
     app: &mut App,
-    initial_view: crate::tui::app::View,
+    initial_view: View,
 ) -> Result<DriveOutcome, TuiError> {
     let title = terminal_title(app);
     let mut terminal = enter_terminal(&title)?;
@@ -50,14 +57,14 @@ pub async fn run_event_loop(
     // Terminals or Diff doesn't show stale (empty) state on first
     // paint.
     match initial_view {
-        crate::tui::app::View::Terminals => {
+        View::Terminals => {
             ensure_tmux_probed(app).await;
             refresh_tmux_windows(app, false).await;
         }
-        crate::tui::app::View::Diff => {
+        View::Diff => {
             ensure_diff_loaded(app).await;
         }
-        crate::tui::app::View::ControlCenter => {}
+        View::ControlCenter => {}
     }
     let result = drive(&mut terminal, app).await;
     leave_terminal(&mut terminal)?;
@@ -271,7 +278,7 @@ async fn drive(
 ///     create-or-attach by name (used for `svc:<service>` windows).
 ///   - bare numeric value with `None` → attach to that window index
 ///     directly.
-async fn attach_tmux(req: &crate::tui::app::AttachRequest) {
+async fn attach_tmux(req: &AttachRequest) {
     use tokio::process::Command;
     let has_session = Command::new("tmux")
         .args(["has-session", "-t", &req.session])
@@ -488,7 +495,7 @@ async fn attach_tmux(req: &crate::tui::app::AttachRequest) {
 /// caller distinguish "no such session" from "session has no
 /// windows" — which look identical when collapsed to a Vec.
 pub(crate) enum WindowList {
-    Ok(Vec<crate::tui::app::TmuxWindow>),
+    Ok(Vec<TmuxWindow>),
     NoSession(String),
     SpawnFailed(String),
 }
@@ -560,7 +567,7 @@ async fn capture_pane(session: &str, window: u32) -> Vec<String> {
 /// cleared. The `@keel_workspace` column is empty for any window
 /// keel didn't tag (host shells, services, pre-existing windows).
 /// Public for tests.
-pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::tui::app::TmuxWindow> {
+pub(crate) fn parse_tmux_windows(input: &str) -> Vec<TmuxWindow> {
     let mut out = Vec::new();
     for line in input.lines() {
         let mut parts = line.splitn(5, '\t');
@@ -576,7 +583,7 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::tui::app::TmuxWindow
         let cwd = parts.next().map(str::to_string).filter(|s| !s.is_empty());
         let has_bell = matches!(parts.next(), Some("1"));
         let workspace = parts.next().map(str::to_string).filter(|s| !s.is_empty());
-        out.push(crate::tui::app::TmuxWindow {
+        out.push(TmuxWindow {
             index,
             name: name.to_string(),
             cwd,
@@ -642,11 +649,11 @@ async fn handle_event(app: &mut App, event: Event) {
             // may re-arm a fresh one for this event.
             app.flash = None;
             match app.mode() {
-                crate::tui::app::Mode::Normal => handle_key_normal(app, code, modifiers).await,
-                crate::tui::app::Mode::Palette => handle_key_palette(app, code, modifiers).await,
-                crate::tui::app::Mode::Confirm => handle_key_confirm(app, code, modifiers),
-                crate::tui::app::Mode::ArgsPrompt => handle_key_args_prompt(app, code, modifiers),
-                crate::tui::app::Mode::WorktreeSwitcher => {
+                Mode::Normal => handle_key_normal(app, code, modifiers).await,
+                Mode::Palette => handle_key_palette(app, code, modifiers).await,
+                Mode::Confirm => handle_key_confirm(app, code, modifiers),
+                Mode::ArgsPrompt => handle_key_args_prompt(app, code, modifiers),
+                Mode::WorktreeSwitcher => {
                     handle_key_switcher(app, code, modifiers).await
                 }
             }
@@ -666,7 +673,6 @@ async fn handle_event(app: &mut App, event: Event) {
 /// input or on the brief gap between rendered rows) fall through to
 /// no-op.
 async fn handle_mouse(app: &mut App, me: MouseEvent) {
-    use crate::tui::app::{Mode, View};
     match app.mode() {
         Mode::Palette => handle_mouse_palette(app, me).await,
         Mode::Confirm => handle_mouse_confirm(app, me),
@@ -692,7 +698,7 @@ fn hit_test(rects: &[ratatui::layout::Rect], col: u16, row: u16) -> Option<usize
 
 /// Common click resolution: emit `Select` for a first click on
 /// `target`, or `Activate` when the same target was clicked again
-/// within [`crate::tui::app::DOUBLE_CLICK_WINDOW`]. Updates
+/// within [`DOUBLE_CLICK_WINDOW`]. Updates
 /// `app.last_click` as a side effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClickKind {
@@ -700,12 +706,12 @@ enum ClickKind {
     Activate,
 }
 
-fn resolve_click(app: &mut App, target: crate::tui::app::ClickTarget) -> ClickKind {
+fn resolve_click(app: &mut App, target: ClickTarget) -> ClickKind {
     let now = std::time::Instant::now();
     let activate = app
         .last_click
         .map(|(t, prev)| {
-            prev == target && now.duration_since(t) <= crate::tui::app::DOUBLE_CLICK_WINDOW
+            prev == target && now.duration_since(t) <= DOUBLE_CLICK_WINDOW
         })
         .unwrap_or(false);
     if activate {
@@ -765,7 +771,7 @@ async fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
                 // Resolve so a future double-click on the same row
                 // could activate (no semantic activation today, but
                 // the bookkeeping is uniform with other surfaces).
-                let _ = resolve_click(app, crate::tui::app::ClickTarget::DiffFile(idx));
+                let _ = resolve_click(app, ClickTarget::DiffFile(idx));
             }
         }
         // Horizontal pan: native left/right wheel from a trackpad,
@@ -798,7 +804,7 @@ async fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
 
 /// Mouse handler for the control-center view: click a sidebar row
 /// to select it, double-click within
-/// [`crate::tui::app::DOUBLE_CLICK_WINDOW`] to run the same
+/// [`DOUBLE_CLICK_WINDOW`] to run the same
 /// activation as Enter. Scroll-wheel moves the selection up/down at
 /// the keyboard cadence.
 async fn handle_mouse_control_center(app: &mut App, me: MouseEvent) {
@@ -814,7 +820,7 @@ async fn handle_mouse_control_center(app: &mut App, me: MouseEvent) {
             let Some(idx) = hit else {
                 return;
             };
-            let target = crate::tui::app::ClickTarget::SidebarItem(idx);
+            let target = ClickTarget::SidebarItem(idx);
             match resolve_click(app, target) {
                 ClickKind::Select => app.select_at(idx),
                 ClickKind::Activate => {
@@ -853,7 +859,7 @@ fn handle_mouse_terminals(app: &mut App, me: MouseEvent) {
             let Some(idx) = hit else {
                 return;
             };
-            let target = crate::tui::app::ClickTarget::TerminalsRow(idx);
+            let target = ClickTarget::TerminalsRow(idx);
             match resolve_click(app, target) {
                 ClickKind::Select => app.terminals_select_at(idx),
                 ClickKind::Activate => {
@@ -891,7 +897,7 @@ async fn handle_mouse_palette(app: &mut App, me: MouseEvent) {
             else {
                 return;
             };
-            let target = crate::tui::app::ClickTarget::PaletteRow(idx);
+            let target = ClickTarget::PaletteRow(idx);
             match resolve_click(app, target) {
                 ClickKind::Select => {
                     if let Some(p) = app.palette_mut() {
@@ -925,7 +931,7 @@ async fn handle_mouse_palette(app: &mut App, me: MouseEvent) {
 fn activate_palette_selection(app: &mut App) {
     match app.confirm_palette() {
         Some(Ok(())) => {}
-        Some(Err(crate::tui::app::LaunchRejection::AlreadyRunning)) => {
+        Some(Err(LaunchRejection::AlreadyRunning)) => {
             app.open_kill_restart_confirm();
         }
         Some(Err(rej)) => {
@@ -940,7 +946,7 @@ fn activate_palette_selection(app: &mut App) {
 /// toplevel fetch for the "+ new worktree" sentinel.
 async fn activate_switcher_selection(app: &mut App) {
     match app.switcher_confirm() {
-        crate::tui::app::SwitcherConfirm::OpenCreateForm => {
+        SwitcherConfirm::OpenCreateForm => {
             let project_root = app.project_root().to_path_buf();
             let branches = crate::runtime::list_branches(&project_root).await;
             let parent = crate::runtime::git_toplevel(&project_root)
@@ -948,7 +954,7 @@ async fn activate_switcher_selection(app: &mut App) {
                 .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
             app.open_create_form(branches, parent);
         }
-        crate::tui::app::SwitcherConfirm::Switched | crate::tui::app::SwitcherConfirm::NoOp => {}
+        SwitcherConfirm::Switched | SwitcherConfirm::NoOp => {}
     }
 }
 
@@ -969,7 +975,7 @@ async fn handle_mouse_switcher(app: &mut App, me: MouseEvent) {
             else {
                 return;
             };
-            let target = crate::tui::app::ClickTarget::SwitcherRow(idx);
+            let target = ClickTarget::SwitcherRow(idx);
             match resolve_click(app, target) {
                 ClickKind::Select => app.switcher_select_at(idx),
                 ClickKind::Activate => {
@@ -1026,7 +1032,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     // keys; lowercase letters stay free for per-view actions.
     match code {
         KeyCode::Char('T') => {
-            app.switch_view(crate::tui::app::View::Terminals);
+            app.switch_view(View::Terminals);
             ensure_tmux_probed(app).await;
             // Don't expect a session yet — the user may not have
             // attached to anything during this keel session.
@@ -1034,12 +1040,12 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             return;
         }
         KeyCode::Char('G') => {
-            app.switch_view(crate::tui::app::View::Diff);
+            app.switch_view(View::Diff);
             ensure_diff_loaded(app).await;
             return;
         }
-        KeyCode::Char('C') if app.view() != crate::tui::app::View::ControlCenter => {
-            app.switch_view(crate::tui::app::View::ControlCenter);
+        KeyCode::Char('C') if app.view() != View::ControlCenter => {
+            app.switch_view(View::ControlCenter);
             return;
         }
         // Worktree switcher is also global — accessible from every
@@ -1055,11 +1061,11 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     // Per-view keymap: while in Terminals or Diff, only the global
     // keys above + a tiny per-view dispatch apply. Control center
     // keeps its full keymap below.
-    if app.view() == crate::tui::app::View::Terminals {
+    if app.view() == View::Terminals {
         handle_key_terminals(app, code, modifiers).await;
         return;
     }
-    if app.view() == crate::tui::app::View::Diff {
+    if app.view() == View::Diff {
         handle_key_diff(app, code, modifiers).await;
         return;
     }
@@ -1193,7 +1199,7 @@ async fn activate_control_center_selection(app: &mut App) {
     } else {
         match app.try_launch_selected() {
             Ok(()) => {}
-            Err(crate::tui::app::LaunchRejection::AlreadyRunning) => {
+            Err(LaunchRejection::AlreadyRunning) => {
                 app.open_kill_restart_confirm();
             }
             Err(rej) => {
@@ -1234,7 +1240,7 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
             // palette stays open and the user keeps typing).
             match app.confirm_palette() {
                 Some(Ok(())) => {}
-                Some(Err(crate::tui::app::LaunchRejection::AlreadyRunning)) => {
+                Some(Err(LaunchRejection::AlreadyRunning)) => {
                     app.open_kill_restart_confirm();
                 }
                 Some(Err(rej)) => {
@@ -1299,7 +1305,7 @@ async fn handle_key_terminals(app: &mut App, code: KeyCode, modifiers: KeyModifi
 }
 
 async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    use crate::tui::app::DiffFocus;
+    use DiffFocus;
     if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
         app.quit();
         return;
@@ -1325,7 +1331,7 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         }
         KeyCode::Char('v') => {
             app.diff_toggle_body_mode();
-            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+            if app.diff_body_mode() == BodyMode::Read {
                 ensure_read_for_selected(app).await;
             }
             return;
@@ -1341,7 +1347,7 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::Char(']') => {
             // Hunk jump is meaningless in read mode — drop the key
             // rather than writing into the wrong scroll map.
-            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+            if app.diff_body_mode() == BodyMode::Read {
                 return;
             }
             app.diff_set_focus(DiffFocus::Body);
@@ -1349,7 +1355,7 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             return;
         }
         KeyCode::Char('[') => {
-            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+            if app.diff_body_mode() == BodyMode::Read {
                 return;
             }
             app.diff_set_focus(DiffFocus::Body);
@@ -1476,7 +1482,7 @@ async fn ensure_diff_for_selected(app: &mut App) {
     // If the user is currently viewing read mode, also populate the
     // read cache so a selection change doesn't show a "loading…"
     // placeholder. Diff-mode selection doesn't pre-fetch read.
-    if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+    if app.diff_body_mode() == BodyMode::Read {
         ensure_read_for_selected(app).await;
     }
 }
@@ -1525,7 +1531,7 @@ async fn ensure_read_for_selected(app: &mut App) {
 pub(crate) async fn load_diff_files(
     project_root: &std::path::Path,
     anchor: Option<&str>,
-) -> Result<Vec<crate::tui::app::DiffFile>, String> {
+) -> Result<Vec<DiffFile>, String> {
     use std::collections::BTreeMap;
     let Some(anchor) = anchor else {
         return load_diff_files_fallback(project_root).await;
@@ -1559,7 +1565,6 @@ pub(crate) async fn load_diff_files(
     // Merge into a BTreeMap keyed by path so a file that's both
     // tracked-modified AND showing up in ls-files (shouldn't happen,
     // but defensive) doesn't appear twice.
-    use crate::tui::app::{DiffFile, DiffStatus};
     let mut files: BTreeMap<String, DiffFile> = BTreeMap::new();
     let diff_text = String::from_utf8_lossy(&diff_out.stdout);
     for entry in parse_diff_name_status(&diff_text) {
@@ -1702,7 +1707,7 @@ pub(crate) fn resolve_numstat_destination(path: &str) -> String {
 /// detected: list whatever the working tree differs from HEAD on.
 async fn load_diff_files_fallback(
     project_root: &std::path::Path,
-) -> Result<Vec<crate::tui::app::DiffFile>, String> {
+) -> Result<Vec<DiffFile>, String> {
     let output = tokio::process::Command::new("git")
         .args(["status", "--porcelain=v1"])
         .current_dir(project_root)
@@ -1724,7 +1729,7 @@ async fn load_diff_files_fallback(
 /// Untracked files don't appear here — the caller pulls them
 /// separately from `git ls-files --others`.
 pub(crate) fn parse_diff_name_status(input: &str) -> Vec<DiffNameStatusEntry> {
-    use crate::tui::app::DiffStatus;
+    use DiffStatus;
     let mut out = Vec::new();
     for line in input.lines() {
         if line.is_empty() {
@@ -1771,7 +1776,7 @@ pub(crate) fn parse_diff_name_status(input: &str) -> Vec<DiffNameStatusEntry> {
 
 pub(crate) struct DiffNameStatusEntry {
     pub path: String,
-    pub status: crate::tui::app::DiffStatus,
+    pub status: DiffStatus,
     /// Source path for rename/copy rows; None otherwise.
     pub old_path: Option<String>,
 }
@@ -1780,8 +1785,7 @@ pub(crate) struct DiffNameStatusEntry {
 /// status chars + space + path (or `path -> renamed-to` for
 /// renames). We pick the worst-of-the-two status chars to colour
 /// the row; the file path is everything after.
-pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::tui::app::DiffFile> {
-    use crate::tui::app::{DiffFile, DiffStatus};
+pub(crate) fn parse_status_porcelain(input: &str) -> Vec<DiffFile> {
     let mut out = Vec::new();
     for line in input.lines() {
         if line.len() < 4 {
@@ -1818,10 +1822,9 @@ pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::tui::app::DiffFi
 
 async fn load_diff_for_file(
     project_root: &std::path::Path,
-    file: &crate::tui::app::DiffFile,
+    file: &DiffFile,
     anchor: Option<&str>,
-) -> Vec<crate::tui::app::DiffLine> {
-    use crate::tui::app::{DiffLine, DiffLineKind, DiffStatus};
+) -> Vec<DiffLine> {
     // Untracked files don't exist in HEAD or the anchor — git diff
     // would error. Synthesise a file-as-added view with the file
     // contents prefixed by `+`.
@@ -1872,8 +1875,7 @@ async fn load_diff_for_file(
 /// print. Each non-hunk, non-header line goes through syntect once,
 /// using the file's path to pick a syntax — avoids redoing the
 /// lookup on every frame as the user scrolls.
-pub(crate) fn enrich_diff_lines(body: &str, path: &str) -> Vec<crate::tui::app::DiffLine> {
-    use crate::tui::app::{DiffLine, DiffLineKind};
+pub(crate) fn enrich_diff_lines(body: &str, path: &str) -> Vec<DiffLine> {
     let mut out = Vec::new();
     let mut old_no: u32 = 0;
     let mut new_no: u32 = 0;
@@ -1967,10 +1969,9 @@ pub(crate) fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
 /// next surviving new-side line (or to the end of the file when
 /// the deletion was at the tail).
 pub(crate) fn annotate_read_with_diff(
-    read: Vec<crate::tui::app::ReadLine>,
-    diff: &[crate::tui::app::DiffLine],
-) -> Vec<crate::tui::app::ReadLine> {
-    use crate::tui::app::{DiffLineKind, ReadLine, ReadLineKind};
+    read: Vec<ReadLine>,
+    diff: &[DiffLine],
+) -> Vec<ReadLine> {
     use std::collections::HashMap;
     let mut kind_by_lineno: HashMap<u32, ReadLineKind> = HashMap::new();
     // Key: new_lineno of the line immediately after the deletion.
@@ -2048,10 +2049,9 @@ pub(crate) fn annotate_read_with_diff(
 /// error line so the renderer doesn't need a branch.
 async fn load_read_for_file(
     project_root: &std::path::Path,
-    file: &crate::tui::app::DiffFile,
+    file: &DiffFile,
     anchor: Option<&str>,
-) -> Vec<crate::tui::app::ReadLine> {
-    use crate::tui::app::{DiffStatus, ReadLine, ReadLineKind};
+) -> Vec<ReadLine> {
     if file.binary {
         return vec![ReadLine {
             kind: ReadLineKind::Plain,
@@ -2108,8 +2108,7 @@ async fn load_read_for_file(
 async fn load_untracked_as_diff(
     project_root: &std::path::Path,
     path: &str,
-) -> Vec<crate::tui::app::DiffLine> {
-    use crate::tui::app::{DiffLine, DiffLineKind};
+) -> Vec<DiffLine> {
     let abs = project_root.join(path);
     let body = tokio::fs::read_to_string(&abs).await.unwrap_or_default();
     let mut lines = vec![DiffLine {
@@ -2137,7 +2136,7 @@ async fn load_untracked_as_diff(
 /// Build worktree-switcher rows for the current project. The current
 /// worktree (matched by canonicalised path) is flagged so the modal
 /// can render it differently and pre-select it.
-async fn build_worktree_rows(app: &App) -> Vec<crate::tui::app::WorktreeRow> {
+async fn build_worktree_rows(app: &App) -> Vec<WorktreeRow> {
     let project_root = app.project_root().to_path_buf();
     let entries = crate::runtime::worktree::list_worktrees(&project_root).await;
     let current = std::fs::canonicalize(&project_root).unwrap_or(project_root);
@@ -2147,7 +2146,7 @@ async fn build_worktree_rows(app: &App) -> Vec<crate::tui::app::WorktreeRow> {
             let path_buf = std::path::PathBuf::from(&e.path);
             let canonical = std::fs::canonicalize(&path_buf).unwrap_or_else(|_| path_buf.clone());
             let slug = derive_slug_from_entry(&e);
-            crate::tui::app::WorktreeRow {
+            WorktreeRow {
                 path: path_buf,
                 branch: e.branch.clone(),
                 slug,
@@ -2189,7 +2188,7 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
         KeyCode::Up | KeyCode::Char('k') => app.switcher_select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.switcher_select_next(),
         KeyCode::Enter => match app.switcher_confirm() {
-            crate::tui::app::SwitcherConfirm::OpenCreateForm => {
+            SwitcherConfirm::OpenCreateForm => {
                 let project_root = app.project_root().to_path_buf();
                 let branches = crate::runtime::list_branches(&project_root).await;
                 // Anchor new worktrees against the git toplevel's
@@ -2201,7 +2200,7 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
                     .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
                 app.open_create_form(branches, parent);
             }
-            crate::tui::app::SwitcherConfirm::Switched | crate::tui::app::SwitcherConfirm::NoOp => {
+            SwitcherConfirm::Switched | SwitcherConfirm::NoOp => {
             }
         },
         _ => {}
@@ -2241,9 +2240,9 @@ async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
 /// the modal renders the diagnostic.
 async fn create_worktree(
     project_root: &std::path::Path,
-    action: &crate::tui::app::NewWorktreeAction,
+    action: &NewWorktreeAction,
 ) -> Result<std::path::PathBuf, String> {
-    use crate::tui::app::BranchSpec;
+    use BranchSpec;
     let path = action.path.trim();
     if path.is_empty() {
         return Err("path is required".into());
@@ -2294,7 +2293,7 @@ fn handle_key_args_prompt(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
         KeyCode::Backspace => app.args_prompt_pop_char(),
         KeyCode::Enter => match app.args_prompt_resolve(true) {
             Some(Ok(())) => {}
-            Some(Err(crate::tui::app::LaunchRejection::AlreadyRunning)) => {
+            Some(Err(LaunchRejection::AlreadyRunning)) => {
                 app.open_kill_restart_confirm();
             }
             Some(Err(rej)) => app.flash = Some(launch_message(rej)),
@@ -2335,8 +2334,8 @@ fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
-fn launch_message(rejection: crate::tui::app::LaunchRejection) -> String {
-    use crate::tui::app::LaunchRejection::*;
+fn launch_message(rejection: LaunchRejection) -> String {
+    use LaunchRejection::*;
     match rejection {
         NoExecutor => "no backend wired into the TUI".into(),
         AlreadyRunning => "another run is in progress".into(),
@@ -2489,33 +2488,33 @@ mod tests {
     #[tokio::test]
     async fn capital_t_switches_to_terminals_view() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        assert_eq!(app.view(), crate::tui::app::View::ControlCenter);
+        assert_eq!(app.view(), View::ControlCenter);
         handle_event(&mut app, press(KeyCode::Char('T'))).await;
-        assert_eq!(app.view(), crate::tui::app::View::Terminals);
+        assert_eq!(app.view(), View::Terminals);
     }
 
     #[tokio::test]
     async fn capital_w_works_from_terminals_view() {
         // Used to be control-center-only; now global.
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        app.switch_view(crate::tui::app::View::Terminals);
+        app.switch_view(View::Terminals);
         handle_event(&mut app, press(KeyCode::Char('W'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::WorktreeSwitcher);
+        assert_eq!(app.mode(), Mode::WorktreeSwitcher);
     }
 
     #[tokio::test]
     async fn capital_w_works_from_diff_view() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        app.switch_view(crate::tui::app::View::Diff);
+        app.switch_view(View::Diff);
         handle_event(&mut app, press(KeyCode::Char('W'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::WorktreeSwitcher);
+        assert_eq!(app.mode(), Mode::WorktreeSwitcher);
     }
 
     #[tokio::test]
     async fn capital_g_switches_to_diff_view() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('G'))).await;
-        assert_eq!(app.view(), crate::tui::app::View::Diff);
+        assert_eq!(app.view(), View::Diff);
     }
 
     #[tokio::test]
@@ -2524,7 +2523,7 @@ mod tests {
         // view changes). Asserts we don't accidentally rewire it.
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('g'))).await;
-        assert_eq!(app.view(), crate::tui::app::View::ControlCenter);
+        assert_eq!(app.view(), View::ControlCenter);
     }
 
     #[test]
@@ -2587,7 +2586,7 @@ mod tests {
 
     #[test]
     fn parse_status_porcelain_classifies_each_line() {
-        use crate::tui::app::DiffStatus;
+        use DiffStatus;
         // Explicit \n joins because Rust's `\<newline>` continuation
         // strips the leading whitespace on the next line — which
         // would corrupt git porcelain's `XY PATH` format where X
@@ -2614,7 +2613,7 @@ mod tests {
 
     #[test]
     fn parse_diff_name_status_basic() {
-        use crate::tui::app::DiffStatus;
+        use DiffStatus;
         let input = "M\tsrc/main.rs\nA\tsrc/lib.rs\nD\tCargo.toml\nR090\told.txt\tnew.txt\n";
         let entries = parse_diff_name_status(input);
         assert_eq!(entries.len(), 4);
@@ -2676,7 +2675,7 @@ mod tests {
 
     #[test]
     fn enrich_diff_lines_tracks_line_numbers_through_hunks() {
-        use crate::tui::app::DiffLineKind;
+        use DiffLineKind;
         // Two hunks: an add+remove pair around line 1, then a context
         // run starting at line 10.
         let body = "\
@@ -2719,9 +2718,9 @@ index abc..def 100644
     #[tokio::test]
     async fn capital_c_returns_to_control_center() {
         let mut app = app_with("[command.x]\nrun = \"true\"\n");
-        app.switch_view(crate::tui::app::View::Diff);
+        app.switch_view(View::Diff);
         handle_event(&mut app, press(KeyCode::Char('C'))).await;
-        assert_eq!(app.view(), crate::tui::app::View::ControlCenter);
+        assert_eq!(app.view(), View::ControlCenter);
     }
 
     #[tokio::test]
@@ -2747,28 +2746,28 @@ index abc..def 100644
     async fn colon_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char(':'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::Palette);
+        assert_eq!(app.mode(), Mode::Palette);
     }
 
     #[tokio::test]
     async fn slash_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, press(KeyCode::Char('/'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::Palette);
+        assert_eq!(app.mode(), Mode::Palette);
     }
 
     #[tokio::test]
     async fn ctrl_k_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, ctrl(KeyCode::Char('k'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::Palette);
+        assert_eq!(app.mode(), Mode::Palette);
     }
 
     #[tokio::test]
     async fn ctrl_p_opens_palette() {
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         handle_event(&mut app, ctrl(KeyCode::Char('p'))).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::Palette);
+        assert_eq!(app.mode(), Mode::Palette);
     }
 
     #[tokio::test]
@@ -2786,7 +2785,7 @@ index abc..def 100644
         let mut app = app_with("[command.a]\nrun = \"true\"\n");
         app.open_palette();
         handle_event(&mut app, press(KeyCode::Esc)).await;
-        assert_eq!(app.mode(), crate::tui::app::Mode::Normal);
+        assert_eq!(app.mode(), Mode::Normal);
     }
 
     #[tokio::test]
@@ -2813,7 +2812,7 @@ index abc..def 100644
         // migrate then test. Move selection to migrate.
         handle_event(&mut app, press(KeyCode::Enter)).await;
         // Confirm closes the palette and moves the sidebar selection.
-        assert_eq!(app.mode(), crate::tui::app::Mode::Normal);
+        assert_eq!(app.mode(), Mode::Normal);
         assert_eq!(app.items()[app.selected_index()].name, "migrate");
     }
 
@@ -2823,7 +2822,6 @@ index abc..def 100644
     // constructs a small synthetic diff and a flat read-line vec,
     // then asserts the annotated output kinds.
 
-    use crate::tui::app::{DiffLine, DiffLineKind, ReadLine, ReadLineKind};
 
     fn dl_h(text: &str) -> DiffLine {
         DiffLine {

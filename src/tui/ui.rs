@@ -22,10 +22,18 @@
 
 use crate::container::ServiceStatus;
 use crate::runtime::OutputStream;
-use crate::tui::app::{App, Item, ItemKind, Mode};
+use crate::tui::app::{App, Mode};
+use crate::tui::dialogs::args_prompt::ArgsPrompt;
+use crate::tui::dialogs::confirm::ConfirmDialog;
+use crate::tui::dialogs::switcher::{NewFormField, NewWorktreeForm};
 use crate::tui::palette::Palette;
 use crate::tui::runner::{CapturedLine, RunState};
 use crate::tui::services::ServicePane;
+use crate::tui::views::control_center::state::{Item, ItemKind};
+use crate::tui::views::diff::state::{
+    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
+};
+use crate::tui::views::terminals::state::{TerminalsRow, TmuxWindow};
 use crate::tui::watchers::{WatcherPane, WatcherState};
 use ratatui::{
     Frame,
@@ -189,7 +197,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     // center's per-group constraints.
     let services_count = rows
         .iter()
-        .filter(|r| matches!(r, crate::tui::app::TerminalsRow::Service(_)))
+        .filter(|r| matches!(r, TerminalsRow::Service(_)))
         .count();
     let terminals_total = rows.len() - services_count;
     let constraints: Vec<Constraint> = if services_count > 0 {
@@ -223,10 +231,10 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         for (local_idx, (global_idx, row)) in rows
             .iter()
             .enumerate()
-            .filter(|(_, r)| matches!(r, crate::tui::app::TerminalsRow::Service(_)))
+            .filter(|(_, r)| matches!(r, TerminalsRow::Service(_)))
             .enumerate()
         {
-            let crate::tui::app::TerminalsRow::Service(name) = row else {
+            let TerminalsRow::Service(name) = row else {
                 continue;
             };
             if global_idx == selected {
@@ -263,14 +271,14 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     let mut term_selected: Option<usize> = None;
     for (global_idx, row) in rows.iter().enumerate() {
         match row {
-            crate::tui::app::TerminalsRow::Service(_) => continue,
-            crate::tui::app::TerminalsRow::Window(w) => {
+            TerminalsRow::Service(_) => continue,
+            TerminalsRow::Window(w) => {
                 if global_idx == selected {
                     term_selected = Some(term_items.len());
                 }
                 term_items.push(ListItem::new(window_row_line(w)));
             }
-            crate::tui::app::TerminalsRow::NewSentinel => {
+            TerminalsRow::NewSentinel => {
                 if global_idx == selected {
                     term_selected = Some(term_items.len());
                 }
@@ -320,14 +328,14 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     let mut term_local = 0usize;
     for (global_idx, row) in rows.iter().enumerate() {
         let (group_area, local_idx) = match row {
-            crate::tui::app::TerminalsRow::Service(_) => {
+            TerminalsRow::Service(_) => {
                 let Some(a) = svc_area else { continue };
                 let l = svc_local;
                 svc_local += 1;
                 (a, l)
             }
-            crate::tui::app::TerminalsRow::Window(_)
-            | crate::tui::app::TerminalsRow::NewSentinel => {
+            TerminalsRow::Window(_)
+            | TerminalsRow::NewSentinel => {
                 let l = term_local;
                 term_local += 1;
                 (area_for_terms, l)
@@ -358,7 +366,7 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
 /// diamond for a yellow filled dot — the indicator we surface for
 /// "this window wants attention" (coding agents emit BEL when
 /// they're waiting on input). The flag clears on attach.
-fn window_row_line(w: &crate::tui::app::TmuxWindow) -> Line<'static> {
+fn window_row_line(w: &TmuxWindow) -> Line<'static> {
     let (glyph, glyph_style) = if w.has_bell {
         ("● ", Style::default().fg(Color::Yellow))
     } else {
@@ -418,8 +426,8 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
     let selected_row = rows.get(app.terminals().selected);
 
     let preview_index = match selected_row {
-        Some(crate::tui::app::TerminalsRow::Window(w)) => Some(w.index),
-        Some(crate::tui::app::TerminalsRow::Service(name)) => app
+        Some(TerminalsRow::Window(w)) => Some(w.index),
+        Some(TerminalsRow::Service(name)) => app
             .terminals()
             .windows
             .iter()
@@ -441,12 +449,12 @@ fn render_terminals_info(app: &App, frame: &mut Frame, area: Rect) {
 
 fn terminals_info_title(
     app: &App,
-    selected_row: Option<&crate::tui::app::TerminalsRow>,
+    selected_row: Option<&TerminalsRow>,
 ) -> Line<'static> {
     let label = match selected_row {
-        Some(crate::tui::app::TerminalsRow::Window(w)) => w.name.clone(),
-        Some(crate::tui::app::TerminalsRow::Service(name)) => format!("svc:{name}"),
-        Some(crate::tui::app::TerminalsRow::NewSentinel) => "+ new shell".into(),
+        Some(TerminalsRow::Window(w)) => w.name.clone(),
+        Some(TerminalsRow::Service(name)) => format!("svc:{name}"),
+        Some(TerminalsRow::NewSentinel) => "+ new shell".into(),
         None => "tmux".into(),
     };
     Line::from(vec![
@@ -462,12 +470,12 @@ fn terminals_info_title(
 
 fn build_terminals_info_body(
     app: &App,
-    selected_row: Option<&crate::tui::app::TerminalsRow>,
+    selected_row: Option<&TerminalsRow>,
 ) -> Vec<Line<'static>> {
     let detach_hint = "ctrl+b d returns to keel";
     let mut lines: Vec<Line<'static>> = Vec::new();
     match selected_row {
-        Some(crate::tui::app::TerminalsRow::Service(name)) => {
+        Some(TerminalsRow::Service(name)) => {
             lines.push(kv(
                 "command",
                 &format!("docker compose exec -it {name} $SHELL"),
@@ -482,7 +490,7 @@ fn build_terminals_info_body(
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        Some(crate::tui::app::TerminalsRow::Window(w)) => {
+        Some(TerminalsRow::Window(w)) => {
             if let Some(cwd) = w.cwd.as_deref() {
                 lines.push(kv("cwd", &collapse_home(cwd)));
             }
@@ -504,7 +512,7 @@ fn build_terminals_info_body(
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        Some(crate::tui::app::TerminalsRow::NewSentinel) => {
+        Some(TerminalsRow::NewSentinel) => {
             lines.push(kv(
                 "command",
                 &format!("exec $SHELL in {}", app.project_root().display()),
@@ -694,7 +702,6 @@ fn render_diff_header(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::tui::app::{DiffFocus, DiffStatus};
     let accent = accent_of(app);
     let diff = app.diff();
     let focused = diff.focus == DiffFocus::Files;
@@ -876,7 +883,6 @@ fn elide_left(s: &str, max: usize) -> String {
 }
 
 fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::tui::app::{BodyMode, DiffFocus};
     let accent = accent_of(app);
     let diff = app.diff();
     let focused = diff.focus == DiffFocus::Body;
@@ -930,7 +936,7 @@ fn render_body_diff(
     app: &App,
     frame: &mut Frame,
     area: Rect,
-    file: &crate::tui::app::DiffFile,
+    file: &DiffFile,
     block: Block<'static>,
     inner_height: u16,
 ) {
@@ -1016,7 +1022,7 @@ fn render_body_read(
     app: &App,
     frame: &mut Frame,
     area: Rect,
-    file: &crate::tui::app::DiffFile,
+    file: &DiffFile,
     block: Block<'static>,
     inner_height: u16,
 ) {
@@ -1081,8 +1087,8 @@ fn render_body_read(
 /// `render_diff_body_line`: `<old:gutter_w> <new:gutter_w> <sigil> <code>`.
 /// Header / Hunk rows render the raw text without a gutter, so their
 /// width is just the text width.
-fn diff_line_visual_width(line: &crate::tui::app::DiffLine, gutter_w: usize) -> usize {
-    use crate::tui::app::DiffLineKind;
+fn diff_line_visual_width(line: &DiffLine, gutter_w: usize) -> usize {
+    use DiffLineKind;
     if line.kind == DiffLineKind::Header || line.kind == DiffLineKind::Hunk {
         return line.text.chars().count();
     }
@@ -1099,8 +1105,8 @@ fn diff_line_visual_width(line: &crate::tui::app::DiffLine, gutter_w: usize) -> 
 /// Visual width of a rendered read-body row. Matches
 /// `render_read_body_line`'s `<lineno:gutter_w> <code>` layout (and
 /// `<gutter_w> − N lines removed` for separators).
-fn read_line_visual_width(line: &crate::tui::app::ReadLine, gutter_w: usize) -> usize {
-    use crate::tui::app::ReadLineKind;
+fn read_line_visual_width(line: &ReadLine, gutter_w: usize) -> usize {
+    use ReadLineKind;
     let prefix = gutter_w + 1;
     let content = match line.kind {
         ReadLineKind::Separator { removed } => {
@@ -1141,8 +1147,8 @@ fn fill_row_bg(spans: &mut Vec<Span<'static>>, pad_to: Option<usize>, bg: Option
 /// Read-mode row tint. Added → green, Modified → blue, Separator
 /// → red, Plain → none. Matches the diff body's green/red palette
 /// so a side-by-side comparison reads consistently.
-fn read_line_bg(kind: crate::tui::app::ReadLineKind) -> Option<Color> {
-    use crate::tui::app::ReadLineKind;
+fn read_line_bg(kind: ReadLineKind) -> Option<Color> {
+    use ReadLineKind;
     match kind {
         ReadLineKind::Added => Some(Color::Rgb(20, 38, 24)),
         ReadLineKind::Modified => Some(Color::Rgb(22, 30, 52)),
@@ -1156,11 +1162,11 @@ fn read_line_bg(kind: crate::tui::app::ReadLineKind) -> Option<Color> {
 /// red row with a "− N lines removed" label centered in the gutter
 /// + body area.
 fn render_read_body_line(
-    line: &crate::tui::app::ReadLine,
+    line: &ReadLine,
     gutter_w: usize,
     pad_to: Option<usize>,
 ) -> Line<'static> {
-    use crate::tui::app::ReadLineKind;
+    use ReadLineKind;
     let bg = read_line_bg(line.kind);
 
     if let ReadLineKind::Separator { removed } = line.kind {
@@ -1214,11 +1220,11 @@ fn render_read_body_line(
 /// tint on Added / Removed / Hunk lines and syntect-derived spans
 /// for the inner code.
 fn render_diff_body_line(
-    line: &crate::tui::app::DiffLine,
+    line: &DiffLine,
     gutter_w: usize,
     pad_to: Option<usize>,
 ) -> Line<'static> {
-    use crate::tui::app::DiffLineKind;
+    use DiffLineKind;
     // Header lines (`diff --git`, `---`, `+++`, `index …`) keep
     // their full text and sit dim — no gutter, no sigil.
     if line.kind == DiffLineKind::Header {
@@ -2547,8 +2553,8 @@ fn render_switcher_list(
     );
 }
 
-fn render_switcher_form(form: &crate::tui::app::NewWorktreeForm, accent: Color, frame: &mut Frame) {
-    use crate::tui::app::NewFormField;
+fn render_switcher_form(form: &NewWorktreeForm, accent: Color, frame: &mut Frame) {
+    use NewFormField;
 
     // Cap visible branch rows so a repo with hundreds of branches
     // doesn't blow up the modal — users narrow with the filter.
@@ -2677,7 +2683,7 @@ fn render_switcher_form(form: &crate::tui::app::NewWorktreeForm, accent: Color, 
 /// branches show as `<name>` (with a `[remote]` tag when remote-
 /// only); the sentinel row reads `+ create branch '<input>' off HEAD`.
 fn branch_row(
-    form: &crate::tui::app::NewWorktreeForm,
+    form: &NewWorktreeForm,
     option_idx: usize,
     accent: Color,
 ) -> Line<'static> {
@@ -2726,7 +2732,7 @@ fn field_row(label: &'static str, value: &str, focused: bool, accent: Color) -> 
     ])
 }
 
-fn render_args_prompt(prompt: &crate::tui::app::ArgsPrompt, accent: Color, frame: &mut Frame) {
+fn render_args_prompt(prompt: &ArgsPrompt, accent: Color, frame: &mut Frame) {
     let area = centered_rect(frame.area(), 60, 7);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2764,7 +2770,7 @@ fn render_args_prompt(prompt: &crate::tui::app::ArgsPrompt, accent: Color, frame
 
 fn render_confirm_modal(
     app: &App,
-    dialog: &crate::tui::app::ConfirmDialog,
+    dialog: &ConfirmDialog,
     accent: Color,
     frame: &mut Frame,
 ) {
@@ -2894,7 +2900,6 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 }
 
 fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
-    use crate::tui::app::{BodyMode, DiffFocus};
     let in_read = app.diff_body_mode() == BodyMode::Read;
     let mut hints: Vec<(&'static str, &'static str)> = match app.diff_focus() {
         DiffFocus::Files => {
@@ -2937,9 +2942,9 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         // Enter label adapts to the row kind so users see what
         // pressing it will do without consulting docs.
         let enter_label = match app.selected_item().map(|i| i.kind) {
-            Some(crate::tui::app::ItemKind::Runtime) => "up all",
-            Some(crate::tui::app::ItemKind::Service) => "attach",
-            Some(crate::tui::app::ItemKind::Recipe | crate::tui::app::ItemKind::Script) => "run",
+            Some(ItemKind::Runtime) => "up all",
+            Some(ItemKind::Service) => "attach",
+            Some(ItemKind::Recipe | ItemKind::Script) => "run",
             _ => "select",
         };
         hints.push(("enter", enter_label));
@@ -3102,7 +3107,7 @@ mod tests {
     /// title chrome plus at least one branch row.
     #[test]
     fn renders_create_worktree_form_with_branches() {
-        use crate::tui::app::WorktreeRow;
+        use crate::tui::dialogs::switcher::WorktreeRow;
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(cfg());
@@ -3171,7 +3176,6 @@ mod tests {
 
     #[test]
     fn top_bar_shows_dirty_count_when_files_present() {
-        use crate::tui::app::{DiffFile, DiffStatus};
         let backend = TestBackend::new(120, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(cfg()).with_branch(Some("main".into()));
@@ -3247,7 +3251,7 @@ mod tests {
         let mut app = App::new(cfg());
         app.set_tmux_available(true);
         app.switch_view(crate::tui::app::View::Terminals);
-        app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
+        app.terminals_set_windows(vec![TmuxWindow {
             index: 0,
             name: "zsh".into(),
             cwd: None,
@@ -3296,7 +3300,7 @@ mod tests {
         let mut app = App::new(cfg());
         app.set_tmux_available(true);
         app.switch_view(crate::tui::app::View::Terminals);
-        app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
+        app.terminals_set_windows(vec![TmuxWindow {
             index: 0,
             name: "claude".into(),
             cwd: None,
@@ -3356,7 +3360,7 @@ mod tests {
         let mut app = App::new(cfg);
         app.set_tmux_available(true);
         app.switch_view(crate::tui::app::View::Terminals);
-        app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
+        app.terminals_set_windows(vec![TmuxWindow {
             index: 0,
             name: "zsh".into(),
             cwd: None,
