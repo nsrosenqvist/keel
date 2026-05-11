@@ -311,7 +311,11 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     let mut rects = app.terminals().row_rects.borrow_mut();
     rects.clear();
     rects.resize(rows.len(), Rect::default());
-    let svc_area = if services_count > 0 { Some(areas[0]) } else { None };
+    let svc_area = if services_count > 0 {
+        Some(areas[0])
+    } else {
+        None
+    };
     let mut svc_local = 0usize;
     let mut term_local = 0usize;
     for (global_idx, row) in rows.iter().enumerate() {
@@ -1450,9 +1454,7 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         let inner_y = group_area.y.saturating_add(1);
         let inner_w = group_area.width.saturating_sub(2);
         let inner_h_raw = match join {
-            JoinPosition::Standalone | JoinPosition::Bottom => {
-                group_area.height.saturating_sub(2)
-            }
+            JoinPosition::Standalone | JoinPosition::Bottom => group_area.height.saturating_sub(2),
             // Top half has no bottom border — its full content area
             // is height - 1 rows.
             JoinPosition::Top => group_area.height.saturating_sub(1),
@@ -2903,8 +2905,7 @@ fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             h
         }
         DiffFocus::Body => {
-            let mut h: Vec<(&'static str, &'static str)> =
-                vec![("↑↓", "scroll"), ("tab", "files")];
+            let mut h: Vec<(&'static str, &'static str)> = vec![("↑↓", "scroll"), ("tab", "files")];
             if !in_read {
                 h.push(("]/[", "hunk"));
             }

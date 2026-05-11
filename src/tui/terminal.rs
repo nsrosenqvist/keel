@@ -1980,10 +1980,7 @@ pub(crate) fn annotate_read_with_diff(
 
     let mut i = 0;
     while i < diff.len() {
-        if !matches!(
-            diff[i].kind,
-            DiffLineKind::Added | DiffLineKind::Removed
-        ) {
+        if !matches!(diff[i].kind, DiffLineKind::Added | DiffLineKind::Removed) {
             i += 1;
             continue;
         }
@@ -2897,7 +2894,11 @@ index abc..def 100644
         let kinds: Vec<_> = out.iter().map(|l| l.kind).collect();
         assert_eq!(
             kinds,
-            vec![ReadLineKind::Plain, ReadLineKind::Added, ReadLineKind::Plain]
+            vec![
+                ReadLineKind::Plain,
+                ReadLineKind::Added,
+                ReadLineKind::Plain
+            ]
         );
     }
 
@@ -2953,13 +2954,7 @@ index abc..def 100644
     fn annotate_handles_deletion_before_first_line() {
         // Original lines 1, 2 were removed; new file starts at what
         // used to be line 3.
-        let diff = vec![
-            dl_h("--- a"),
-            dl_hunk(),
-            dl_rem(1),
-            dl_rem(2),
-            dl_ctx(3, 1),
-        ];
+        let diff = vec![dl_h("--- a"), dl_hunk(), dl_rem(1), dl_rem(2), dl_ctx(3, 1)];
         let read = vec![rl(1)];
         let out = annotate_read_with_diff(read, &diff);
         assert_eq!(out.len(), 2);
@@ -2984,10 +2979,7 @@ index abc..def 100644
 
     #[test]
     fn numstat_resolves_plain_rename_form() {
-        assert_eq!(
-            resolve_numstat_destination("foo => bar"),
-            "bar".to_string()
-        );
+        assert_eq!(resolve_numstat_destination("foo => bar"), "bar".to_string());
         assert_eq!(
             resolve_numstat_destination("src/old.rs => src/new.rs"),
             "src/new.rs".to_string()
@@ -3055,13 +3047,7 @@ index abc..def 100644
     #[test]
     fn annotate_handles_trailing_deletion() {
         // Last two lines deleted; no surviving line after them.
-        let diff = vec![
-            dl_h("--- a"),
-            dl_hunk(),
-            dl_ctx(1, 1),
-            dl_rem(2),
-            dl_rem(3),
-        ];
+        let diff = vec![dl_h("--- a"), dl_hunk(), dl_ctx(1, 1), dl_rem(2), dl_rem(3)];
         let read = vec![rl(1)];
         let out = annotate_read_with_diff(read, &diff);
         assert_eq!(out.len(), 2);
