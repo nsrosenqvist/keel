@@ -13,6 +13,8 @@ use nucleo_matcher::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
+use ratatui::layout::Rect;
+use std::cell::RefCell;
 
 /// Maximum number of matches kept in the visible list. Matches beyond
 /// this rank are filtered out before rendering — keeps redraws fast on
@@ -35,6 +37,9 @@ pub struct Palette {
     /// Snapshot of item kinds so we can recompute matches without holding
     /// a back-reference to App.
     candidates: Vec<(usize, String)>,
+    /// Per-row rects for the visible match list. Populated by the
+    /// renderer each frame; hit-tested by the mouse handler.
+    pub row_rects: RefCell<Vec<Rect>>,
 }
 
 impl Palette {
@@ -51,6 +56,7 @@ impl Palette {
             selected: 0,
             matcher: Matcher::new(Config::DEFAULT),
             candidates,
+            row_rects: RefCell::new(Vec::new()),
         };
         palette.recompute();
         palette
@@ -137,6 +143,13 @@ impl Palette {
         } else {
             self.selected - 1
         };
+    }
+
+    pub fn select_at(&mut self, idx: usize) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.selected = idx.min(self.matches.len() - 1);
     }
 
     fn recompute(&mut self) {

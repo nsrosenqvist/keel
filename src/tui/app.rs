@@ -43,6 +43,24 @@ impl View {
     }
 }
 
+/// What a mouse click landed on. Lets the event handler detect a
+/// repeat click on the *same* row (double-click → activate) versus a
+/// click on a different row (just select).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickTarget {
+    /// Control-center sidebar item, indexed into `app.items()`.
+    SidebarItem(usize),
+    /// Terminals view row, indexed into `app.terminals_rows()`.
+    TerminalsRow(usize),
+    /// Diff view file-list entry, indexed into `app.diff().files`.
+    DiffFile(usize),
+    /// Palette match row, indexed into `palette.matches()`.
+    PaletteRow(usize),
+    /// Worktree switcher row, indexed into `switcher.entries`. The
+    /// final entry is the synthetic "+ new worktree" sentinel.
+    SwitcherRow(usize),
+}
+
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ItemKind {
@@ -184,6 +202,11 @@ pub struct TerminalsState {
     /// played through tmux's `bell-action any`, so we don't want
     /// keel to beep again on its way back to the TUI.
     pub suppress_next_bell_emit: bool,
+    /// Per-row rects for the sidebar (services + windows + sentinel),
+    /// in the same global-index order the keymap uses. Populated by
+    /// the renderer each frame; hit-tested by the mouse handler to
+    /// route clicks to a row index.
+    pub row_rects: std::cell::RefCell<Vec<Rect>>,
 }
 
 /// One tmux window as reported by `list-windows`. `name` is what
@@ -254,6 +277,7 @@ impl TerminalsState {
             previous_bell: std::collections::HashMap::new(),
             pending_bell_emit: false,
             suppress_next_bell_emit: false,
+            row_rects: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -315,6 +339,12 @@ pub struct DiffState {
     /// renderer can write through `&App`. Read by PgUp/PgDn and G
     /// to size half-pages and clamp to the bottom of the diff.
     pub body_height: std::cell::Cell<u16>,
+    /// Last viewport width the body was rendered at. Used by the
+    /// horizontal-scroll clamp so panning stops when the rightmost
+    /// column of the longest row reaches the right edge of the
+    /// viewport. Stays at 0 until the first body render — h-scroll
+    /// silently clamps to 0 in that case (no body yet to scroll).
+    pub body_width: std::cell::Cell<u16>,
     /// Last frame's outer rect for the files-list pane and the
     /// diff-body pane. None when the diff view isn't being rendered,
     /// so a stale rect from a previous view can't match a wheel
@@ -326,6 +356,20 @@ pub struct DiffState {
     /// readable without wrapping and horizontal "loss" is preferred
     /// over visual jitter. On for narrow terminals.
     pub wrap: bool,
+    /// Per-file horizontal scroll offset (columns from x=0) for the
+    /// diff body. Independent from `body_scroll` so toggling files
+    /// preserves each file's pan position. Cleared per-file on
+    /// `diff_toggle_wrap` when wrap is enabled — a non-zero offset
+    /// under wrap silently chops the left side of every wrapped row.
+    pub body_h_scroll: std::collections::HashMap<String, usize>,
+    /// Per-file horizontal scroll offset for read mode. Mirrors
+    /// `body_h_scroll`. Independent from the diff-mode map so toggling
+    /// `v` preserves each mode's pan position.
+    pub read_h_scroll: std::collections::HashMap<String, usize>,
+    /// Per-file row rects in the files list. Populated by the
+    /// renderer on every frame; hit-tested by the mouse handler to
+    /// route clicks to a file index.
+    pub file_row_rects: std::cell::RefCell<Vec<Rect>>,
     /// True when `lazygit` was found on PATH at startup; the `L`
     /// keybind hides itself from the footer hint when false.
     pub lazygit_available: bool,
@@ -333,6 +377,18 @@ pub struct DiffState {
     /// body-focused. A second `g` within 500 ms triggers gg → top.
     /// Cleared by any other key.
     pub last_g_press: Option<std::time::Instant>,
+    /// Whether the body pane is currently showing the diff or the
+    /// full file. Toggled with `v`. Global, not per-file — toggling
+    /// flips the active file's view in place.
+    pub body_mode: BodyMode,
+    /// Per-file cache of full-file contents for read mode. Lazily
+    /// populated on the first switch into read mode for a given
+    /// file; cleared by `r` (refresh) alongside the diff cache.
+    pub read_cache: std::collections::HashMap<String, Vec<ReadLine>>,
+    /// Per-file scroll offset for read mode. Kept independent from
+    /// `body_scroll` so toggling modes preserves each mode's
+    /// position.
+    pub read_scroll: std::collections::HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -346,6 +402,12 @@ pub struct DiffFile {
     pub additions: usize,
     pub deletions: usize,
     pub binary: bool,
+    /// For renames (R rows in `--name-status`): the path the file
+    /// had at the anchor. Threaded into `load_diff_for_file` so the
+    /// per-file diff command can resolve the rename and report
+    /// similarity + actual content delta instead of "new file at
+    /// <new_path>, +N lines".
+    pub old_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,6 +456,47 @@ pub enum DiffLineKind {
     Header,
 }
 
+/// One line of a file rendered in read mode: no diff sigil, single
+/// line-number gutter. Spans are syntect-highlighted up front so
+/// the renderer doesn't redo the syntax pass per frame.
+#[derive(Debug, Clone)]
+pub struct ReadLine {
+    pub kind: ReadLineKind,
+    pub lineno: u32,
+    pub text: String,
+    pub spans: Vec<crate::tui::syntax::HighlightedSpan>,
+}
+
+/// Background-tint classification for a read-mode row. `Plain` is
+/// unchanged context; `Added`/`Modified` map to real lines in the
+/// new file; `Separator` is a synthetic row inserted between two
+/// surviving lines to mark "N lines were deleted here". The
+/// classification comes from walking the diff cache, so it
+/// requires the diff to be loaded first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReadLineKind {
+    #[default]
+    Plain,
+    Added,
+    Modified,
+    Separator {
+        removed: usize,
+    },
+}
+
+/// What the diff view's right-hand pane is currently showing.
+/// `Diff` is the default unified-diff view; `Read` shows the full
+/// file (working-tree contents for present files, `git show
+/// <anchor>:<path>` for deleted files). Global across files —
+/// toggling switches both panes' currently-selected file
+/// simultaneously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BodyMode {
+    #[default]
+    Diff,
+    Read,
+}
+
 impl DiffLineKind {
     pub fn classify(line: &str) -> Self {
         if line.starts_with("@@") {
@@ -406,6 +509,11 @@ impl DiffLineKind {
             || line.starts_with("Binary files")
             || line.starts_with("new file mode")
             || line.starts_with("deleted file mode")
+            || line.starts_with("similarity index")
+            || line.starts_with("rename from")
+            || line.starts_with("rename to")
+            || line.starts_with("copy from")
+            || line.starts_with("copy to")
         {
             return DiffLineKind::Header;
         }
@@ -641,6 +749,10 @@ pub struct WorktreeSwitcher {
     pub entries: Vec<WorktreeRow>,
     pub selected: usize,
     pub creating: Option<NewWorktreeForm>,
+    /// Per-row rects for the entries list (including the trailing
+    /// "+ new worktree" sentinel). Populated by the renderer; hit-
+    /// tested by the mouse handler to route clicks to a row index.
+    pub row_rects: std::cell::RefCell<Vec<Rect>>,
 }
 
 impl WorktreeSwitcher {
@@ -781,7 +893,27 @@ pub struct App {
     /// poll that used to block the render loop ~200 ms per tick on a
     /// busy compose daemon. Set when a non-None backend is wired in.
     worker: Option<crate::tui::worker::WorkerHandle>,
+    /// Per-row rects for the control-center sidebar, in the same
+    /// flat order as `self.items`. Populated by the renderer each
+    /// frame; hit-tested by the mouse handler to map a click back to
+    /// an item index.
+    pub sidebar_item_rects: std::cell::RefCell<Vec<Rect>>,
+    /// Rects for the Yes/No buttons of the active confirm dialog.
+    /// Cleared (`None`) when no dialog is open or when the dialog
+    /// just opened and hasn't been rendered yet.
+    pub confirm_yes_rect: std::cell::Cell<Option<Rect>>,
+    pub confirm_no_rect: std::cell::Cell<Option<Rect>>,
+    /// Last click target + timestamp. A second click on the same
+    /// target within [`DOUBLE_CLICK_WINDOW`] is treated as a
+    /// double-click and activates the row. Reset on activation so
+    /// triple-click can't re-fire.
+    pub last_click: Option<(std::time::Instant, ClickTarget)>,
 }
+
+/// How long after a click we still treat a same-target click as a
+/// double-click. 400 ms is the common desktop default and matches
+/// what feels right when the user is intentionally double-tapping.
+pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn new(config: Arc<Config>) -> Self {
@@ -818,6 +950,10 @@ impl App {
             diagnostics: Vec::new(),
             boot: BootChannels::default(),
             worker: None,
+            sidebar_item_rects: std::cell::RefCell::new(Vec::new()),
+            confirm_yes_rect: std::cell::Cell::new(None),
+            confirm_no_rect: std::cell::Cell::new(None),
+            last_click: None,
         }
     }
 
@@ -953,6 +1089,16 @@ impl App {
         if !self.items.is_empty() {
             self.selected = self.items.len() - 1;
         }
+    }
+
+    /// Set the sidebar selection to `idx`, clamped to the last valid
+    /// position. No-op when the list is empty (clicks that land on a
+    /// stale rect would otherwise out-of-bounds the selection).
+    pub fn select_at(&mut self, idx: usize) {
+        if self.items.is_empty() {
+            return;
+        }
+        self.selected = idx.min(self.items.len() - 1);
     }
 
     pub fn selected_recipe(&self) -> Option<&Recipe> {
@@ -1289,6 +1435,7 @@ impl App {
             entries,
             selected,
             creating: None,
+            row_rects: std::cell::RefCell::new(Vec::new()),
         });
         self.mode = Mode::WorktreeSwitcher;
     }
@@ -1315,6 +1462,18 @@ impl App {
     pub fn switcher_select_prev(&mut self) {
         if let Some(s) = self.switcher.as_mut() {
             s.selected = s.selected.saturating_sub(1);
+        }
+    }
+
+    /// Set the switcher selection to `idx`, clamped to the last row
+    /// (which is the synthetic "+ new worktree" sentinel). No-op when
+    /// the switcher isn't open.
+    pub fn switcher_select_at(&mut self, idx: usize) {
+        if let Some(s) = self.switcher.as_mut() {
+            let total = s.total_rows();
+            if total > 0 {
+                s.selected = idx.min(total - 1);
+            }
         }
     }
 
@@ -1660,6 +1819,19 @@ impl App {
         self.terminals.selected = self.terminals.selected.saturating_sub(1);
     }
 
+    /// Set the Terminals-view selection to `idx`, clamped to the last
+    /// row. No-op when the row list is empty (it never is during
+    /// normal operation — the `+ new shell` sentinel always renders —
+    /// but guarding here keeps the public API uniform with the
+    /// other `select_at` variants).
+    pub fn terminals_select_at(&mut self, idx: usize) {
+        let total = self.terminals_rows().len();
+        if total == 0 {
+            return;
+        }
+        self.terminals.selected = idx.min(total - 1);
+    }
+
     /// Resolve the selected row in the Terminals view: queue an
     /// attach for service / custom rows; open the create form for
     /// the sentinel.
@@ -1916,6 +2088,15 @@ impl App {
         self.diff.selected = self.diff.selected.saturating_sub(1);
     }
 
+    /// Set the file selection to `idx`, clamped to the last file.
+    /// No-op when the file list is empty.
+    pub fn diff_select_at(&mut self, idx: usize) {
+        if self.diff.files.is_empty() {
+            return;
+        }
+        self.diff.selected = idx.min(self.diff.files.len() - 1);
+    }
+
     pub fn diff_selected_file(&self) -> Option<&DiffFile> {
         self.diff.files.get(self.diff.selected)
     }
@@ -1928,12 +2109,37 @@ impl App {
         self.diff.cache.insert(path, lines);
     }
 
+    pub fn diff_read_cache_for(&self, path: &str) -> Option<&Vec<ReadLine>> {
+        self.diff.read_cache.get(path)
+    }
+
+    pub fn diff_set_read_cache(&mut self, path: String, lines: Vec<ReadLine>) {
+        self.diff.read_cache.insert(path, lines);
+    }
+
+    pub fn diff_body_mode(&self) -> BodyMode {
+        self.diff.body_mode
+    }
+
+    /// Flip the body pane between Diff and Read. Drops any pending
+    /// `g` chord so a half-armed gg doesn't carry across modes.
+    pub fn diff_toggle_body_mode(&mut self) {
+        self.diff.body_mode = match self.diff.body_mode {
+            BodyMode::Diff => BodyMode::Read,
+            BodyMode::Read => BodyMode::Diff,
+        };
+        self.diff.last_g_press = None;
+    }
+
     /// Mark the diff state stale so the next render pulls fresh
-    /// data. Used by the `r` keybind in the diff view.
+    /// data. Used by the `r` keybind in the diff view. Clears both
+    /// caches so a toggled view also re-fetches after refresh.
     pub fn diff_mark_stale(&mut self) {
         self.diff.loaded = false;
         self.diff.cache.clear();
         self.diff.body_scroll.clear();
+        self.diff.read_cache.clear();
+        self.diff.read_scroll.clear();
         self.diff.additions_total = 0;
         self.diff.deletions_total = 0;
     }
@@ -1961,36 +2167,38 @@ impl App {
         self.diff.last_g_press = None;
     }
 
-    /// Current scroll offset (top line) for the selected file.
+    /// Current scroll offset (top line) for the selected file in
+    /// the active body mode.
     pub fn diff_body_scroll(&self) -> usize {
         let path = match self.diff_selected_file() {
             Some(f) => &f.path,
             None => return 0,
         };
-        self.diff.body_scroll.get(path).copied().unwrap_or(0)
+        self.active_scroll_map().get(path).copied().unwrap_or(0)
     }
 
-    /// Move the body scroll by `delta` lines, clamped to the diff
-    /// length minus the last viewport height. Negative values
-    /// scroll up.
+    /// Move the body scroll by `delta` lines, clamped to the
+    /// content length (per active mode) minus the last viewport
+    /// height. Negative values scroll up.
     pub fn diff_body_scroll_by(&mut self, delta: i32) {
         let Some(file) = self.diff.files.get(self.diff.selected) else {
             return;
         };
         let path = file.path.clone();
-        let total = self.diff.cache.get(&path).map(|v| v.len()).unwrap_or(0);
+        let total = self.active_content_len(&path);
         let viewport = self.diff.body_height.get() as usize;
         let max = total.saturating_sub(viewport.max(1));
-        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0) as i64;
+        let cur = self.active_scroll_map().get(&path).copied().unwrap_or(0) as i64;
         let next = (cur + delta as i64).max(0).min(max as i64) as usize;
-        self.diff.body_scroll.insert(path, next);
+        self.active_scroll_map_mut().insert(path, next);
     }
 
     pub fn diff_body_scroll_to_top(&mut self) {
         let Some(file) = self.diff.files.get(self.diff.selected) else {
             return;
         };
-        self.diff.body_scroll.insert(file.path.clone(), 0);
+        let path = file.path.clone();
+        self.active_scroll_map_mut().insert(path, 0);
     }
 
     pub fn diff_body_scroll_to_bottom(&mut self) {
@@ -1998,10 +2206,137 @@ impl App {
             return;
         };
         let path = file.path.clone();
-        let total = self.diff.cache.get(&path).map(|v| v.len()).unwrap_or(0);
+        let total = self.active_content_len(&path);
         let viewport = self.diff.body_height.get() as usize;
         let bottom = total.saturating_sub(viewport.max(1));
-        self.diff.body_scroll.insert(path, bottom);
+        self.active_scroll_map_mut().insert(path, bottom);
+    }
+
+    fn active_scroll_map(&self) -> &std::collections::HashMap<String, usize> {
+        match self.diff.body_mode {
+            BodyMode::Diff => &self.diff.body_scroll,
+            BodyMode::Read => &self.diff.read_scroll,
+        }
+    }
+
+    fn active_scroll_map_mut(&mut self) -> &mut std::collections::HashMap<String, usize> {
+        match self.diff.body_mode {
+            BodyMode::Diff => &mut self.diff.body_scroll,
+            BodyMode::Read => &mut self.diff.read_scroll,
+        }
+    }
+
+    fn active_h_scroll_map(&self) -> &std::collections::HashMap<String, usize> {
+        match self.diff.body_mode {
+            BodyMode::Diff => &self.diff.body_h_scroll,
+            BodyMode::Read => &self.diff.read_h_scroll,
+        }
+    }
+
+    fn active_h_scroll_map_mut(&mut self) -> &mut std::collections::HashMap<String, usize> {
+        match self.diff.body_mode {
+            BodyMode::Diff => &mut self.diff.body_h_scroll,
+            BodyMode::Read => &mut self.diff.read_h_scroll,
+        }
+    }
+
+    /// Max rendered width (in columns) across every line of the
+    /// active body mode's cache for `path`. Returns 0 when the cache
+    /// is missing — h-scroll then clamps to 0, which is the safest
+    /// pre-load behavior. Mirrors the formulas the renderer uses in
+    /// [`crate::tui::ui::render_body_diff`] / `render_body_read`;
+    /// kept in sync by hand. Cheap enough to call on every wheel
+    /// event (linear in file line count; ~10µs per 1000 lines).
+    fn active_max_line_width(&self, path: &str) -> usize {
+        match self.diff.body_mode {
+            BodyMode::Diff => {
+                let Some(lines) = self.diff.cache.get(path) else {
+                    return 0;
+                };
+                let max_lineno = lines
+                    .iter()
+                    .filter_map(|l| l.new_lineno.map(u64::from).or(l.old_lineno.map(u64::from)))
+                    .max()
+                    .unwrap_or(0);
+                let gutter_w = max_lineno.to_string().len().max(1);
+                // Per-row layout: "<old> <new> <sigil> <content>" =
+                // 2*gutter_w + 4 + content. Headers / hunks skip the
+                // gutter and sigil — just their raw text width.
+                lines
+                    .iter()
+                    .map(|l| diff_line_rendered_width(l, gutter_w))
+                    .max()
+                    .unwrap_or(0)
+            }
+            BodyMode::Read => {
+                let Some(lines) = self.diff.read_cache.get(path) else {
+                    return 0;
+                };
+                let max_lineno = lines.iter().map(|l| l.lineno).max().unwrap_or(0);
+                let gutter_w = max_lineno.to_string().len().max(1);
+                lines
+                    .iter()
+                    .map(|l| read_line_rendered_width(l, gutter_w))
+                    .max()
+                    .unwrap_or(0)
+            }
+        }
+    }
+
+    /// Upper bound on `body_h_scroll` for the selected file: the
+    /// position where the rightmost char of the longest row sits at
+    /// the right edge of the viewport. 0 when the longest line
+    /// fits within the viewport (no panning needed). 0 also pre-render
+    /// (body_width starts at 0) — h-scroll stays parked at column 0
+    /// until the first frame lands.
+    fn diff_max_h_scroll(&self, path: &str) -> usize {
+        let max_line = self.active_max_line_width(path);
+        let viewport = self.diff.body_width.get() as usize;
+        max_line.saturating_sub(viewport)
+    }
+
+    /// Current horizontal scroll offset (columns from x=0) for the
+    /// selected file in the active body mode. Always returns `0`
+    /// when wrap is on — wrap mode has no horizontal axis, and a
+    /// stale map entry must not bleed into rendering. Also clamps
+    /// against the longest-line upper bound so a terminal resize
+    /// that shrinks the max can't leave the renderer with a stale
+    /// out-of-range value.
+    pub fn diff_body_h_scroll(&self) -> usize {
+        if self.diff.wrap {
+            return 0;
+        }
+        let path = match self.diff_selected_file() {
+            Some(f) => &f.path,
+            None => return 0,
+        };
+        let raw = self.active_h_scroll_map().get(path).copied().unwrap_or(0);
+        raw.min(self.diff_max_h_scroll(path))
+    }
+
+    /// Pan the body by `delta` columns. Clamped at 0 (no left of
+    /// column zero) and at the rightmost column of the longest row
+    /// (no panning into empty space). No-op while wrap is on, so
+    /// wheel events during wrap mode can't dirty the map.
+    pub fn diff_body_h_scroll_by(&mut self, delta: i32) {
+        if self.diff.wrap {
+            return;
+        }
+        let Some(file) = self.diff.files.get(self.diff.selected) else {
+            return;
+        };
+        let path = file.path.clone();
+        let max = self.diff_max_h_scroll(&path) as i64;
+        let cur = self.active_h_scroll_map().get(&path).copied().unwrap_or(0) as i64;
+        let next = (cur + delta as i64).max(0).min(max) as usize;
+        self.active_h_scroll_map_mut().insert(path, next);
+    }
+
+    fn active_content_len(&self, path: &str) -> usize {
+        match self.diff.body_mode {
+            BodyMode::Diff => self.diff.cache.get(path).map(|v| v.len()).unwrap_or(0),
+            BodyMode::Read => self.diff.read_cache.get(path).map(|v| v.len()).unwrap_or(0),
+        }
     }
 
     /// Jump to the next `@@` hunk header below the current scroll
@@ -2053,6 +2388,20 @@ impl App {
 
     pub fn diff_toggle_wrap(&mut self) {
         self.diff.wrap = !self.diff.wrap;
+        // Turning wrap *on* with a non-zero h-offset would silently
+        // chop the first N columns of every wrapped row. Clear the
+        // active file's entry in both maps to keep the model honest;
+        // `diff_body_h_scroll` also clamps to 0 while wrap is on as
+        // a belt-and-suspenders against any other code path that
+        // mutates the map without going through this toggle.
+        if self.diff.wrap {
+            let Some(file) = self.diff.files.get(self.diff.selected) else {
+                return;
+            };
+            let path = file.path.clone();
+            self.diff.body_h_scroll.remove(&path);
+            self.diff.read_h_scroll.remove(&path);
+        }
     }
 
     /// Record a `g` press while body-focused. A second `g` within
@@ -2083,6 +2432,10 @@ impl App {
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
         let d = self.confirm.take()?;
         self.mode = Mode::Normal;
+        // Clear the dialog's button rects so a click that lands after
+        // the dialog closed can't match against a stale layout.
+        self.confirm_yes_rect.set(None);
+        self.confirm_no_rect.set(None);
         if !accept {
             return None;
         }
@@ -2615,6 +2968,56 @@ fn runtime_row_label(config: &Config) -> Option<&'static str> {
 /// stable: runtime (when configured), services (declared first in
 /// keel.toml order, then any auto-discovered ones), watchers,
 /// recipes, scripts.
+/// Rendered width of one diff body line, in columns. Mirrors the
+/// formatting `render_diff_body_line` produces in `ui.rs` — kept in
+/// sync by hand so the h-scroll clamp doesn't accidentally cut off
+/// the last column. Headers and hunks render without gutter / sigil,
+/// just their raw text. Content rows are:
+/// `<old_lineno:gutter> <new_lineno:gutter> <sigil><space><content>`
+/// = `2 * gutter_w + 4 + content_chars`.
+fn diff_line_rendered_width(line: &DiffLine, gutter_w: usize) -> usize {
+    match line.kind {
+        DiffLineKind::Header | DiffLineKind::Hunk => line.text.chars().count(),
+        DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context => {
+            let content_chars = if line.spans.is_empty() {
+                // Renderer falls back to `line.text.get(1..)` (strips
+                // the leading sigil from the raw line) when no spans
+                // are present.
+                line.text.chars().count().saturating_sub(1)
+            } else {
+                line.spans.iter().map(|s| s.text.chars().count()).sum()
+            };
+            2 * gutter_w + 4 + content_chars
+        }
+    }
+}
+
+/// Rendered width of one read-mode body line, in columns. Mirrors
+/// `render_read_body_line` in `ui.rs`. Regular rows are
+/// `<lineno:gutter><space><content>` = `gutter_w + 1 + content_chars`.
+/// Separator rows render the "− N lines removed" label after a blank
+/// gutter — same gutter_w + 1 prefix.
+fn read_line_rendered_width(line: &ReadLine, gutter_w: usize) -> usize {
+    match line.kind {
+        ReadLineKind::Separator { removed } => {
+            let label_chars = if removed == 1 {
+                "− 1 line removed".chars().count()
+            } else {
+                format!("− {removed} lines removed").chars().count()
+            };
+            gutter_w + 1 + label_chars
+        }
+        _ => {
+            let content_chars = if line.spans.is_empty() {
+                line.text.chars().count()
+            } else {
+                line.spans.iter().map(|s| s.text.chars().count()).sum()
+            };
+            gutter_w + 1 + content_chars
+        }
+    }
+}
+
 fn build_items_from(
     config: &Config,
     services: &BTreeMap<String, ServicePane>,
@@ -3370,6 +3773,7 @@ mod tests {
             additions: 0,
             deletions: 0,
             binary: false,
+            old_path: None,
         }
     }
 
@@ -3388,6 +3792,133 @@ mod tests {
         assert_eq!(app.diff().selected, 0);
         app.diff_select_prev();
         assert_eq!(app.diff().selected, 0);
+    }
+
+    #[test]
+    fn select_at_clamps_to_last_item() {
+        let mut app = App::new(cfg());
+        let last = app.items().len() - 1;
+        app.select_at(usize::MAX);
+        assert_eq!(app.selected_index(), last);
+        app.select_at(0);
+        assert_eq!(app.selected_index(), 0);
+    }
+
+    #[test]
+    fn diff_select_at_clamps() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![
+            df("a", DiffStatus::Modified),
+            df("b", DiffStatus::Added),
+        ]);
+        app.diff_select_at(usize::MAX);
+        assert_eq!(app.diff().selected, 1);
+        app.diff_select_at(0);
+        assert_eq!(app.diff().selected, 0);
+    }
+
+    #[test]
+    fn terminals_select_at_clamps() {
+        let mut app = App::new(cfg());
+        // Default state has at least the `+ new shell` sentinel row,
+        // so `terminals_rows().len()` is non-zero.
+        let last = app.terminals_rows().len() - 1;
+        app.terminals_select_at(usize::MAX);
+        assert_eq!(app.terminals().selected, last);
+        app.terminals_select_at(0);
+        assert_eq!(app.terminals().selected, 0);
+    }
+
+    #[test]
+    fn diff_body_h_scroll_by_clamps_at_zero() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        // Seed a cache with a long content line so the upper-bound
+        // clamp leaves plenty of room for the test to drive the
+        // value past 12 columns. Without lines, max_h_scroll = 0.
+        app.diff.body_width.set(20);
+        app.diff_set_cache(
+            "a".into(),
+            vec![DiffLine {
+                kind: DiffLineKind::Context,
+                text: format!(" {}", "x".repeat(200)),
+                old_lineno: Some(1),
+                new_lineno: Some(1),
+                spans: vec![],
+            }],
+        );
+        assert_eq!(app.diff_body_h_scroll(), 0);
+        // Negative delta on an already-zero offset stays at zero —
+        // can't pan past the left edge.
+        app.diff_body_h_scroll_by(-5);
+        assert_eq!(app.diff_body_h_scroll(), 0);
+        app.diff_body_h_scroll_by(12);
+        assert_eq!(app.diff_body_h_scroll(), 12);
+        app.diff_body_h_scroll_by(-20);
+        assert_eq!(app.diff_body_h_scroll(), 0);
+    }
+
+    #[test]
+    fn diff_body_h_scroll_clamps_at_longest_line() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        // Viewport = 20 cols, content = 30 chars, gutter formula
+        // adds 2*1 + 4 = 6 → rendered width = 36 → max_scroll = 16.
+        app.diff.body_width.set(20);
+        app.diff_set_cache(
+            "a".into(),
+            vec![DiffLine {
+                kind: DiffLineKind::Context,
+                text: format!(" {}", "x".repeat(30)),
+                old_lineno: Some(1),
+                new_lineno: Some(1),
+                spans: vec![],
+            }],
+        );
+        // Slam to the right — far past the longest line.
+        app.diff_body_h_scroll_by(9999);
+        assert_eq!(app.diff_body_h_scroll(), 16);
+        // No further movement once at the cap.
+        app.diff_body_h_scroll_by(50);
+        assert_eq!(app.diff_body_h_scroll(), 16);
+        // Shrinking the viewport raises the cap; growing it lowers
+        // the cap, and the *read* side clamps any stale stored value.
+        app.diff.body_width.set(100);
+        assert_eq!(app.diff_body_h_scroll(), 0);
+    }
+
+    #[test]
+    fn diff_toggle_wrap_on_clears_h_scroll_for_active_file() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        // Seed a wide line + tight viewport so the upper-bound clamp
+        // leaves enough headroom for the test to pan to 16.
+        app.diff.body_width.set(20);
+        app.diff_set_cache(
+            "a".into(),
+            vec![DiffLine {
+                kind: DiffLineKind::Context,
+                text: format!(" {}", "x".repeat(100)),
+                old_lineno: Some(1),
+                new_lineno: Some(1),
+                spans: vec![],
+            }],
+        );
+        // Wrap starts off; pan right a few notches.
+        assert!(!app.diff().wrap);
+        app.diff_body_h_scroll_by(16);
+        assert_eq!(app.diff_body_h_scroll(), 16);
+        // Turning wrap on must drop the offset so the wrapped view
+        // can't render with a non-zero h-scroll (which would chop
+        // the first N columns of every wrapped row).
+        app.diff_toggle_wrap();
+        assert!(app.diff().wrap);
+        assert_eq!(app.diff_body_h_scroll(), 0);
+        // Toggling wrap off again starts fresh at 0 (we don't bother
+        // restoring the pre-toggle offset — the user can re-pan).
+        app.diff_toggle_wrap();
+        assert!(!app.diff().wrap);
+        assert_eq!(app.diff_body_h_scroll(), 0);
     }
 
     #[test]
@@ -3469,6 +4000,100 @@ mod tests {
         assert_eq!(app.diff_body_scroll(), 1);
         app.diff_jump_hunk_prev();
         assert_eq!(app.diff_body_scroll(), 1);
+    }
+
+    #[test]
+    fn body_mode_toggles_diff_and_read() {
+        let mut app = App::new(cfg());
+        assert_eq!(app.diff_body_mode(), BodyMode::Diff);
+        app.diff_toggle_body_mode();
+        assert_eq!(app.diff_body_mode(), BodyMode::Read);
+        app.diff_toggle_body_mode();
+        assert_eq!(app.diff_body_mode(), BodyMode::Diff);
+    }
+
+    #[test]
+    fn diff_mark_stale_clears_read_cache() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_set_read_cache(
+            "a".into(),
+            vec![ReadLine {
+                kind: ReadLineKind::Plain,
+                lineno: 1,
+                text: "x".into(),
+                spans: vec![],
+            }],
+        );
+        assert!(app.diff_read_cache_for("a").is_some());
+        app.diff_mark_stale();
+        assert!(app.diff_read_cache_for("a").is_none());
+    }
+
+    #[test]
+    fn scroll_routes_to_active_mode() {
+        let mut app = App::new(cfg());
+        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        // Diff-mode content + tight viewport so scroll is unclamped.
+        app.diff.body_height.set(1);
+        app.diff_set_cache(
+            "a".into(),
+            vec![
+                DiffLine {
+                    kind: DiffLineKind::Context,
+                    text: " a".into(),
+                    old_lineno: Some(1),
+                    new_lineno: Some(1),
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Context,
+                    text: " b".into(),
+                    old_lineno: Some(2),
+                    new_lineno: Some(2),
+                    spans: vec![],
+                },
+                DiffLine {
+                    kind: DiffLineKind::Context,
+                    text: " c".into(),
+                    old_lineno: Some(3),
+                    new_lineno: Some(3),
+                    spans: vec![],
+                },
+            ],
+        );
+        // Read-mode content with a different length — proves the
+        // bottom clamp is mode-aware too.
+        let read_lines: Vec<ReadLine> = (1..=5)
+            .map(|i| ReadLine {
+                kind: ReadLineKind::Plain,
+                lineno: i,
+                text: format!("line{i}"),
+                spans: vec![],
+            })
+            .collect();
+        app.diff_set_read_cache("a".into(), read_lines);
+
+        // Scroll in diff mode, confirm only body_scroll changes.
+        app.diff_body_scroll_by(2);
+        assert_eq!(app.diff_body_scroll(), 2);
+        assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
+        assert!(!app.diff.read_scroll.contains_key("a"));
+
+        // Switch to read mode; scroll reads from the read map (empty).
+        app.diff_toggle_body_mode();
+        assert_eq!(app.diff_body_mode(), BodyMode::Read);
+        assert_eq!(app.diff_body_scroll(), 0);
+
+        // Scroll in read mode; only read_scroll changes.
+        app.diff_body_scroll_by(3);
+        assert_eq!(app.diff_body_scroll(), 3);
+        assert_eq!(app.diff.read_scroll.get("a").copied(), Some(3));
+        assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
+
+        // Switch back — diff scroll is preserved.
+        app.diff_toggle_body_mode();
+        assert_eq!(app.diff_body_scroll(), 2);
     }
 
     #[test]

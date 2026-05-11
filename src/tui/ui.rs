@@ -110,7 +110,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     if app.mode() == Mode::Confirm
         && let Some(dialog) = app.confirm_dialog()
     {
-        render_confirm_modal(dialog, accent, frame);
+        render_confirm_modal(app, dialog, accent, frame);
     }
     if app.mode() == Mode::ArgsPrompt
         && let Some(prompt) = app.args_prompt()
@@ -304,6 +304,43 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     let mut state = ListState::default();
     state.select(term_selected);
     frame.render_stateful_widget(list, area_for_terms, &mut state);
+
+    // Per-row rects keyed by the global index into `app.terminals_rows()`.
+    // Services occupy the top group; windows + sentinel occupy the
+    // bottom group (or the only group when no services exist).
+    let mut rects = app.terminals().row_rects.borrow_mut();
+    rects.clear();
+    rects.resize(rows.len(), Rect::default());
+    let svc_area = if services_count > 0 { Some(areas[0]) } else { None };
+    let mut svc_local = 0usize;
+    let mut term_local = 0usize;
+    for (global_idx, row) in rows.iter().enumerate() {
+        let (group_area, local_idx) = match row {
+            crate::tui::app::TerminalsRow::Service(_) => {
+                let Some(a) = svc_area else { continue };
+                let l = svc_local;
+                svc_local += 1;
+                (a, l)
+            }
+            crate::tui::app::TerminalsRow::Window(_)
+            | crate::tui::app::TerminalsRow::NewSentinel => {
+                let l = term_local;
+                term_local += 1;
+                (area_for_terms, l)
+            }
+        };
+        let inner_y = group_area.y.saturating_add(1);
+        let inner_h = group_area.height.saturating_sub(2);
+        if (local_idx as u16) >= inner_h {
+            continue;
+        }
+        rects[global_idx] = Rect {
+            x: group_area.x.saturating_add(1),
+            y: inner_y + local_idx as u16,
+            width: group_area.width.saturating_sub(2),
+            height: 1,
+        };
+    }
 }
 
 /// Render one window row in the terminals sidebar. Tmux's
@@ -742,10 +779,18 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
             let churn = if f.binary {
                 vec![Span::styled("  bin", Style::default().fg(Color::DarkGray))]
             } else if f.status == DiffStatus::Untracked {
-                vec![Span::styled(
-                    format!("  +{}", f.additions),
-                    Style::default().fg(Color::Green),
-                )]
+                // Untracked files can't have deletions by definition,
+                // but we still render the `−0` column so the grid
+                // aligns with tracked rows. Dim it so the eye lands
+                // on the meaningful `+N` first.
+                vec![
+                    Span::styled(
+                        format!("+{}", f.additions),
+                        Style::default().fg(Color::Green),
+                    ),
+                    Span::raw(" "),
+                    Span::styled("−0", Style::default().fg(Color::DarkGray)),
+                ]
             } else {
                 vec![
                     Span::styled(
@@ -777,6 +822,37 @@ fn render_diff_files(app: &App, frame: &mut Frame, area: Rect) {
     let mut state = ListState::default();
     state.select(Some(diff.selected));
     frame.render_stateful_widget(list, area, &mut state);
+
+    // Capture per-file row rects for mouse hit-testing. ratatui's
+    // List has auto-scrolled `state.offset()` so the selection stays
+    // in view; we use that offset to map file index → on-screen row.
+    // Items outside the visible window get a zero-area sentinel —
+    // `rect_contains` filters them out at hit-test time.
+    let inner_x = area.x.saturating_add(1);
+    let inner_y = area.y.saturating_add(1);
+    let inner_w = area.width.saturating_sub(2);
+    let inner_h = area.height.saturating_sub(2);
+    let offset = state.offset();
+    let mut rects = diff.file_row_rects.borrow_mut();
+    rects.clear();
+    rects.reserve(diff.files.len());
+    for i in 0..diff.files.len() {
+        if i < offset {
+            rects.push(Rect::default());
+            continue;
+        }
+        let row = (i - offset) as u16;
+        if row >= inner_h {
+            rects.push(Rect::default());
+            continue;
+        }
+        rects.push(Rect {
+            x: inner_x,
+            y: inner_y + row,
+            width: inner_w,
+            height: 1,
+        });
+    }
 }
 
 /// Truncate `s` from the left (head), keeping the tail. Adds an
@@ -796,13 +872,18 @@ fn elide_left(s: &str, max: usize) -> String {
 }
 
 fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::tui::app::DiffFocus;
+    use crate::tui::app::{BodyMode, DiffFocus};
     let accent = accent_of(app);
     let diff = app.diff();
     let focused = diff.focus == DiffFocus::Body;
+    let mode = diff.body_mode;
+    let mode_label = match mode {
+        BodyMode::Diff => "diff",
+        BodyMode::Read => "read",
+    };
     let title_text = match app.diff_selected_file() {
-        Some(f) => format!("diff · {}", f.path),
-        None => "diff".into(),
+        Some(f) => format!("{mode_label} · {}", f.path),
+        None => mode_label.into(),
     };
     let title = Line::from(vec![
         Span::raw(" "),
@@ -819,6 +900,11 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
     // top/bottom borders.
     let inner_height = area.height.saturating_sub(2);
     diff.body_height.set(inner_height);
+    // Inner width = area width minus 2 borders minus 2 cols of
+    // `Padding::horizontal(1)`. Used by the horizontal-scroll clamp
+    // so panning stops when the longest row's right edge meets the
+    // viewport's right edge.
+    diff.body_width.set(area.width.saturating_sub(4));
 
     let Some(file) = app.diff_selected_file() else {
         let body = Paragraph::new(Line::from(Span::styled(
@@ -830,6 +916,21 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         return;
     };
 
+    match mode {
+        BodyMode::Diff => render_body_diff(app, frame, area, file, block, inner_height),
+        BodyMode::Read => render_body_read(app, frame, area, file, block, inner_height),
+    }
+}
+
+fn render_body_diff(
+    app: &App,
+    frame: &mut Frame,
+    area: Rect,
+    file: &crate::tui::app::DiffFile,
+    block: Block<'static>,
+    inner_height: u16,
+) {
+    let diff = app.diff();
     let lines = match app.diff_cache_for(&file.path) {
         Some(l) => l,
         None => {
@@ -852,13 +953,38 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         .unwrap_or(0);
     let gutter_w = max_lineno.to_string().len().max(1);
 
+    // In non-wrap mode pad tinted rows to `max(pane_width,
+    // longest_line)`. The pane-width floor extends bg out to the
+    // right edge for short lines; the longest-line ceiling keeps
+    // bg continuous as the user horizontally scrolls past the pane
+    // edge — without it, scrolling reveals plain terminal cells to
+    // the right of short tinted rows. Wrap mode skips padding so
+    // trailing whitespace doesn't push lines onto an extra wrapped
+    // row.
+    let pad_to = if diff.wrap {
+        None
+    } else {
+        let pane = area.width.saturating_sub(4) as usize;
+        let longest = lines
+            .iter()
+            .map(|l| diff_line_visual_width(l, gutter_w))
+            .max()
+            .unwrap_or(0);
+        Some(pane.max(longest))
+    };
+
     let scroll = diff.body_scroll.get(&file.path).copied().unwrap_or(0);
+    // `diff_body_h_scroll` clamps to 0 when wrap is on — wrap mode
+    // has no horizontal axis, and a stale map entry must not bleed
+    // into rendering. Cast saturates so a >u16::MAX offset (which
+    // would be a bug elsewhere) doesn't wrap around.
+    let h_scroll: u16 = app.diff_body_h_scroll().min(u16::MAX as usize) as u16;
     if diff.wrap {
         // Wrap mode: render every line; let Paragraph handle the
         // scroll. Slower for huge diffs, fine for typical PRs.
         let rendered: Vec<Line<'static>> = lines
             .iter()
-            .map(|l| render_diff_body_line(l, gutter_w))
+            .map(|l| render_diff_body_line(l, gutter_w, pad_to))
             .collect();
         let para = Paragraph::new(rendered)
             .block(block)
@@ -873,16 +999,221 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
             .iter()
             .skip(scroll)
             .take(max)
-            .map(|l| render_diff_body_line(l, gutter_w))
+            .map(|l| render_diff_body_line(l, gutter_w, pad_to))
             .collect();
-        frame.render_widget(Paragraph::new(visible).block(block), area);
+        frame.render_widget(
+            Paragraph::new(visible).block(block).scroll((0, h_scroll)),
+            area,
+        );
     }
+}
+
+fn render_body_read(
+    app: &App,
+    frame: &mut Frame,
+    area: Rect,
+    file: &crate::tui::app::DiffFile,
+    block: Block<'static>,
+    inner_height: u16,
+) {
+    let diff = app.diff();
+    let lines = match app.diff_read_cache_for(&file.path) {
+        Some(l) => l,
+        None => {
+            let body = Paragraph::new(Line::from(Span::styled(
+                "loading file…",
+                Style::default().fg(Color::DarkGray),
+            )))
+            .block(block);
+            frame.render_widget(body, area);
+            return;
+        }
+    };
+
+    let max_lineno = lines.iter().map(|l| l.lineno).max().unwrap_or(0);
+    let gutter_w = max_lineno.to_string().len().max(1);
+
+    let pad_to = if diff.wrap {
+        None
+    } else {
+        let pane = area.width.saturating_sub(4) as usize;
+        let longest = lines
+            .iter()
+            .map(|l| read_line_visual_width(l, gutter_w))
+            .max()
+            .unwrap_or(0);
+        Some(pane.max(longest))
+    };
+
+    let scroll = diff.read_scroll.get(&file.path).copied().unwrap_or(0);
+    let h_scroll: u16 = app.diff_body_h_scroll().min(u16::MAX as usize) as u16;
+    if diff.wrap {
+        let rendered: Vec<Line<'static>> = lines
+            .iter()
+            .map(|l| render_read_body_line(l, gutter_w, pad_to))
+            .collect();
+        let para = Paragraph::new(rendered)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll as u16, 0));
+        frame.render_widget(para, area);
+    } else {
+        let max = inner_height as usize;
+        let visible: Vec<Line<'static>> = lines
+            .iter()
+            .skip(scroll)
+            .take(max)
+            .map(|l| render_read_body_line(l, gutter_w, pad_to))
+            .collect();
+        frame.render_widget(
+            Paragraph::new(visible).block(block).scroll((0, h_scroll)),
+            area,
+        );
+    }
+}
+
+/// Visual width of a rendered diff-body row, used by the caller to
+/// derive `pad_to`. Matches the column layout produced by
+/// `render_diff_body_line`: `<old:gutter_w> <new:gutter_w> <sigil> <code>`.
+/// Header / Hunk rows render the raw text without a gutter, so their
+/// width is just the text width.
+fn diff_line_visual_width(line: &crate::tui::app::DiffLine, gutter_w: usize) -> usize {
+    use crate::tui::app::DiffLineKind;
+    if line.kind == DiffLineKind::Header || line.kind == DiffLineKind::Hunk {
+        return line.text.chars().count();
+    }
+    // `<old> <new> <sigil> ` → 2*gutter_w + 4 cells.
+    let prefix = 2 * gutter_w + 4;
+    let content = if line.spans.is_empty() {
+        line.text.get(1..).unwrap_or("").chars().count()
+    } else {
+        line.spans.iter().map(|s| s.text.chars().count()).sum()
+    };
+    prefix + content
+}
+
+/// Visual width of a rendered read-body row. Matches
+/// `render_read_body_line`'s `<lineno:gutter_w> <code>` layout (and
+/// `<gutter_w> − N lines removed` for separators).
+fn read_line_visual_width(line: &crate::tui::app::ReadLine, gutter_w: usize) -> usize {
+    use crate::tui::app::ReadLineKind;
+    let prefix = gutter_w + 1;
+    let content = match line.kind {
+        ReadLineKind::Separator { removed } => {
+            if removed == 1 {
+                "− 1 line removed".chars().count()
+            } else {
+                format!("− {removed} lines removed").chars().count()
+            }
+        }
+        _ => {
+            if line.spans.is_empty() {
+                line.text.chars().count()
+            } else {
+                line.spans.iter().map(|s| s.text.chars().count()).sum()
+            }
+        }
+    };
+    prefix + content
+}
+
+/// Right-pad the spans with bg-tinted whitespace so the row's
+/// background extends to `pad_to` cells. No-op when `pad_to` is
+/// None (wrap mode) or when the content already exceeds the
+/// target. `bg` is the colour to fill; for non-tinted rows we
+/// still fill so the row's bg matches the terminal default —
+/// callers pass `None` to skip the fill entirely.
+fn fill_row_bg(spans: &mut Vec<Span<'static>>, pad_to: Option<usize>, bg: Option<Color>) {
+    let Some(width) = pad_to else { return };
+    let Some(bg) = bg else { return };
+    let used: usize = spans.iter().map(|s| s.width()).sum();
+    if used >= width {
+        return;
+    }
+    let pad = " ".repeat(width - used);
+    spans.push(Span::styled(pad, Style::default().bg(bg)));
+}
+
+/// Read-mode row tint. Added → green, Modified → blue, Separator
+/// → red, Plain → none. Matches the diff body's green/red palette
+/// so a side-by-side comparison reads consistently.
+fn read_line_bg(kind: crate::tui::app::ReadLineKind) -> Option<Color> {
+    use crate::tui::app::ReadLineKind;
+    match kind {
+        ReadLineKind::Added => Some(Color::Rgb(20, 38, 24)),
+        ReadLineKind::Modified => Some(Color::Rgb(22, 30, 52)),
+        ReadLineKind::Separator { .. } => Some(Color::Rgb(46, 22, 22)),
+        ReadLineKind::Plain => None,
+    }
+}
+
+/// Render one read-mode line. Plain → unstyled; Added/Modified →
+/// row tint behind the gutter and source; Separator → synthetic
+/// red row with a "− N lines removed" label centered in the gutter
+/// + body area.
+fn render_read_body_line(
+    line: &crate::tui::app::ReadLine,
+    gutter_w: usize,
+    pad_to: Option<usize>,
+) -> Line<'static> {
+    use crate::tui::app::ReadLineKind;
+    let bg = read_line_bg(line.kind);
+
+    if let ReadLineKind::Separator { removed } = line.kind {
+        // Synthetic row marking a deleted block. The gutter is
+        // blank but takes the same width so adjacent lines stay
+        // aligned. The body shows a faint count, left-aligned with
+        // a single leading space so it doesn't collide with the
+        // gutter divider.
+        let label = if removed == 1 {
+            "− 1 line removed".to_string()
+        } else {
+            format!("− {removed} lines removed")
+        };
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(4);
+        let gutter = format!("{:>width$} ", "", width = gutter_w);
+        let red_dim = Color::Rgb(140, 90, 90);
+        let row_bg = Style::default().bg(bg.unwrap_or(Color::Reset));
+        spans.push(Span::styled(gutter, row_bg));
+        spans.push(Span::styled(label, row_bg.fg(red_dim)));
+        fill_row_bg(&mut spans, pad_to, bg);
+        return Line::from(spans);
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 3);
+    let mut gutter_style = Style::default().fg(Color::DarkGray);
+    if let Some(c) = bg {
+        gutter_style = gutter_style.bg(c);
+    }
+    let gutter = format!("{:>width$} ", line.lineno, width = gutter_w);
+    spans.push(Span::styled(gutter, gutter_style));
+    if line.spans.is_empty() {
+        let mut style = Style::default();
+        if let Some(c) = bg {
+            style = style.bg(c);
+        }
+        spans.push(Span::styled(line.text.clone(), style));
+    } else {
+        for s in &line.spans {
+            let mut style = s.style;
+            if let Some(c) = bg {
+                style = style.bg(c);
+            }
+            spans.push(Span::styled(s.text.clone(), style));
+        }
+    }
+    fill_row_bg(&mut spans, pad_to, bg);
+    Line::from(spans)
 }
 
 /// Render one diff line: `<old> <new> <sigil> <code>` with a bg
 /// tint on Added / Removed / Hunk lines and syntect-derived spans
 /// for the inner code.
-fn render_diff_body_line(line: &crate::tui::app::DiffLine, gutter_w: usize) -> Line<'static> {
+fn render_diff_body_line(
+    line: &crate::tui::app::DiffLine,
+    gutter_w: usize,
+    pad_to: Option<usize>,
+) -> Line<'static> {
     use crate::tui::app::DiffLineKind;
     // Header lines (`diff --git`, `---`, `+++`, `index …`) keep
     // their full text and sit dim — no gutter, no sigil.
@@ -963,6 +1294,7 @@ fn render_diff_body_line(line: &crate::tui::app::DiffLine, gutter_w: usize) -> L
             spans.push(Span::styled(s.text.clone(), style));
         }
     }
+    fill_row_bg(&mut spans, pad_to, bg_tint);
     Line::from(spans)
 }
 
@@ -1096,6 +1428,12 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         .split(area);
 
     let global_idx = app.selected_index();
+    // Refresh sidebar rect tracking. Each item maps 1:1 to a global
+    // index in `app.items()` because `build_groups` preserves the
+    // items() ordering (runtime → services → watchers → commands).
+    let mut rects = app.sidebar_item_rects.borrow_mut();
+    rects.clear();
+    rects.resize(app.items().len(), Rect::default());
     let mut cursor = 0;
     for ((group, group_area), join) in groups.iter().zip(areas.iter()).zip(joins.iter()) {
         let local_selected = if global_idx >= cursor && global_idx < cursor + group.len() {
@@ -1104,6 +1442,34 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
             None
         };
         render_group(app, group, *group_area, local_selected, *join, frame);
+        // Inner content rows of the block — both Top and Standalone
+        // have a top border (1 row), and Bottom inherits a top border
+        // too; the geometry of "first content row at area.y + 1" is
+        // uniform across join positions.
+        let inner_x = group_area.x.saturating_add(1);
+        let inner_y = group_area.y.saturating_add(1);
+        let inner_w = group_area.width.saturating_sub(2);
+        let inner_h_raw = match join {
+            JoinPosition::Standalone | JoinPosition::Bottom => {
+                group_area.height.saturating_sub(2)
+            }
+            // Top half has no bottom border — its full content area
+            // is height - 1 rows.
+            JoinPosition::Top => group_area.height.saturating_sub(1),
+        };
+        for (local_i, _item) in group.items.iter().enumerate() {
+            if (local_i as u16) >= inner_h_raw {
+                // Group's panel is too short to show this item; leave
+                // its rect as Default (zero-area → never hit-tested).
+                continue;
+            }
+            rects[cursor + local_i] = Rect {
+                x: inner_x,
+                y: inner_y + local_i as u16,
+                width: inner_w,
+                height: 1,
+            };
+        }
         cursor += group.len();
     }
 }
@@ -2028,6 +2394,25 @@ fn render_palette(app: &App, palette: &Palette, accent: Color, frame: &mut Frame
         lines
     };
     frame.render_widget(Paragraph::new(body), layout[1]);
+
+    // Per-match rects so a click maps back to a `palette.matches()`
+    // index. Matches outside the visible window get a zero rect;
+    // `rect_contains` filters them out at hit-test time.
+    let mut rects = palette.row_rects.borrow_mut();
+    rects.clear();
+    rects.resize(total, Rect::default());
+    for (visible_offset, match_idx) in (start..end).enumerate() {
+        let row = visible_offset as u16;
+        if row >= layout[1].height {
+            break;
+        }
+        rects[match_idx] = Rect {
+            x: layout[1].x,
+            y: layout[1].y + row,
+            width: layout[1].width,
+            height: 1,
+        };
+    }
 }
 
 fn render_worktree_switcher(
@@ -2126,6 +2511,30 @@ fn render_switcher_list(
     let mut state = ListState::default();
     state.select(Some(switcher.selected));
     frame.render_stateful_widget(list, chunks[0], &mut state);
+
+    // Per-row rects keyed by switcher entry index (and the sentinel
+    // at `entries.len()`). Rows beyond `chunks[0].height` get a zero
+    // rect — the list height is sized to fit `total_rows`, so this is
+    // really a fallback for the tightly-clamped Modal height.
+    let offset = state.offset();
+    let mut rects = switcher.row_rects.borrow_mut();
+    rects.clear();
+    rects.resize(total_rows, Rect::default());
+    for i in 0..total_rows {
+        if i < offset {
+            continue;
+        }
+        let row = (i - offset) as u16;
+        if row >= chunks[0].height {
+            break;
+        }
+        rects[i] = Rect {
+            x: chunks[0].x,
+            y: chunks[0].y + row,
+            width: chunks[0].width,
+            height: 1,
+        };
+    }
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -2351,7 +2760,12 @@ fn render_args_prompt(prompt: &crate::tui::app::ArgsPrompt, accent: Color, frame
     frame.render_widget(Paragraph::new(body).block(block), area);
 }
 
-fn render_confirm_modal(dialog: &crate::tui::app::ConfirmDialog, accent: Color, frame: &mut Frame) {
+fn render_confirm_modal(
+    app: &App,
+    dialog: &crate::tui::app::ConfirmDialog,
+    accent: Color,
+    frame: &mut Frame,
+) {
     // Center a fixed-size box. Width is generous enough to fit the
     // longest plausible body line; height is just the four content
     // rows + borders. Anything narrower than ~60 cols falls back to
@@ -2396,6 +2810,27 @@ fn render_confirm_modal(dialog: &crate::tui::app::ConfirmDialog, accent: Color, 
             Span::styled(" No ", no_style),
         ]),
     ];
+
+    // Compute button rects from the block's content area before the
+    // block is moved into Paragraph. Button labels are 5 / 4 cols
+    // (" Yes " / " No "), separated by 4 spaces of padding.
+    let content = block.inner(area);
+    let buttons_y = content.y + 2;
+    let yes_w = 5u16;
+    let no_w = 4u16;
+    let sep = 4u16;
+    app.confirm_yes_rect.set(Some(Rect {
+        x: content.x,
+        y: buttons_y,
+        width: yes_w,
+        height: 1,
+    }));
+    app.confirm_no_rect.set(Some(Rect {
+        x: content.x + yes_w + sep,
+        y: buttons_y,
+        width: no_w,
+        height: 1,
+    }));
 
     // Clear behind the modal so the underlying content doesn't bleed
     // through the rounded corners.
@@ -2457,16 +2892,30 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 }
 
 fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
-    use crate::tui::app::DiffFocus;
+    use crate::tui::app::{BodyMode, DiffFocus};
+    let in_read = app.diff_body_mode() == BodyMode::Read;
     let mut hints: Vec<(&'static str, &'static str)> = match app.diff_focus() {
-        DiffFocus::Files => vec![("↑↓", "file"), ("tab", "body"), ("]/[", "hunk")],
-        DiffFocus::Body => vec![
-            ("↑↓", "scroll"),
-            ("tab", "files"),
-            ("]/[", "hunk"),
-            ("gg/G", "top/bot"),
-        ],
+        DiffFocus::Files => {
+            let mut h: Vec<(&'static str, &'static str)> = vec![("↑↓", "file"), ("tab", "body")];
+            if !in_read {
+                h.push(("]/[", "hunk"));
+            }
+            h
+        }
+        DiffFocus::Body => {
+            let mut h: Vec<(&'static str, &'static str)> =
+                vec![("↑↓", "scroll"), ("tab", "files")];
+            if !in_read {
+                h.push(("]/[", "hunk"));
+            }
+            h.push(("gg/G", "top/bot"));
+            h
+        }
     };
+    hints.push(match app.diff_body_mode() {
+        BodyMode::Diff => ("v", "read"),
+        BodyMode::Read => ("v", "diff"),
+    });
     hints.push(("w", "wrap"));
     if app.diff().lazygit_available {
         hints.push(("L", "lazygit"));
@@ -2732,6 +3181,7 @@ mod tests {
                 additions: 0,
                 deletions: 0,
                 binary: false,
+                old_path: None,
             },
             DiffFile {
                 path: "src/b.rs".into(),
@@ -2739,6 +3189,7 @@ mod tests {
                 additions: 0,
                 deletions: 0,
                 binary: false,
+                old_path: None,
             },
         ]);
         terminal.draw(|f| render(&app, f)).unwrap();

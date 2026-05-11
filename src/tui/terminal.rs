@@ -10,7 +10,7 @@ use crate::tui::ui;
 use crossterm::{
     event::{
         DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, MouseEvent, MouseEventKind,
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{
@@ -651,20 +651,70 @@ async fn handle_event(app: &mut App, event: Event) {
                 }
             }
         }
-        // Mouse capture is only on in the diff view; events from
-        // any other context are stray (e.g. a click landing in the
-        // brief window before DisableMouseCapture takes effect) and
-        // are dropped to keep behavior predictable.
-        Event::Mouse(me)
-            if app.view() == crate::tui::app::View::Diff
-                && app.mode() == crate::tui::app::Mode::Normal =>
-        {
-            handle_mouse_diff(app, me);
-        }
+        Event::Mouse(me) => handle_mouse(app, me).await,
         Event::Resize(_, _) => {
             // The next draw call already adapts to the new size.
         }
         _ => {}
+    }
+}
+
+/// Mouse router. Branches **mode first, view second** — same priority
+/// the keyboard dispatch uses — so an open overlay (palette, confirm,
+/// switcher) always takes precedence over the underlying view's
+/// click handler. Stray clicks (e.g. inside the args-prompt's text
+/// input or on the brief gap between rendered rows) fall through to
+/// no-op.
+async fn handle_mouse(app: &mut App, me: MouseEvent) {
+    use crate::tui::app::{Mode, View};
+    match app.mode() {
+        Mode::Palette => handle_mouse_palette(app, me).await,
+        Mode::Confirm => handle_mouse_confirm(app, me),
+        Mode::WorktreeSwitcher => handle_mouse_switcher(app, me).await,
+        // Text-input modes ignore mouse: there's no row to click and
+        // we don't (yet) reposition the cursor on click.
+        Mode::ArgsPrompt => {}
+        Mode::Normal => match app.view() {
+            View::ControlCenter => handle_mouse_control_center(app, me).await,
+            View::Terminals => handle_mouse_terminals(app, me),
+            View::Diff => handle_mouse_diff(app, me).await,
+        },
+    }
+}
+
+/// Hit-test `(col, row)` against a list of per-row rects and return
+/// the matching index. Linear scan — these vecs are tiny (a few
+/// dozen rows at most) so a binary search by y wouldn't pay back the
+/// added complexity.
+fn hit_test(rects: &[ratatui::layout::Rect], col: u16, row: u16) -> Option<usize> {
+    rects.iter().position(|r| rect_contains(*r, col, row))
+}
+
+/// Common click resolution: emit `Select` for a first click on
+/// `target`, or `Activate` when the same target was clicked again
+/// within [`crate::tui::app::DOUBLE_CLICK_WINDOW`]. Updates
+/// `app.last_click` as a side effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClickKind {
+    Select,
+    Activate,
+}
+
+fn resolve_click(app: &mut App, target: crate::tui::app::ClickTarget) -> ClickKind {
+    let now = std::time::Instant::now();
+    let activate = app
+        .last_click
+        .map(|(t, prev)| {
+            prev == target && now.duration_since(t) <= crate::tui::app::DOUBLE_CLICK_WINDOW
+        })
+        .unwrap_or(false);
+    if activate {
+        // Reset so a triple-click doesn't re-activate.
+        app.last_click = None;
+        ClickKind::Activate
+    } else {
+        app.last_click = Some((now, target));
+        ClickKind::Select
     }
 }
 
@@ -675,36 +725,287 @@ fn rect_contains(rect: ratatui::layout::Rect, col: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
-/// Mouse handler for the diff view: scroll-wheel scrolls the body
-/// or moves the file selection depending on which pane the cursor
-/// is over. Clicks are intentionally not handled — pane-bounded
-/// text selection isn't viable in a terminal grid anyway, so we
-/// reserve clicks for a future visual-selection mode.
-fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
+/// Three lines per wheel notch matches the j/k cadence closely
+/// enough that mixing keyboard and wheel doesn't feel jumpy.
+const WHEEL_LINES: i32 = 3;
+
+/// Columns per horizontal-wheel notch. Larger than `WHEEL_LINES`
+/// because columns are narrower than lines visually — 8 feels like a
+/// "noticeable nudge" without flying past the column you wanted.
+const HSCROLL_COLS: i32 = 8;
+
+/// Mouse handler for the diff view: clicks the files list to jump
+/// to a file, scroll-wheel scrolls the body or files list depending
+/// on cursor pane, Shift+wheel (or native horizontal trackpad
+/// swipes) pans the body horizontally.
+async fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
     let files_rect = app.diff().files_rect.get();
     let body_rect = app.diff().body_rect.get();
 
     let over_body = body_rect.is_some_and(|r| rect_contains(r, me.column, me.row));
     let over_files = files_rect.is_some_and(|r| rect_contains(r, me.column, me.row));
-
-    // Three lines per wheel notch matches the j/k cadence closely
-    // enough that mixing keyboard and wheel doesn't feel jumpy.
-    const WHEEL_LINES: i32 = 3;
+    let shift = me.modifiers.contains(KeyModifiers::SHIFT);
 
     match me.kind {
+        // Click on the files list: jump to the clicked file. Single-
+        // click is enough — selection alone re-renders the body to
+        // that file, so there's nothing extra a double-click would
+        // do today.
+        MouseEventKind::Down(MouseButton::Left) if over_files => {
+            let hit = {
+                let rects = app.diff().file_row_rects.borrow();
+                hit_test(&rects, me.column, me.row)
+            };
+            if let Some(idx) = hit {
+                app.diff_select_at(idx);
+                // Mirror the keyboard path: trigger the lazy load so
+                // the body actually shows the clicked file's diff
+                // instead of sitting on "loading diff…".
+                ensure_diff_for_selected(app).await;
+                // Resolve so a future double-click on the same row
+                // could activate (no semantic activation today, but
+                // the bookkeeping is uniform with other surfaces).
+                let _ = resolve_click(app, crate::tui::app::ClickTarget::DiffFile(idx));
+            }
+        }
+        // Horizontal pan: native left/right wheel from a trackpad,
+        // or Shift+vertical-wheel as the wheel-only-mouse fallback.
+        // Gated on body focus so a click on the files list still
+        // scrolls files, not the body's horizontal axis.
+        MouseEventKind::ScrollRight if over_body => app.diff_body_h_scroll_by(HSCROLL_COLS),
+        MouseEventKind::ScrollLeft if over_body => app.diff_body_h_scroll_by(-HSCROLL_COLS),
+        MouseEventKind::ScrollDown if over_body && shift => {
+            app.diff_body_h_scroll_by(HSCROLL_COLS);
+        }
+        MouseEventKind::ScrollUp if over_body && shift => app.diff_body_h_scroll_by(-HSCROLL_COLS),
         MouseEventKind::ScrollDown if over_body => app.diff_body_scroll_by(WHEEL_LINES),
         MouseEventKind::ScrollUp if over_body => app.diff_body_scroll_by(-WHEEL_LINES),
         MouseEventKind::ScrollDown if over_files => {
             for _ in 0..WHEEL_LINES {
                 app.diff_select_next();
             }
+            ensure_diff_for_selected(app).await;
         }
         MouseEventKind::ScrollUp if over_files => {
             for _ in 0..WHEEL_LINES {
                 app.diff_select_prev();
             }
+            ensure_diff_for_selected(app).await;
         }
         _ => {}
+    }
+}
+
+/// Mouse handler for the control-center view: click a sidebar row
+/// to select it, double-click within
+/// [`crate::tui::app::DOUBLE_CLICK_WINDOW`] to run the same
+/// activation as Enter. Scroll-wheel moves the selection up/down at
+/// the keyboard cadence.
+async fn handle_mouse_control_center(app: &mut App, me: MouseEvent) {
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Hit-test inside a tight scope so the RefCell borrow is
+            // gone before any `.await` — clippy's
+            // `await_holding_refcell_ref` lint would otherwise fire.
+            let hit = {
+                let rects = app.sidebar_item_rects.borrow();
+                hit_test(&rects, me.column, me.row)
+            };
+            let Some(idx) = hit else {
+                return;
+            };
+            let target = crate::tui::app::ClickTarget::SidebarItem(idx);
+            match resolve_click(app, target) {
+                ClickKind::Select => app.select_at(idx),
+                ClickKind::Activate => {
+                    // Make sure the activation runs against the row
+                    // we just clicked, even if the previous selection
+                    // pointed elsewhere when the timer started.
+                    app.select_at(idx);
+                    activate_control_center_selection(app).await;
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            for _ in 0..WHEEL_LINES {
+                app.select_next();
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            for _ in 0..WHEEL_LINES {
+                app.select_prev();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Mouse handler for the Terminals view. Click → select; double-
+/// click → `terminals_confirm` (the same path Enter takes — attach
+/// to the service/window or open the new-shell sentinel).
+fn handle_mouse_terminals(app: &mut App, me: MouseEvent) {
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let hit = {
+                let rects = app.terminals().row_rects.borrow();
+                hit_test(&rects, me.column, me.row)
+            };
+            let Some(idx) = hit else {
+                return;
+            };
+            let target = crate::tui::app::ClickTarget::TerminalsRow(idx);
+            match resolve_click(app, target) {
+                ClickKind::Select => app.terminals_select_at(idx),
+                ClickKind::Activate => {
+                    app.terminals_select_at(idx);
+                    app.terminals_confirm();
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            for _ in 0..WHEEL_LINES {
+                app.terminals_select_next();
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            for _ in 0..WHEEL_LINES {
+                app.terminals_select_prev();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Mouse handler for the command palette overlay. Click → select;
+/// double-click → run the selected entry (same path the Enter key
+/// takes in `handle_key_palette`).
+async fn handle_mouse_palette(app: &mut App, me: MouseEvent) {
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Snapshot the index under the cursor before mutating
+            // the palette — drop the immutable borrow before any
+            // mutation happens.
+            let Some(idx) = app
+                .palette()
+                .and_then(|p| hit_test(&p.row_rects.borrow(), me.column, me.row))
+            else {
+                return;
+            };
+            let target = crate::tui::app::ClickTarget::PaletteRow(idx);
+            match resolve_click(app, target) {
+                ClickKind::Select => {
+                    if let Some(p) = app.palette_mut() {
+                        p.select_at(idx);
+                    }
+                }
+                ClickKind::Activate => {
+                    if let Some(p) = app.palette_mut() {
+                        p.select_at(idx);
+                    }
+                    activate_palette_selection(app);
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if let Some(p) = app.palette_mut() {
+                p.select_next();
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if let Some(p) = app.palette_mut() {
+                p.select_prev();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Run the palette's selected entry. Mirrors the `KeyCode::Enter` arm
+/// of `handle_key_palette`.
+fn activate_palette_selection(app: &mut App) {
+    match app.confirm_palette() {
+        Some(Ok(())) => {}
+        Some(Err(crate::tui::app::LaunchRejection::AlreadyRunning)) => {
+            app.open_kill_restart_confirm();
+        }
+        Some(Err(rej)) => {
+            app.flash = Some(launch_message(rej));
+        }
+        None => {}
+    }
+}
+
+/// Resolve the switcher's selected row. Mirrors the `KeyCode::Enter`
+/// arm of `handle_key_switcher` — including the async branch list /
+/// toplevel fetch for the "+ new worktree" sentinel.
+async fn activate_switcher_selection(app: &mut App) {
+    match app.switcher_confirm() {
+        crate::tui::app::SwitcherConfirm::OpenCreateForm => {
+            let project_root = app.project_root().to_path_buf();
+            let branches = crate::runtime::list_branches(&project_root).await;
+            let parent = crate::runtime::git_toplevel(&project_root)
+                .await
+                .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
+            app.open_create_form(branches, parent);
+        }
+        crate::tui::app::SwitcherConfirm::Switched | crate::tui::app::SwitcherConfirm::NoOp => {}
+    }
+}
+
+/// Mouse handler for the worktree switcher overlay. Click → select;
+/// double-click → switch / open the new-worktree form (the sentinel
+/// row at the end of the entries list).
+async fn handle_mouse_switcher(app: &mut App, me: MouseEvent) {
+    // The new-worktree form is text-only; once it's open, clicks
+    // shouldn't reset the list selection underneath. Drop the event.
+    if app.switcher().is_some_and(|s| s.creating.is_some()) {
+        return;
+    }
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let Some(idx) = app
+                .switcher()
+                .and_then(|s| hit_test(&s.row_rects.borrow(), me.column, me.row))
+            else {
+                return;
+            };
+            let target = crate::tui::app::ClickTarget::SwitcherRow(idx);
+            match resolve_click(app, target) {
+                ClickKind::Select => app.switcher_select_at(idx),
+                ClickKind::Activate => {
+                    app.switcher_select_at(idx);
+                    activate_switcher_selection(app).await;
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => app.switcher_select_next(),
+        MouseEventKind::ScrollUp => app.switcher_select_prev(),
+        _ => {}
+    }
+}
+
+/// Mouse handler for the confirm dialog. Single-click on Yes / No
+/// presses the corresponding button; nothing else (no concept of
+/// "selected" button — the keyboard moves focus, the mouse acts
+/// directly).
+fn handle_mouse_confirm(app: &mut App, me: MouseEvent) {
+    let MouseEventKind::Down(MouseButton::Left) = me.kind else {
+        return;
+    };
+    let yes_hit = app
+        .confirm_yes_rect
+        .get()
+        .is_some_and(|r| rect_contains(r, me.column, me.row));
+    let no_hit = app
+        .confirm_no_rect
+        .get()
+        .is_some_and(|r| rect_contains(r, me.column, me.row));
+    if yes_hit {
+        if let Some(rej) = app.confirm_resolve(true) {
+            app.flash = Some(launch_message(rej));
+        }
+    } else if no_hit {
+        app.confirm_resolve(false);
     }
 }
 
@@ -857,43 +1158,48 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 app.flash = Some(launch_message(rej));
             }
         }
-        KeyCode::Enter => {
-            // Enter routing:
-            //   container         → no-op (use U/D/R/S; flashed by
-            //                       try_launch_selected)
-            //   service           → attach into a tmux pane (jumps
-            //                       to the Terminals view; ctrl+b d
-            //                       returns). Non-container services
-            //                       (systemd / custom) flash a hint
-            //                       instead — no shell to attach to.
-            //   recipe / script   → either open args prompt (if forward_args
-            //                       and not already running) or launch
-            //   watcher           → no-op (watchers fire on file change)
-            if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
-                ensure_tmux_probed(app).await;
-                if app.terminals().tmux_available == Some(false) {
-                    app.flash = Some("tmux not installed — install it to attach".into());
-                } else if let Err(msg) = app.queue_service_attach(&service) {
-                    app.flash = Some(msg);
-                }
-            } else if app.selected_accepts_args() && !selected_is_running(app) {
-                // Discoverability path: a `forward_args = true` row gets
-                // a prompt so users see they can pass args. Power users
-                // bypass via the palette (`:cmd foo bar`).
-                app.open_args_prompt();
-            } else {
-                match app.try_launch_selected() {
-                    Ok(()) => {}
-                    Err(crate::tui::app::LaunchRejection::AlreadyRunning) => {
-                        app.open_kill_restart_confirm();
-                    }
-                    Err(rej) => {
-                        app.flash = Some(launch_message(rej));
-                    }
-                }
+        KeyCode::Enter => activate_control_center_selection(app).await,
+        _ => {}
+    }
+}
+
+/// Resolve "activate the current row" semantics for the control
+/// center. Shared between the Enter handler and the mouse double-
+/// click handler.
+///
+/// Routing:
+///   container         → no-op (use U/D/R/S; flashed by
+///                       try_launch_selected)
+///   service           → attach into a tmux pane (jumps to the
+///                       Terminals view; ctrl+b d returns). Non-
+///                       container services (systemd / custom) flash
+///                       a hint instead — no shell to attach to.
+///   recipe / script   → either open args prompt (if forward_args
+///                       and not already running) or launch
+///   watcher           → no-op (watchers fire on file change)
+async fn activate_control_center_selection(app: &mut App) {
+    if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
+        ensure_tmux_probed(app).await;
+        if app.terminals().tmux_available == Some(false) {
+            app.flash = Some("tmux not installed — install it to attach".into());
+        } else if let Err(msg) = app.queue_service_attach(&service) {
+            app.flash = Some(msg);
+        }
+    } else if app.selected_accepts_args() && !selected_is_running(app) {
+        // Discoverability path: a `forward_args = true` row gets
+        // a prompt so users see they can pass args. Power users
+        // bypass via the palette (`:cmd foo bar`).
+        app.open_args_prompt();
+    } else {
+        match app.try_launch_selected() {
+            Ok(()) => {}
+            Err(crate::tui::app::LaunchRejection::AlreadyRunning) => {
+                app.open_kill_restart_confirm();
+            }
+            Err(rej) => {
+                app.flash = Some(launch_message(rej));
             }
         }
-        _ => {}
     }
 }
 
@@ -1017,6 +1323,13 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             app.diff_toggle_wrap();
             return;
         }
+        KeyCode::Char('v') => {
+            app.diff_toggle_body_mode();
+            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+                ensure_read_for_selected(app).await;
+            }
+            return;
+        }
         KeyCode::Char('L') => {
             if app.diff().lazygit_available {
                 app.request_lazygit();
@@ -1026,11 +1339,19 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             return;
         }
         KeyCode::Char(']') => {
+            // Hunk jump is meaningless in read mode — drop the key
+            // rather than writing into the wrong scroll map.
+            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+                return;
+            }
             app.diff_set_focus(DiffFocus::Body);
             app.diff_jump_hunk_next();
             return;
         }
         KeyCode::Char('[') => {
+            if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+                return;
+            }
             app.diff_set_focus(DiffFocus::Body);
             app.diff_jump_hunk_prev();
             return;
@@ -1146,13 +1467,50 @@ async fn ensure_diff_for_selected(app: &mut App) {
     let Some(file) = app.diff_selected_file().cloned() else {
         return;
     };
-    if app.diff_cache_for(&file.path).is_some() {
+    if app.diff_cache_for(&file.path).is_none() {
+        let project_root = app.project_root().to_path_buf();
+        let anchor = app.diff().anchor.clone();
+        let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
+        app.diff_set_cache(file.path.clone(), lines);
+    }
+    // If the user is currently viewing read mode, also populate the
+    // read cache so a selection change doesn't show a "loading…"
+    // placeholder. Diff-mode selection doesn't pre-fetch read.
+    if app.diff_body_mode() == crate::tui::app::BodyMode::Read {
+        ensure_read_for_selected(app).await;
+    }
+}
+
+/// Populate the read cache for the currently-selected file if it
+/// isn't already cached. Called on toggle into read mode and on
+/// selection change while in read mode. Annotates the read lines
+/// with diff classification (Added / Modified / deletion
+/// separators) so the renderer can tint changed regions — needs
+/// the diff cache to be populated first.
+async fn ensure_read_for_selected(app: &mut App) {
+    let Some(file) = app.diff_selected_file().cloned() else {
         return;
+    };
+    if app.diff_read_cache_for(&file.path).is_some() {
+        return;
+    }
+    // Make sure the diff cache is populated so we can annotate. In
+    // the typical toggle path the diff is already cached, but
+    // `[/]` no-ops and direct-into-read jumps shouldn't lose the
+    // annotation.
+    if app.diff_cache_for(&file.path).is_none() {
+        let project_root = app.project_root().to_path_buf();
+        let anchor = app.diff().anchor.clone();
+        let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
+        app.diff_set_cache(file.path.clone(), lines);
     }
     let project_root = app.project_root().to_path_buf();
     let anchor = app.diff().anchor.clone();
-    let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
-    app.diff_set_cache(file.path.clone(), lines);
+    let mut lines = load_read_for_file(&project_root, &file, anchor.as_deref()).await;
+    if let Some(diff_lines) = app.diff_cache_for(&file.path) {
+        lines = annotate_read_with_diff(lines, diff_lines);
+    }
+    app.diff_set_read_cache(file.path.clone(), lines);
 }
 
 /// Build the changed-file list. With `anchor` set, we want
@@ -1213,6 +1571,7 @@ pub(crate) async fn load_diff_files(
                 additions: 0,
                 deletions: 0,
                 binary: false,
+                old_path: entry.old_path,
             },
         );
     }
@@ -1228,24 +1587,43 @@ pub(crate) async fn load_diff_files(
     }
     if untracked_out.status.success() {
         let untracked_text = String::from_utf8_lossy(&untracked_out.stdout);
-        for path in untracked_text.lines() {
-            let path = path.trim();
-            if path.is_empty() {
-                continue;
-            }
-            // Untracked churn (lines added) is computed lazily on
-            // first body load — leave 0/0 here. The list still shows
-            // the U status badge so users can tell.
-            files.entry(path.to_string()).or_insert_with(|| DiffFile {
-                path: path.to_string(),
+        let paths: Vec<String> = untracked_text
+            .lines()
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+        // Count `+` lines for each untracked file eagerly so the
+        // sidebar shows the real number from the first frame
+        // instead of `+0` until the body lazily loads. Reads run
+        // in parallel; for typical untracked counts (<100) this
+        // adds single-digit ms to the file-list load.
+        let read_jobs = paths
+            .iter()
+            .map(|p| count_lines_in_file(project_root.join(p)));
+        let counts = futures::future::join_all(read_jobs).await;
+        for (path, additions) in paths.into_iter().zip(counts) {
+            files.entry(path.clone()).or_insert_with(|| DiffFile {
+                path,
                 status: DiffStatus::Untracked,
-                additions: 0,
+                additions,
                 deletions: 0,
                 binary: false,
+                old_path: None,
             });
         }
     }
     Ok(files.into_values().collect())
+}
+
+/// Count newline-terminated lines in a file. Used to populate the
+/// `+N` churn for untracked files at file-list load time. Errors
+/// collapse to 0 so a permission-denied or vanished file doesn't
+/// break the whole list.
+async fn count_lines_in_file(path: std::path::PathBuf) -> usize {
+    match tokio::fs::read_to_string(&path).await {
+        Ok(body) => body.lines().count(),
+        Err(_) => 0,
+    }
 }
 
 pub(crate) struct NumstatEntry {
@@ -1256,11 +1634,11 @@ pub(crate) struct NumstatEntry {
 }
 
 /// Parse `git diff --numstat <anchor>` output. Each line is
-/// `<add>\t<del>\t<path>`. Binary files report `-\t-\t<path>`. We
-/// keep the path through rename arrows verbatim — the BTreeMap
-/// merge in the caller is keyed by path, so a rename whose
-/// destination already appears in `--name-status` will get its
-/// churn merged correctly.
+/// `<add>\t<del>\t<path>`. Binary files report `-\t-\t<path>`.
+/// Rename destinations are resolved (see
+/// `resolve_numstat_destination`) so the BTreeMap merge in the
+/// caller — keyed by the path that `--name-status` produces —
+/// picks up the churn for renamed files.
 pub(crate) fn parse_numstat(input: &str) -> Vec<NumstatEntry> {
     let mut out = Vec::new();
     for line in input.lines() {
@@ -1272,17 +1650,7 @@ pub(crate) fn parse_numstat(input: &str) -> Vec<NumstatEntry> {
         if path.is_empty() {
             continue;
         }
-        // Renames: `git diff --numstat` emits `path => newpath` or
-        // `{old => new}/file` style. Take the destination so it
-        // matches the path in `--name-status`.
-        let dest = if let Some(idx) = path.find(" => ") {
-            path[idx + 4..]
-                .trim_end_matches('}')
-                .trim_start_matches('{')
-                .to_string()
-        } else {
-            path.to_string()
-        };
+        let dest = resolve_numstat_destination(path);
         let binary = add == "-" && del == "-";
         let additions = if binary { 0 } else { add.parse().unwrap_or(0) };
         let deletions = if binary { 0 } else { del.parse().unwrap_or(0) };
@@ -1294,6 +1662,40 @@ pub(crate) fn parse_numstat(input: &str) -> Vec<NumstatEntry> {
         });
     }
     out
+}
+
+/// Resolve the destination path inside a numstat row. `git diff
+/// --numstat` represents renames two ways:
+///
+/// - Plain: `old => new` (no common prefix/suffix).
+/// - Brace: `prefix{old => new}suffix`, where prefix and suffix
+///   are the shared directory components, e.g.
+///   `.{scaffl => keel}/commands/seed` for a top-level rename.
+///
+/// We rewrite the brace form by substituting the right side of the
+/// `=>` and collapse any `//` left behind when either side is
+/// empty (a renamed-away or renamed-into directory).
+pub(crate) fn resolve_numstat_destination(path: &str) -> String {
+    if let (Some(lb), Some(rb)) = (path.find('{'), path.rfind('}'))
+        && lb < rb
+    {
+        let inside = &path[lb + 1..rb];
+        if let Some(arrow) = inside.find(" => ") {
+            let new_part = &inside[arrow + 4..];
+            let mut out = String::with_capacity(path.len());
+            out.push_str(&path[..lb]);
+            out.push_str(new_part);
+            out.push_str(&path[rb + 1..]);
+            while out.contains("//") {
+                out = out.replace("//", "/");
+            }
+            return out;
+        }
+    }
+    if let Some(idx) = path.find(" => ") {
+        return path[idx + 4..].to_string();
+    }
+    path.to_string()
 }
 
 /// Old behaviour, kept as a fallback when no trunk could be
@@ -1341,16 +1743,28 @@ pub(crate) fn parse_diff_name_status(input: &str) -> Vec<DiffNameStatusEntry> {
             'C' => DiffStatus::Other, // copy
             _ => DiffStatus::Other,
         };
-        // Rename rows have two paths; we want the *destination*.
-        // Empty path field → malformed; skip rather than emit a row
-        // with an empty path that would render as a blank sidebar
-        // entry.
-        let path = match (parts.next(), parts.next()) {
-            (Some(_old), Some(new)) if !new.is_empty() => new.to_string(),
-            (Some(p), None) if !p.is_empty() => p.to_string(),
+        // Rename rows have two paths; we want the *destination* as
+        // `path` and the *source* as `old_path` so the per-file diff
+        // body can request a rename-aware diff. Empty path field →
+        // malformed; skip rather than emit a row with an empty path
+        // that would render as a blank sidebar entry.
+        let (path, old_path) = match (parts.next(), parts.next()) {
+            (Some(old), Some(new)) if !new.is_empty() => {
+                let old = if old.is_empty() {
+                    None
+                } else {
+                    Some(old.to_string())
+                };
+                (new.to_string(), old)
+            }
+            (Some(p), None) if !p.is_empty() => (p.to_string(), None),
             _ => continue,
         };
-        out.push(DiffNameStatusEntry { path, status });
+        out.push(DiffNameStatusEntry {
+            path,
+            status,
+            old_path,
+        });
     }
     out
 }
@@ -1358,6 +1772,8 @@ pub(crate) fn parse_diff_name_status(input: &str) -> Vec<DiffNameStatusEntry> {
 pub(crate) struct DiffNameStatusEntry {
     pub path: String,
     pub status: crate::tui::app::DiffStatus,
+    /// Source path for rename/copy rows; None otherwise.
+    pub old_path: Option<String>,
 }
 
 /// Parse `git status --porcelain=v1` output. Each line is two
@@ -1394,6 +1810,7 @@ pub(crate) fn parse_status_porcelain(input: &str) -> Vec<crate::tui::app::DiffFi
             additions: 0,
             deletions: 0,
             binary: false,
+            old_path: None,
         });
     }
     out
@@ -1412,8 +1829,22 @@ async fn load_diff_for_file(
         return load_untracked_as_diff(project_root, &file.path).await;
     }
     let base = anchor.unwrap_or("HEAD");
+    // Renames need both paths + `--find-renames`, otherwise git
+    // sees the destination as a brand-new file from /dev/null and
+    // reports every line as `+`, contradicting the sidebar's
+    // rename-aware churn count.
+    let mut args: Vec<&str> = vec!["diff", base];
+    if let Some(old) = file.old_path.as_deref() {
+        args.push("--find-renames");
+        args.push("--");
+        args.push(old);
+        args.push(&file.path);
+    } else {
+        args.push("--");
+        args.push(&file.path);
+    }
     let output = match tokio::process::Command::new("git")
-        .args(["diff", base, "--", &file.path])
+        .args(&args)
         .current_dir(project_root)
         .output()
         .await
@@ -1525,6 +1956,156 @@ pub(crate) fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
     let old_start = old.split(',').next()?.parse().ok()?;
     let new_start = new.split(',').next()?.parse().ok()?;
     Some((old_start, new_start))
+}
+
+/// Walk a `DiffLine` stream and classify each new-side line as
+/// Added, Modified, or Plain, plus emit Separator rows where pure
+/// deletions occurred between two surviving lines. Group consecutive
+/// non-context lines: if a group has both `+` and `-`, the `+` lines
+/// are Modified (in-place edit); a `+`-only group is a pure Added
+/// block; a `-`-only group becomes a Separator anchored to the
+/// next surviving new-side line (or to the end of the file when
+/// the deletion was at the tail).
+pub(crate) fn annotate_read_with_diff(
+    read: Vec<crate::tui::app::ReadLine>,
+    diff: &[crate::tui::app::DiffLine],
+) -> Vec<crate::tui::app::ReadLine> {
+    use crate::tui::app::{DiffLineKind, ReadLine, ReadLineKind};
+    use std::collections::HashMap;
+    let mut kind_by_lineno: HashMap<u32, ReadLineKind> = HashMap::new();
+    // Key: new_lineno of the line immediately after the deletion.
+    // `0` is reserved for "deletion at end of file" (no surviving
+    // line after).
+    let mut deletion_before: HashMap<u32, usize> = HashMap::new();
+
+    let mut i = 0;
+    while i < diff.len() {
+        if !matches!(
+            diff[i].kind,
+            DiffLineKind::Added | DiffLineKind::Removed
+        ) {
+            i += 1;
+            continue;
+        }
+        let mut added_linenos: Vec<u32> = Vec::new();
+        let mut removed = 0usize;
+        while i < diff.len() {
+            match diff[i].kind {
+                DiffLineKind::Added => {
+                    if let Some(n) = diff[i].new_lineno {
+                        added_linenos.push(n);
+                    }
+                }
+                DiffLineKind::Removed => removed += 1,
+                _ => break,
+            }
+            i += 1;
+        }
+        if !added_linenos.is_empty() {
+            let kind = if removed > 0 {
+                ReadLineKind::Modified
+            } else {
+                ReadLineKind::Added
+            };
+            for n in added_linenos {
+                kind_by_lineno.insert(n, kind);
+            }
+        } else if removed > 0 {
+            let next = diff[i..].iter().find_map(|l| l.new_lineno).unwrap_or(0);
+            *deletion_before.entry(next).or_insert(0) += removed;
+        }
+    }
+
+    let mut out: Vec<ReadLine> = Vec::with_capacity(read.len() + deletion_before.len());
+    for line in read {
+        if let Some(&n) = deletion_before.get(&line.lineno) {
+            out.push(ReadLine {
+                kind: ReadLineKind::Separator { removed: n },
+                lineno: 0,
+                text: String::new(),
+                spans: vec![],
+            });
+        }
+        let kind = kind_by_lineno
+            .get(&line.lineno)
+            .copied()
+            .unwrap_or(ReadLineKind::Plain);
+        out.push(ReadLine { kind, ..line });
+    }
+    // Trailing deletion at the end of the file — there's no
+    // surviving line after it, so emit the separator at the bottom.
+    if let Some(&n) = deletion_before.get(&0) {
+        out.push(ReadLine {
+            kind: ReadLineKind::Separator { removed: n },
+            lineno: 0,
+            text: String::new(),
+            spans: vec![],
+        });
+    }
+    out
+}
+
+/// Load the full file contents for read mode. Working-tree copy for
+/// present files; `git show <anchor>:<path>` for deleted files;
+/// placeholder for binary blobs. I/O errors collapse to a single
+/// error line so the renderer doesn't need a branch.
+async fn load_read_for_file(
+    project_root: &std::path::Path,
+    file: &crate::tui::app::DiffFile,
+    anchor: Option<&str>,
+) -> Vec<crate::tui::app::ReadLine> {
+    use crate::tui::app::{DiffStatus, ReadLine, ReadLineKind};
+    if file.binary {
+        return vec![ReadLine {
+            kind: ReadLineKind::Plain,
+            lineno: 1,
+            text: "binary file".into(),
+            spans: vec![],
+        }];
+    }
+    let body: Result<String, String> = if file.status == DiffStatus::Deleted {
+        // Working-tree copy is gone; pull the pre-deletion contents
+        // from the anchor (or HEAD if no anchor was resolved).
+        let base = anchor.unwrap_or("HEAD");
+        let spec = format!("{base}:{}", file.path);
+        match tokio::process::Command::new("git")
+            .args(["show", &spec])
+            .current_dir(project_root)
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            }
+            Ok(out) => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        let abs = project_root.join(&file.path);
+        tokio::fs::read_to_string(&abs)
+            .await
+            .map_err(|e| e.to_string())
+    };
+    let body = match body {
+        Ok(b) => b,
+        Err(e) => {
+            return vec![ReadLine {
+                kind: ReadLineKind::Plain,
+                lineno: 1,
+                text: format!("could not read file: {e}"),
+                spans: vec![],
+            }];
+        }
+    };
+    body.lines()
+        .enumerate()
+        .map(|(i, line)| ReadLine {
+            kind: ReadLineKind::Plain,
+            lineno: (i as u32).saturating_add(1),
+            text: line.to_string(),
+            spans: crate::tui::syntax::highlight_inner(&file.path, line),
+        })
+        .collect()
 }
 
 async fn load_untracked_as_diff(
@@ -2237,5 +2818,254 @@ index abc..def 100644
         // Confirm closes the palette and moves the sidebar selection.
         assert_eq!(app.mode(), crate::tui::app::Mode::Normal);
         assert_eq!(app.items()[app.selected_index()].name, "migrate");
+    }
+
+    // ──────── annotate_read_with_diff ────────
+    //
+    // Helpers and tests for the read-mode bg classifier. Each test
+    // constructs a small synthetic diff and a flat read-line vec,
+    // then asserts the annotated output kinds.
+
+    use crate::tui::app::{DiffLine, DiffLineKind, ReadLine, ReadLineKind};
+
+    fn dl_h(text: &str) -> DiffLine {
+        DiffLine {
+            kind: DiffLineKind::Header,
+            text: text.into(),
+            old_lineno: None,
+            new_lineno: None,
+            spans: vec![],
+        }
+    }
+    fn dl_hunk() -> DiffLine {
+        DiffLine {
+            kind: DiffLineKind::Hunk,
+            text: "@@".into(),
+            old_lineno: None,
+            new_lineno: None,
+            spans: vec![],
+        }
+    }
+    fn dl_ctx(o: u32, n: u32) -> DiffLine {
+        DiffLine {
+            kind: DiffLineKind::Context,
+            text: " ".into(),
+            old_lineno: Some(o),
+            new_lineno: Some(n),
+            spans: vec![],
+        }
+    }
+    fn dl_add(n: u32) -> DiffLine {
+        DiffLine {
+            kind: DiffLineKind::Added,
+            text: "+".into(),
+            old_lineno: None,
+            new_lineno: Some(n),
+            spans: vec![],
+        }
+    }
+    fn dl_rem(o: u32) -> DiffLine {
+        DiffLine {
+            kind: DiffLineKind::Removed,
+            text: "-".into(),
+            old_lineno: Some(o),
+            new_lineno: None,
+            spans: vec![],
+        }
+    }
+    fn rl(n: u32) -> ReadLine {
+        ReadLine {
+            kind: ReadLineKind::Plain,
+            lineno: n,
+            text: format!("L{n}"),
+            spans: vec![],
+        }
+    }
+
+    #[test]
+    fn annotate_marks_pure_additions_green() {
+        // Diff: 3 context lines, add line 2.
+        let diff = vec![
+            dl_h("--- a"),
+            dl_hunk(),
+            dl_ctx(1, 1),
+            dl_add(2),
+            dl_ctx(2, 3),
+        ];
+        let read = vec![rl(1), rl(2), rl(3)];
+        let out = annotate_read_with_diff(read, &diff);
+        let kinds: Vec<_> = out.iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![ReadLineKind::Plain, ReadLineKind::Added, ReadLineKind::Plain]
+        );
+    }
+
+    #[test]
+    fn annotate_marks_modifications_blue() {
+        // Diff: remove line 2, add the replacement at line 2.
+        let diff = vec![
+            dl_h("--- a"),
+            dl_hunk(),
+            dl_ctx(1, 1),
+            dl_rem(2),
+            dl_add(2),
+            dl_ctx(3, 3),
+        ];
+        let read = vec![rl(1), rl(2), rl(3)];
+        let out = annotate_read_with_diff(read, &diff);
+        let kinds: Vec<_> = out.iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ReadLineKind::Plain,
+                ReadLineKind::Modified,
+                ReadLineKind::Plain
+            ]
+        );
+    }
+
+    #[test]
+    fn annotate_inserts_separator_for_pure_deletion() {
+        // Diff: original had 4 lines; line 2 was removed. New file
+        // has 3 lines (old 1, 3, 4).
+        let diff = vec![
+            dl_h("--- a"),
+            dl_hunk(),
+            dl_ctx(1, 1),
+            dl_rem(2),
+            dl_ctx(3, 2),
+            dl_ctx(4, 3),
+        ];
+        let read = vec![rl(1), rl(2), rl(3)];
+        let out = annotate_read_with_diff(read, &diff);
+        // Separator should land between new-line 1 and new-line 2.
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0].kind, ReadLineKind::Plain);
+        assert_eq!(out[0].lineno, 1);
+        assert_eq!(out[1].kind, ReadLineKind::Separator { removed: 1 });
+        assert_eq!(out[2].kind, ReadLineKind::Plain);
+        assert_eq!(out[2].lineno, 2);
+        assert_eq!(out[3].kind, ReadLineKind::Plain);
+    }
+
+    #[test]
+    fn annotate_handles_deletion_before_first_line() {
+        // Original lines 1, 2 were removed; new file starts at what
+        // used to be line 3.
+        let diff = vec![
+            dl_h("--- a"),
+            dl_hunk(),
+            dl_rem(1),
+            dl_rem(2),
+            dl_ctx(3, 1),
+        ];
+        let read = vec![rl(1)];
+        let out = annotate_read_with_diff(read, &diff);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, ReadLineKind::Separator { removed: 2 });
+        assert_eq!(out[1].kind, ReadLineKind::Plain);
+        assert_eq!(out[1].lineno, 1);
+    }
+
+    #[test]
+    fn name_status_captures_rename_old_path() {
+        let input = "R100\t.scaffl/commands/seed\t.keel/commands/seed\nM\tREADME.md\n";
+        let entries = parse_diff_name_status(input);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, ".keel/commands/seed");
+        assert_eq!(
+            entries[0].old_path.as_deref(),
+            Some(".scaffl/commands/seed")
+        );
+        assert_eq!(entries[1].path, "README.md");
+        assert!(entries[1].old_path.is_none());
+    }
+
+    #[test]
+    fn numstat_resolves_plain_rename_form() {
+        assert_eq!(
+            resolve_numstat_destination("foo => bar"),
+            "bar".to_string()
+        );
+        assert_eq!(
+            resolve_numstat_destination("src/old.rs => src/new.rs"),
+            "src/new.rs".to_string()
+        );
+    }
+
+    #[test]
+    fn numstat_resolves_brace_rename_with_common_suffix() {
+        // The bug case from the field: `.{scaffl => keel}/commands/seed`.
+        assert_eq!(
+            resolve_numstat_destination(".{scaffl => keel}/commands/seed"),
+            ".keel/commands/seed".to_string()
+        );
+        assert_eq!(
+            resolve_numstat_destination("src/{old => new}/lib.rs"),
+            "src/new/lib.rs".to_string()
+        );
+    }
+
+    #[test]
+    fn numstat_resolves_brace_rename_at_either_end() {
+        assert_eq!(
+            resolve_numstat_destination("{old => new}/path"),
+            "new/path".to_string()
+        );
+        assert_eq!(
+            resolve_numstat_destination("path/{old => new}"),
+            "path/new".to_string()
+        );
+    }
+
+    #[test]
+    fn numstat_resolves_empty_side_renames() {
+        // Renamed-up: `dir/{sub => }/file.rs` should collapse to `dir/file.rs`.
+        assert_eq!(
+            resolve_numstat_destination("dir/{sub => }/file.rs"),
+            "dir/file.rs".to_string()
+        );
+        // Renamed-into-subdir: `dir/{ => sub}/file.rs` → `dir/sub/file.rs`.
+        assert_eq!(
+            resolve_numstat_destination("dir/{ => sub}/file.rs"),
+            "dir/sub/file.rs".to_string()
+        );
+    }
+
+    #[test]
+    fn numstat_passes_through_non_rename_path() {
+        assert_eq!(
+            resolve_numstat_destination("src/main.rs"),
+            "src/main.rs".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_numstat_picks_destination_for_renamed_file() {
+        let input = "5\t0\t.{scaffl => keel}/commands/seed\n9\t9\tREADME.md\n";
+        let entries = parse_numstat(input);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, ".keel/commands/seed");
+        assert_eq!(entries[0].additions, 5);
+        assert_eq!(entries[0].deletions, 0);
+        assert_eq!(entries[1].path, "README.md");
+    }
+
+    #[test]
+    fn annotate_handles_trailing_deletion() {
+        // Last two lines deleted; no surviving line after them.
+        let diff = vec![
+            dl_h("--- a"),
+            dl_hunk(),
+            dl_ctx(1, 1),
+            dl_rem(2),
+            dl_rem(3),
+        ];
+        let read = vec![rl(1)];
+        let out = annotate_read_with_diff(read, &diff);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, ReadLineKind::Plain);
+        assert_eq!(out[1].kind, ReadLineKind::Separator { removed: 2 });
     }
 }
