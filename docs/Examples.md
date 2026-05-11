@@ -15,7 +15,7 @@ Showcases:
 
 - `[command.*]` recipe basics.
 - `[env]` resolution without container backends.
-- `[containers].backend = "none"`.
+- `[runtime].backend = "none"`.
 
 ## [`laravel-app`](https://github.com/nsrosenqvist/keel/tree/main/examples/laravel-app)
 

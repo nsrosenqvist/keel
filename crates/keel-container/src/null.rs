@@ -27,7 +27,7 @@ impl Backend for NullBackend {
         _opts: &ExecOptions,
     ) -> Result<i32, BackendError> {
         Err(BackendError::Reported(format!(
-            "backend = \"none\"; cannot exec in service `{service}` — set containers.backend = \"compose\" to enable container exec"
+            "backend = \"none\"; cannot exec in service `{service}` — set runtime.backend = \"compose\" to enable container exec"
         )))
     }
 
@@ -39,7 +39,7 @@ impl Backend for NullBackend {
 
     async fn tail_logs(&self, _service: &str) -> Result<tokio::process::Child, BackendError> {
         Err(BackendError::Reported(
-            "backend = \"none\"; declare a service in [[ui.pane]] only after setting containers.backend = \"compose\""
+            "backend = \"none\"; declare a service in [[ui.pane]] only after setting runtime.backend = \"compose\""
                 .into(),
         ))
     }
@@ -50,7 +50,7 @@ impl Backend for NullBackend {
         _services: &[&str],
     ) -> Result<tokio::process::Child, BackendError> {
         Err(BackendError::Reported(
-            "backend = \"none\"; set containers.backend = \"compose\" to start / stop services"
+            "backend = \"none\"; set runtime.backend = \"compose\" to start / stop services"
                 .into(),
         ))
     }

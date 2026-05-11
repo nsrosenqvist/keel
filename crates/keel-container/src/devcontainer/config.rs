@@ -38,7 +38,7 @@ pub enum DevcontainerConfigError {
 
     #[error(
         "{path}: `dockerComposeFile` devcontainers are not supported in keel v1. \
-         Use `containers.backend = \"compose\"` in keel.toml and route recipes \
+         Use `runtime.backend = \"compose\"` in keel.toml and route recipes \
          to the dev service with `in = \"<service>\"` instead."
     )]
     DockerComposeUnsupported { path: PathBuf },
@@ -364,7 +364,7 @@ mod tests {
             DevcontainerSpec::from_str(&path("devcontainer.json"), src).expect_err("must reject");
         let msg = err.to_string();
         assert!(msg.contains("dockerComposeFile"), "got: {msg}");
-        assert!(msg.contains("containers.backend"), "got: {msg}");
+        assert!(msg.contains("runtime.backend"), "got: {msg}");
     }
 
     #[test]

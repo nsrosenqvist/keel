@@ -2,7 +2,7 @@
 name = "devcontainer-example"
 description = "Demonstrates the opt-in devcontainer feature."
 
-[containers]
+[runtime]
 backend = "none"
 
 [devcontainer]

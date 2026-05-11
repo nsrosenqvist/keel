@@ -147,7 +147,7 @@ fn format_paths(paths: &[PathBuf]) -> String {
 
 async fn build_backend(config: &Config) -> Arc<dyn Backend> {
     use keel_config::model::Backend as B;
-    match config.containers.backend {
+    match config.runtime.backend {
         B::Compose => match ComposeBackend::detect().await {
             Ok(b) => Arc::new(b),
             Err(_) => Arc::new(keel_container::null::NullBackend),

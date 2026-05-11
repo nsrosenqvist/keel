@@ -20,9 +20,11 @@ pub struct Config {
     /// Container-runtime configuration (compose / podman / docker /
     /// none). Co-exists with `[[services.custom]]` and
     /// `[[services.systemd]]`; the registry combines them into a
-    /// single backend at runtime.
+    /// single backend at runtime. The TOML key is `[runtime]` — it
+    /// describes the container runtime layer of the workspace, with
+    /// non-container services living under `[[services.*]]`.
     #[serde(default)]
-    pub containers: ContainersConfig,
+    pub runtime: RuntimeConfig,
 
     /// Project-level environment variable defaults and resolution rules.
     #[serde(default)]
@@ -356,13 +358,14 @@ pub struct DiffConfig {
 
 /// Container-runtime configuration: which backend to talk to
 /// (compose / podman / docker / none) plus passthrough toggles.
-/// Renamed from `RuntimeConfig` when the schema grew non-container
-/// service kinds (`services.custom`, `services.systemd`) — the
-/// section now describes container-specific behaviour, not "the
-/// runtime" globally.
+/// The TOML key is `[runtime]`; non-container services live under
+/// `[[services.*]]`, so this section describes the workspace's
+/// container runtime specifically — the layer that orchestrates
+/// containers, whether that's compose, podman, or (in the future)
+/// minikube.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ContainersConfig {
+pub struct RuntimeConfig {
     #[serde(default = "default_backend")]
     pub backend: Backend,
 
@@ -376,7 +379,7 @@ pub struct ContainersConfig {
     pub service_passthrough: bool,
 }
 
-impl Default for ContainersConfig {
+impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             backend: default_backend(),
@@ -1034,10 +1037,10 @@ mod tests {
     }
 
     #[test]
-    fn defaults_containers_when_section_missing() {
+    fn defaults_runtime_when_section_missing() {
         let cfg: Config = toml::from_str("").unwrap();
-        assert_eq!(cfg.containers.backend, Backend::Compose);
-        assert!(cfg.containers.compose_passthrough);
-        assert!(cfg.containers.service_passthrough);
+        assert_eq!(cfg.runtime.backend, Backend::Compose);
+        assert!(cfg.runtime.compose_passthrough);
+        assert!(cfg.runtime.service_passthrough);
     }
 }

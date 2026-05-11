@@ -25,7 +25,7 @@ name        = "myapp"
 description = "Public-facing API"
 ```
 
-## `[containers]`
+## `[runtime]`
 
 Container-runtime selection. See [Container Backends](./Container-Backends.md).
 

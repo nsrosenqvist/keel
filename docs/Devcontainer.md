@@ -51,7 +51,7 @@ format is JSONC).
 ### Unsupported / rejected
 
 - `dockerComposeFile` — **rejected** with an error. Use keel's
-  existing `containers.backend = "compose"` instead, and route
+  existing `runtime.backend = "compose"` instead, and route
   recipes to your dev service with `in = "<service>"`. The two
   approaches solve the same problem; reimplementing
   dockerComposeFile would just duplicate the compose backend.

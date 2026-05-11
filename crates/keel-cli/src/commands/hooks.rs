@@ -141,7 +141,7 @@ fn print_outcome(outcome: &HookOutcome) {
 
 async fn build_backend_or_null(config: &Config) -> Arc<dyn Backend> {
     use keel_config::model::Backend as B;
-    match config.containers.backend {
+    match config.runtime.backend {
         B::Compose => match ComposeBackend::detect().await {
             Ok(b) => Arc::new(b),
             Err(_) => Arc::new(keel_container::null::NullBackend),

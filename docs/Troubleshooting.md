@@ -38,7 +38,7 @@ duplicate from `[install].steps`).
 
 ### "compose backend selected but `docker` is not on PATH"
 
-Install Docker, or set `[containers].backend = "none"` if you only
+Install Docker, or set `[runtime].backend = "none"` if you only
 use [`[[services.custom]]`](./Non-Container-Services.md) /
 `[[services.systemd]]` declarations.
 
@@ -49,7 +49,7 @@ The compose service isn't defined in `docker-compose.yml`. Check
 
 ### `keel <svc> php -v` doesn't exec inside the container
 
-Either `[containers].service_passthrough = false` is set, or the
+Either `[runtime].service_passthrough = false` is set, or the
 name resolved to something earlier in the [resolution
 order](./Recipes-and-Scripts.md#resolution-order) (a recipe or
 script with the same name). Use `keel which <svc>` to see how it

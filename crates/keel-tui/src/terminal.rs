@@ -1863,11 +1863,11 @@ mod tests {
         // Disable the container backend by default so the synthetic
         // container row doesn't shift item indices in tests whose
         // subject is unrelated. Tests that *do* want a container row
-        // pass their own `[containers]` block.
-        let prefix = if toml.contains("[containers]") {
+        // pass their own `[runtime]` block.
+        let prefix = if toml.contains("[runtime]") {
             String::new()
         } else {
-            String::from("[containers]\nbackend = \"none\"\n")
+            String::from("[runtime]\nbackend = \"none\"\n")
         };
         App::new(Arc::new(
             keel_config::parse_str(&format!("{prefix}{toml}")).unwrap(),

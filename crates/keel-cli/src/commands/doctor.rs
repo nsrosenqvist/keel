@@ -92,7 +92,7 @@ pub async fn run(config: &Config, project_root: &Path) -> Result<i32> {
 
 async fn check_backend(config: &Config) -> Vec<Finding> {
     use keel_config::model::Backend as B;
-    match config.containers.backend {
+    match config.runtime.backend {
         B::None => vec![Finding::ok(
             "backend: none (no container backend configured)",
         )],
@@ -104,7 +104,7 @@ async fn check_backend(config: &Config) -> Vec<Finding> {
         },
         B::Docker | B::Podman => vec![Finding::warn(format!(
             "backend: `{:?}` is configured but only `compose` is implemented in this version",
-            config.containers.backend
+            config.runtime.backend
         ))],
     }
 }
@@ -168,7 +168,7 @@ fn check_dependency_graph(config: &Config) -> Vec<Finding> {
 fn check_service_hints(config: &Config) -> Vec<Finding> {
     use keel_config::model::Backend as B;
     if !matches!(
-        config.containers.backend,
+        config.runtime.backend,
         B::Compose | B::Docker | B::Podman
     ) {
         return Vec::new();

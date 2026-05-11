@@ -46,10 +46,11 @@ impl View {
 /// What kind of thing a sidebar item points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ItemKind {
-    /// The container backend itself — a single synthetic row that
-    /// hosts compose lifecycle output (`U` / `D` / `R` / `S`). One
-    /// such row exists when the configured backend is non-`none`.
-    Container,
+    /// The configured container runtime itself — a single synthetic
+    /// row that hosts backend lifecycle output (`U` / `D` / `R` /
+    /// `S` for compose). One such row exists when the configured
+    /// backend is non-`none`.
+    Runtime,
     Service,
     Watcher,
     Recipe,
@@ -1031,7 +1032,7 @@ impl App {
             .clone();
 
         match item.kind {
-            ItemKind::Container => {
+            ItemKind::Runtime => {
                 return Err(LaunchRejection::NotRunnable(
                     "container row shows lifecycle output; use U / D / R / S".into(),
                 ));
@@ -2186,7 +2187,7 @@ impl App {
                 if let Some(idx) = self
                     .items
                     .iter()
-                    .position(|i| i.kind == ItemKind::Container)
+                    .position(|i| i.kind == ItemKind::Runtime)
                 {
                     self.selected = idx;
                 }
@@ -2597,13 +2598,13 @@ fn build_items(config: &Config) -> Vec<Item> {
     build_items_from(config, &collect_service_panes(config), &BTreeMap::new())
 }
 
-/// Returns the row label for the container backend, or `None` when
+/// Returns the row label for the runtime backend, or `None` when
 /// no container backend is configured (`backend = "none"`). The row
-/// label is the backend name the user typed in `[containers]
+/// label is the backend name the user typed in `[runtime]
 /// backend = "..."` so the sidebar mirrors their config.
-fn container_row_label(config: &Config) -> Option<&'static str> {
+fn runtime_row_label(config: &Config) -> Option<&'static str> {
     use keel_config::model::Backend as B;
-    match config.containers.backend {
+    match config.runtime.backend {
         B::None => None,
         B::Compose => Some("compose"),
         B::Docker => Some("docker"),
@@ -2612,7 +2613,7 @@ fn container_row_label(config: &Config) -> Option<&'static str> {
 }
 
 /// Reconstruct the sidebar item list from live state. The order is
-/// stable: container (when configured), services (declared first in
+/// stable: runtime (when configured), services (declared first in
 /// keel.toml order, then any auto-discovered ones), watchers,
 /// recipes, scripts.
 fn build_items_from(
@@ -2622,13 +2623,13 @@ fn build_items_from(
 ) -> Vec<Item> {
     let mut items = Vec::new();
 
-    // Container row first (when a backend is configured) — this is
-    // the canonical home for compose lifecycle output (`U` / `D` /
-    // `R` / `S`). One row, fixed name, top of the sidebar.
-    if let Some(name) = container_row_label(config) {
+    // Runtime row first (when a backend is configured) — this is the
+    // canonical home for backend lifecycle output (compose `U` / `D`
+    // / `R` / `S`). One row, fixed name, top of the sidebar.
+    if let Some(name) = runtime_row_label(config) {
         items.push(Item {
             name: name.to_string(),
-            kind: ItemKind::Container,
+            kind: ItemKind::Runtime,
         });
     }
 
@@ -2696,7 +2697,7 @@ mod tests {
         Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [command.up]
@@ -2715,7 +2716,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [command.up]
@@ -2740,7 +2741,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "compose"
 
                 [command.up]
@@ -2750,7 +2751,7 @@ mod tests {
             .unwrap(),
         );
         let app = App::new(cfg);
-        assert_eq!(app.items()[0].kind, ItemKind::Container);
+        assert_eq!(app.items()[0].kind, ItemKind::Runtime);
         assert_eq!(app.items()[0].name, "compose");
     }
 
@@ -2759,7 +2760,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
                 [command.up]
                 run = "true"
@@ -2768,7 +2769,7 @@ mod tests {
             .unwrap(),
         );
         let app = App::new(cfg);
-        assert!(app.items().iter().all(|i| i.kind != ItemKind::Container));
+        assert!(app.items().iter().all(|i| i.kind != ItemKind::Runtime));
     }
 
     #[test]
@@ -2796,7 +2797,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [[ui.pane]]
@@ -2847,7 +2848,7 @@ mod tests {
         // explicitly disable the backend.
         let cfg = Arc::new(
             keel_config::parse_str(
-                r#"[containers]
+                r#"[runtime]
                 backend = "none""#,
             )
             .unwrap(),
@@ -2869,7 +2870,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [command.shell]
@@ -3324,7 +3325,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [[services.systemd]]
@@ -3346,7 +3347,7 @@ mod tests {
         let cfg = Arc::new(
             keel_config::parse_str(
                 r#"
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [[services.custom]]

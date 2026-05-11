@@ -27,7 +27,7 @@ The binary is named `keel`.
 [project]
 name = "myapp"
 
-[containers]
+[runtime]
 backend         = "compose"
 default_service = "app"
 

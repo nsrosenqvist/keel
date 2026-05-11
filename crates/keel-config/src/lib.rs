@@ -19,7 +19,7 @@ pub use error::ConfigError;
 pub use install::{InlineStep, InstallConfig, InstallStepRef, InstallStepScript};
 pub use loader::{load_from_path, load_project, load_project_with_slug, parse_str};
 pub use model::{
-    Config, ContainersConfig, CustomService, DiffConfig, EnvSpec, HooksConfig, Recipe,
-    RecipeProfile, Run, ServicesConfig, SystemdScope, SystemdService, WorktreesConfig,
+    Config, CustomService, DiffConfig, EnvSpec, HooksConfig, Recipe, RecipeProfile,
+    RuntimeConfig, Run, ServicesConfig, SystemdScope, SystemdService, WorktreesConfig,
 };
 pub use scripts::ScriptCommand;

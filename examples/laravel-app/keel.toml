@@ -7,7 +7,7 @@
 name = "laravel-app"
 description = "Example: Laravel + Docker Compose + Kamal"
 
-[containers]
+[runtime]
 backend             = "compose"
 default_service     = "app"
 compose_passthrough = true

@@ -113,9 +113,9 @@ resolver tries:
 2. `[command.<name>]` recipe.
 3. `.keel/commands/<name>` script.
 4. `<name>` as a docker-compose subcommand (passthrough), if
-   `[containers].compose_passthrough = true`.
+   `[runtime].compose_passthrough = true`.
 5. `<name>` as a compose service name (exec into it), if
-   `[containers].service_passthrough = true`.
+   `[runtime].service_passthrough = true`.
 
 `keel which <name>` prints which slot resolved.
 

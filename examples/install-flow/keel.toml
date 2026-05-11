@@ -15,7 +15,7 @@
 name        = "install-flow-demo"
 description = "Walk-through of keel install"
 
-[containers]
+[runtime]
 backend = "none"             # host-only; no compose preflight
 
 # `install_with_setup = false` keeps things demo-focused; in real

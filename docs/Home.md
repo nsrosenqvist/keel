@@ -27,7 +27,7 @@ A minimal `keel.toml`:
 [project]
 name = "myapp"
 
-[containers]
+[runtime]
 backend         = "compose"
 default_service = "app"
 

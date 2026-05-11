@@ -100,7 +100,7 @@ pub trait Backend: Send + Sync {
     /// [`OutputSink`]: keel-runtime::OutputSink
     async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "no container backend configured (set containers.backend = \"compose\" in keel.toml)"
+            "no container backend configured (set runtime.backend = \"compose\" in keel.toml)"
                 .into(),
         ))
     }
@@ -128,7 +128,7 @@ pub trait Backend: Send + Sync {
         _services: &[&str],
     ) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "no container backend configured (set containers.backend = \"compose\")".into(),
+            "no container backend configured (set runtime.backend = \"compose\")".into(),
         ))
     }
 }

@@ -70,12 +70,12 @@ See [TUI](./TUI.md).
 
 ## Backend = "none" stacks
 
-A project with `[containers].backend = "none"` plus only
+A project with `[runtime].backend = "none"` plus only
 `[[services.systemd]]` / `[[services.custom]]` declarations is fully
 supported:
 
 ```toml
-[containers]
+[runtime]
 backend = "none"
 
 [[services.systemd]]

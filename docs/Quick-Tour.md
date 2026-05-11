@@ -43,7 +43,7 @@ run          = "composer test"
 forward_args = true        # keel test --filter Login → composer test --filter Login
 ```
 
-Backend selection is `[containers].backend` — compose, docker,
+Backend selection is `[runtime].backend` — compose, docker,
 podman, or none. See [Container Backends](./Container-Backends.md).
 
 ## 3. Per-worktree isolation, automatic

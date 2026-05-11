@@ -731,7 +731,7 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     use keel_config::model::Backend as B;
 
     // Container slot (compose / none / future docker / podman).
-    let container: Option<Arc<dyn Backend>> = match config.containers.backend {
+    let container: Option<Arc<dyn Backend>> = match config.runtime.backend {
         B::None => None,
         B::Compose => Some(Arc::new(
             ComposeBackend::detect()
@@ -740,7 +740,7 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
         )),
         B::Docker | B::Podman => anyhow::bail!(
             "backend `{:?}` is configured but not yet implemented; use `compose` or `none`",
-            config.containers.backend
+            config.runtime.backend
         ),
     };
 

@@ -28,7 +28,7 @@ use tokio::process::Child;
 use tracing::{debug, warn};
 
 /// Composite backend. `container` is optional so projects with only
-/// custom services (`[containers] backend = "none"` plus `services.custom`
+/// custom services (`[runtime] backend = "none"` plus `services.custom`
 /// or `services.systemd`) still work.
 pub struct ServiceRegistry {
     container: Option<Arc<dyn Backend>>,
@@ -65,7 +65,7 @@ impl ServiceRegistry {
     fn require_container(&self) -> Result<Arc<dyn Backend>, BackendError> {
         self.container.as_ref().map(Arc::clone).ok_or_else(|| {
             BackendError::Reported(
-                "no container backend configured (set containers.backend = \"compose\")".into(),
+                "no container backend configured (set runtime.backend = \"compose\")".into(),
             )
         })
     }

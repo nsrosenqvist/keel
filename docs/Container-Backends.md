@@ -2,7 +2,7 @@
 
 keel talks to your containers through a Backend abstraction
 (`crates/keel-container/`). The backend is selected by
-`[containers].backend`; everything else is passthrough.
+`[runtime].backend`; everything else is passthrough.
 
 ## Supported backends
 
@@ -14,7 +14,7 @@ keel talks to your containers through a Backend abstraction
 | `none` | Skip container preflight entirely; useful when only `[[services.custom]]` / `[[services.systemd]]` apply. |
 
 ```toml
-[containers]
+[runtime]
 backend             = "compose"
 default_service     = "app"
 compose_passthrough = true
@@ -46,7 +46,7 @@ shells, irrelevant for pure-stdout commands.
 When set, recipes without an explicit `in =` field fall back to it:
 
 ```toml
-[containers]
+[runtime]
 default_service = "app"
 
 [command.artisan]

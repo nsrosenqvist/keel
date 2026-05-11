@@ -1061,18 +1061,32 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Each section gets `items + 2` rows (top + bottom border, header in
-    // the title). The last group absorbs the slack so we don't overflow
-    // the sidebar.
+    // Mark adjacent container + services groups so they render as one
+    // joined block (shared horizontal seam) — they're related enough
+    // (lifecycle of the workspace's runtime processes) to read as one
+    // grouped panel rather than two separate ones.
+    let mut joins = vec![JoinPosition::Standalone; groups.len()];
+    for i in 0..groups.len().saturating_sub(1) {
+        if groups[i].label == "runtime" && groups[i + 1].label == "services" {
+            joins[i] = JoinPosition::Top;
+            joins[i + 1] = JoinPosition::Bottom;
+        }
+    }
+
+    // Standalone groups use `items + 2` rows (top + bottom border).
+    // JoinedTop omits its bottom border — the seam is owned by the
+    // JoinedBottom group below it — so it only needs `items + 1`.
+    // The last group absorbs the slack so we don't overflow.
     let last = groups.len() - 1;
     let constraints: Vec<Constraint> = groups
         .iter()
         .enumerate()
         .map(|(i, g)| {
+            let size = (g.len() as u16).saturating_add(joins[i].frame_rows());
             if i == last {
-                Constraint::Min((g.len() as u16).saturating_add(2))
+                Constraint::Min(size)
             } else {
-                Constraint::Length((g.len() as u16).saturating_add(2))
+                Constraint::Length(size)
             }
         })
         .collect();
@@ -1083,13 +1097,13 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
 
     let global_idx = app.selected_index();
     let mut cursor = 0;
-    for (group, group_area) in groups.iter().zip(areas.iter()) {
+    for ((group, group_area), join) in groups.iter().zip(areas.iter()).zip(joins.iter()) {
         let local_selected = if global_idx >= cursor && global_idx < cursor + group.len() {
             Some(global_idx - cursor)
         } else {
             None
         };
-        render_group(app, group, *group_area, local_selected, frame);
+        render_group(app, group, *group_area, local_selected, *join, frame);
         cursor += group.len();
     }
 }
@@ -1105,6 +1119,36 @@ impl<'a> SidebarGroup<'a> {
     }
 }
 
+/// Whether a sidebar group renders as its own bordered block or as
+/// one half of a joined pair (container + services). The pair shares
+/// a single horizontal seam — the top half drops its bottom border,
+/// and the bottom half's top corners are redrawn as `├` / `┤` so the
+/// two read as a single block divided by a divider line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JoinPosition {
+    Standalone,
+    Top,
+    Bottom,
+}
+
+impl JoinPosition {
+    fn borders(self) -> Borders {
+        match self {
+            JoinPosition::Standalone | JoinPosition::Bottom => Borders::ALL,
+            JoinPosition::Top => Borders::TOP | Borders::LEFT | Borders::RIGHT,
+        }
+    }
+
+    /// Number of non-content rows the block consumes. Top has no
+    /// bottom border, so the seam belongs to the Bottom half.
+    fn frame_rows(self) -> u16 {
+        match self {
+            JoinPosition::Top => 1,
+            _ => 2,
+        }
+    }
+}
+
 fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
     // Recipes and scripts share a single "commands" group in the
     // sidebar — to most users they're the same thing (a runnable
@@ -1113,23 +1157,23 @@ fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
     // preserves the iteration order of `app.items()` within the
     // commands group, which is recipes (alphabetical) then scripts
     // (alphabetical) — natural enough for browsing.
-    let mut container = Vec::new();
+    let mut runtime = Vec::new();
     let mut services = Vec::new();
     let mut watchers = Vec::new();
     let mut commands = Vec::new();
     for item in app.items() {
         match item.kind {
-            ItemKind::Container => container.push(item),
+            ItemKind::Runtime => runtime.push(item),
             ItemKind::Service => services.push(item),
             ItemKind::Watcher => watchers.push(item),
             ItemKind::Recipe | ItemKind::Script => commands.push(item),
         }
     }
     let mut out = Vec::new();
-    if !container.is_empty() {
+    if !runtime.is_empty() {
         out.push(SidebarGroup {
-            label: "container",
-            items: container,
+            label: "runtime",
+            items: runtime,
         });
     }
     if !services.is_empty() {
@@ -1158,6 +1202,7 @@ fn render_group(
     group: &SidebarGroup<'_>,
     area: Rect,
     selected: Option<usize>,
+    join: JoinPosition,
     frame: &mut Frame,
 ) {
     let accent = accent_of(app);
@@ -1172,7 +1217,7 @@ fn render_group(
             Style::default().fg(Color::DarkGray),
         ),
     ]);
-    let block = panel_block_titled(title_line);
+    let block = panel_block_titled(title_line).borders(join.borders());
 
     let list_items: Vec<ListItem> = group
         .items
@@ -1212,6 +1257,17 @@ fn render_group(
     let mut state = ListState::default();
     state.select(selected);
     frame.render_stateful_widget(list, area, &mut state);
+
+    // For the lower half of a joined pair, replace the rounded top
+    // corners (╭ ╮) drawn by the block with tee connectors (├ ┤) so
+    // the seam reads as a divider inside one block rather than the
+    // top edge of a second block sitting below the first.
+    if join == JoinPosition::Bottom && area.width >= 2 && area.height >= 1 {
+        let style = Style::default().fg(Color::DarkGray);
+        let buf = frame.buffer_mut();
+        buf.set_string(area.x, area.y, "├", style);
+        buf.set_string(area.x + area.width - 1, area.y, "┤", style);
+    }
 }
 
 /// Returns a tiny tag for service rows whose backend isn't compose,
@@ -1236,7 +1292,7 @@ fn glyph_for(kind: ItemKind) -> &'static str {
     match kind {
         // Container reuses the service dot — same "is this thing
         // alive" mental model.
-        ItemKind::Container | ItemKind::Service => "●",
+        ItemKind::Runtime | ItemKind::Service => "●",
         ItemKind::Watcher => "◇",
         // Same glyph for recipes and scripts — they share the
         // "commands" sidebar group. Kind is still distinguishable in
@@ -1247,7 +1303,7 @@ fn glyph_for(kind: ItemKind) -> &'static str {
 
 fn item_indicator_style(app: &App, item: &Item) -> Style {
     match item.kind {
-        ItemKind::Container => run_indicator_style(app.lifecycle_run()),
+        ItemKind::Runtime => run_indicator_style(app.lifecycle_run()),
         ItemKind::Service => service_indicator_style(app, &item.name),
         ItemKind::Watcher => watcher_indicator_style(app, &item.name),
         ItemKind::Recipe | ItemKind::Script => {
@@ -1362,7 +1418,7 @@ fn info_panel_title(item: &Item, accent: Color) -> Line<'static> {
 
 fn render_output_for_item(app: &App, item: &Item, accent: Color, frame: &mut Frame, area: Rect) {
     match item.kind {
-        ItemKind::Container => match app.lifecycle_run() {
+        ItemKind::Runtime => match app.lifecycle_run() {
             Some(run) => render_run_buffer(run, accent, frame, area),
             None => render_idle_output(
                 accent,
@@ -1556,7 +1612,7 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 
 fn kind_label(kind: ItemKind) -> &'static str {
     match kind {
-        ItemKind::Container => "container",
+        ItemKind::Runtime => "runtime",
         ItemKind::Service => "service",
         ItemKind::Watcher => "watcher",
         ItemKind::Recipe => "recipe",
@@ -1731,7 +1787,7 @@ fn render_service_logs(service: &ServicePane, accent: Color, frame: &mut Frame, 
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "set containers.backend = \"compose\" in keel.toml",
+                "set runtime.backend = \"compose\" in keel.toml",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(
@@ -2427,7 +2483,7 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         // Enter label adapts to the row kind so users see what
         // pressing it will do without consulting docs.
         let enter_label = match app.selected_item().map(|i| i.kind) {
-            Some(crate::app::ItemKind::Container) => "up all",
+            Some(crate::app::ItemKind::Runtime) => "up all",
             Some(crate::app::ItemKind::Service) => "attach",
             Some(crate::app::ItemKind::Recipe | crate::app::ItemKind::Script) => "run",
             _ => "select",
@@ -2827,7 +2883,7 @@ mod tests {
                 [project]
                 name = "tuitest"
 
-                [containers]
+                [runtime]
                 backend = "none"
 
                 [[ui.pane]]

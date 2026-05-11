@@ -15,7 +15,7 @@
 name        = "hooks-demo"
 description = "Native keel hooks plus pre-commit-config.yaml integration"
 
-[containers]
+[runtime]
 backend = "none"             # host-only
 
 [install]

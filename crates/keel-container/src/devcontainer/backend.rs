@@ -46,7 +46,7 @@ pub struct DevcontainerIdentity {
 
 #[derive(Debug, Error)]
 pub enum DevcontainerError {
-    #[error("docker not found on PATH (install docker or use `containers.backend = \"none\"`)")]
+    #[error("docker not found on PATH (install docker or use `runtime.backend = \"none\"`)")]
     DockerMissing,
 
     #[error("docker invocation failed: {0}")]
