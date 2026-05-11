@@ -162,6 +162,25 @@ pub struct TerminalsState {
     /// Selected index across the (services + windows + sentinel)
     /// concatenation that the renderer / keymap iterate.
     pub selected: usize,
+    /// Last-observed `has_bell` per window. Drives edge-triggered
+    /// bell forwarding: when a window goes false→true we emit BEL
+    /// to the outer terminal so the user's terminal emulator can
+    /// trigger its own notification action (audible bell, OS
+    /// notification, dock badge, etc.). Pruned to the live window
+    /// set on every update.
+    pub previous_bell: std::collections::HashMap<u32, bool>,
+    /// True when `terminals_set_windows` just observed at least one
+    /// false→true bell transition. The render loop consumes this
+    /// after the next draw via [`App::take_pending_bell`] and
+    /// writes `\x07` to stdout — once per event, no matter how many
+    /// windows flipped at the same time.
+    pub pending_bell_emit: bool,
+    /// Set when the next `terminals_set_windows` call should
+    /// resync `previous_bell` without emitting. Used right after
+    /// attach return: bells that fired during the attach already
+    /// played through tmux's `bell-action any`, so we don't want
+    /// scaffl to beep again on its way back to the TUI.
+    pub suppress_next_bell_emit: bool,
 }
 
 /// One tmux window as reported by `list-windows`. `name` is what
@@ -222,6 +241,9 @@ impl TerminalsState {
             windows: Vec::new(),
             previews: std::collections::HashMap::new(),
             selected: 0,
+            previous_bell: std::collections::HashMap::new(),
+            pending_bell_emit: false,
+            suppress_next_bell_emit: false,
         }
     }
 }
@@ -1464,16 +1486,85 @@ impl App {
     }
 
     /// Replace the cached tmux window list. Caller has just queried
-    /// `tmux list-windows`; we adopt the result, prune previews
-    /// for windows that no longer exist, and clamp selection so
-    /// it can't dangle past the list's end after a delete.
+    /// `tmux list-windows`; we adopt the result, prune previews and
+    /// the bell baseline for windows that no longer exist, and
+    /// clamp selection so it can't dangle past the list's end after
+    /// a delete.
+    ///
+    /// Side effect: detects per-window `has_bell` transitions from
+    /// false→true against `previous_bell` and arms `pending_bell_emit`
+    /// when at least one fresh bell lands, so the render loop emits
+    /// `\x07` once on the next pass. If `suppress_next_bell_emit` is
+    /// set (e.g. right after attach return), we resync the baseline
+    /// without arming — those bells already played through tmux's
+    /// `bell-action any` during the attach.
     pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
         let live: std::collections::HashSet<u32> = windows.iter().map(|w| w.index).collect();
+        let mut fresh_bell = false;
+        for w in &windows {
+            let prev = self
+                .terminals
+                .previous_bell
+                .get(&w.index)
+                .copied()
+                .unwrap_or(false);
+            if w.has_bell && !prev {
+                fresh_bell = true;
+            }
+            self.terminals.previous_bell.insert(w.index, w.has_bell);
+        }
+        self.terminals.previous_bell.retain(|k, _| live.contains(k));
+        if self.terminals.suppress_next_bell_emit {
+            self.terminals.suppress_next_bell_emit = false;
+        } else if fresh_bell {
+            self.terminals.pending_bell_emit = true;
+        }
         self.terminals.previews.retain(|k, _| live.contains(k));
         self.terminals.windows = windows;
         let total = self.terminals_rows().len();
         if total > 0 && self.terminals.selected >= total {
             self.terminals.selected = total - 1;
+        }
+    }
+
+    /// True if a fresh bell transition has been observed and not yet
+    /// drained by the render loop. Clears on read. Render loop calls
+    /// this after each draw and writes `\x07` to stdout when it
+    /// returns true.
+    pub fn take_pending_bell(&mut self) -> bool {
+        std::mem::replace(&mut self.terminals.pending_bell_emit, false)
+    }
+
+    /// Arm the silence flag so the next `terminals_set_windows` call
+    /// resyncs the bell baseline without emitting. Used by the
+    /// attach-return path — those bells already rang through tmux's
+    /// `bell-action any`.
+    pub fn silence_next_bell(&mut self) {
+        self.terminals.suppress_next_bell_emit = true;
+    }
+
+    /// Drop any tmux snapshots the worker queued while the user was
+    /// detached, without applying them. Pairs with `silence_next_bell`
+    /// to keep stale "had-bell mid-attach" snapshots from re-firing
+    /// the BEL on return.
+    pub fn discard_pending_tmux_snapshots(&mut self) {
+        let Some(w) = self.worker.as_mut() else {
+            return;
+        };
+        loop {
+            match w.snap_rx.try_recv() {
+                Ok(crate::worker::WorkerSnapshot::TmuxWindows(_)) => continue,
+                Ok(crate::worker::WorkerSnapshot::ServiceStatus { name, status }) => {
+                    if let Some(pane) = self.services.get_mut(&name) {
+                        pane.status = Some(status);
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.worker = None;
+                    break;
+                }
+            }
         }
     }
 
@@ -2859,6 +2950,100 @@ mod tests {
             crate::app::TerminalsRow::Window(ref w) if w.name == "zsh"
         ));
         assert!(matches!(rows[1], crate::app::TerminalsRow::NewSentinel));
+    }
+
+    /// First time we see a window's bell flipped on: arm
+    /// `pending_bell_emit` so the render loop forwards BEL.
+    #[test]
+    fn terminals_set_windows_arms_bell_on_false_to_true_transition() {
+        let mut app = App::new(cfg());
+        // Baseline: no bell.
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: false,
+        }]);
+        assert!(!app.take_pending_bell());
+        // Bell flips on.
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        assert!(app.take_pending_bell(), "fresh bell should arm emit");
+        // take_pending_bell clears the flag.
+        assert!(!app.take_pending_bell());
+    }
+
+    /// A window whose bell stays set across snapshots should NOT
+    /// re-arm — otherwise we'd beep every worker tick (~1s) until
+    /// the user attaches.
+    #[test]
+    fn terminals_set_windows_does_not_rearm_bell_while_set() {
+        let mut app = App::new(cfg());
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        assert!(app.take_pending_bell(), "first observation arms");
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        assert!(
+            !app.take_pending_bell(),
+            "still-set bell should not re-arm"
+        );
+    }
+
+    /// `silence_next_bell` resyncs the baseline without arming —
+    /// used right after attach return so mid-attach bells (already
+    /// played by tmux's `bell-action any`) don't double-fire.
+    #[test]
+    fn silence_next_bell_suppresses_one_emit_and_then_rearms() {
+        let mut app = App::new(cfg());
+        // Establish "no bell" baseline.
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: false,
+        }]);
+        app.silence_next_bell();
+        // This transition would normally arm — silence drops it.
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        assert!(
+            !app.take_pending_bell(),
+            "silence flag should suppress this one emit"
+        );
+        // Subsequent transitions arm again. Clear, then re-fire.
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: false,
+        }]);
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "zsh".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        assert!(
+            app.take_pending_bell(),
+            "silence is single-shot — next transition should arm"
+        );
     }
 
     #[test]

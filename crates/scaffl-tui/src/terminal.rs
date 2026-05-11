@@ -18,7 +18,7 @@ use crossterm::{
     },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io::{Stdout, stdout};
+use std::io::{Stdout, Write, stdout};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -110,6 +110,20 @@ async fn drive(
         app.tick_watchers().await;
 
         terminal.draw(|f| ui::render(app, f))?;
+        // Forward fresh tmux bells to the outer terminal so the
+        // user's emulator can run its configured action (audible
+        // beep, OS notification, dock badge — whatever they picked).
+        // Edge-triggered: armed only when a window's `has_bell`
+        // flipped false→true on the most recent worker snapshot, so
+        // a window that already has a pending bell doesn't keep
+        // re-firing every tick. Written after the draw because
+        // ratatui has just released the terminal; `\x07` doesn't
+        // move the cursor, so it's safe between frames.
+        if app.take_pending_bell() {
+            let mut out = stdout();
+            let _ = out.write_all(b"\x07");
+            let _ = out.flush();
+        }
         if app.should_quit() {
             return Ok(DriveOutcome::Quit);
         }
@@ -167,6 +181,16 @@ async fn drive(
                     "[input] discarded {drained_count} post-detach phantom event(s) — terminal mode-restore artefacts"
                 ));
             }
+            // Bells that rang during the attach already played
+            // through tmux's `bell-action any` to the outer
+            // terminal — silence the next refresh so coming back to
+            // scaffl doesn't double-fire the BEL for windows whose
+            // flag is still set. Also discard any tmux snapshots the
+            // worker queued mid-attach: applying them after the
+            // synchronous refresh below would risk a stale
+            // false→true transition for a flag that's since cleared.
+            app.discard_pending_tmux_snapshots();
+            app.silence_next_bell();
             // Reload cached window list — new shell created, or
             // user typed `exit` and the window died.
             refresh_tmux_windows(app, true).await;
