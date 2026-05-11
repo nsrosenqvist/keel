@@ -58,9 +58,9 @@ across branch switches even when the developer skips keel. See
 ## External pre-commit repos
 
 External repos in `.pre-commit-config.yaml` are cloned into
-`.keel/cache/hooks/<slug(url)-rev>/` by `keel-hooks/src/cache.rs`
+`.keel/cache/hooks/<slug(url)-rev>/` by `src/hooks/cache.rs`
 (via the shared
-[`keel-cache`](https://github.com/nsrosenqvist/keel/tree/main/crates/keel-cache)
+[`keel::cache`](https://github.com/nsrosenqvist/keel/tree/main/src/cache)
 crate). The runner reads `.pre-commit-hooks.yaml` inside the clone
 to find each hook's `entry` and `language`, merges with the user's
 `HookSpec`, and runs it natively.

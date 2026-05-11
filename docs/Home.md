@@ -1,23 +1,22 @@
 # keel
 
-A dev-loop wrapper that adapts to your project, instead of forcing
-your project to adapt to it.
+> *Your dev loop, held steady.*
 
-Write commands declaratively in `keel.toml`, as shell scripts
-under `.keel/commands/`, or both. Wrap Docker Compose, run host
-tooling, install pre-commit-compatible git hooks, sync agent
-instructions and skills from upstream repos, and supervise the
-whole stack from a built-in TUI.
+Keel is a dev-loop conductor. One `keel.toml` holds Docker
+Compose, scripts, hooks, and agent instructions together. Your
+stack runs the way your project runs it — the tool bends, not
+the project.
 
-> **Status:** pre-alpha. Useable end-to-end on Linux and macOS for
-> the features documented here.
+- **Site:** [keel.rs](https://keel.rs)
+- **Status:** pre-alpha. End-to-end usable on Linux and macOS
+  for the features documented here.
 
 ## 60 seconds with keel
 
 ```sh
-cargo install --path crates/keel-cli   # from a clone
+cargo install --path .   # from a clone
 cd my-project
-keel init                              # scaffold a starter keel.toml
+keel init                              # generate a starter keel.toml
 keel                                   # open the TUI dashboard
 ```
 
@@ -90,8 +89,8 @@ keel                      # TUI dashboard with every recipe + service
 - [Install Flow](./Install-Flow.md) — `.keel/install/` ordered
   setup steps with state + resume.
 - [TUI](./TUI.md) — the embedded dashboard.
-- [Diff View](./Diff-View.md) — branch-review surface anchored to
-  trunk merge-base.
+- [Diff View](./Diff-View.md) — branch-review surface pinned to
+  the trunk merge-base.
 - [Watch](./Watch.md) — re-run a recipe on filesystem change.
 - [Shell Library](./Shell-Library.md) — `keel lib ask|confirm|…`
   prompts for shell scripts.

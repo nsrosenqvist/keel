@@ -53,25 +53,12 @@ risking a stable tag.
 
 ### crates.io
 
-The `publish` job runs `cargo workspaces publish --from-git
---skip-published --no-git-commit --yes`, which publishes all eight
-member crates in topological order.
+The `publish` job runs `cargo publish` against the single `keel`
+package (the binary crate; internal modules ship inside it, not as
+separate registry entries).
 
-- [ ] Reserve every crate name on crates.io (use a stub
-      `cargo publish` from a placeholder repo, or `cargo owner --add`
-      after first publish):
-
-  - `keel-cli`
-  - `keel-config`
-  - `keel-runtime`
-  - `keel-container`
-  - `keel-tui`
-  - `keel-cache`
-  - `keel-agents`
-  - `keel-hooks`
-
-- [ ] Generate a crates.io API token with **publish-new** + **publish-update**
-      scope on all eight crates.
+- [ ] Generate a crates.io API token with **publish-new** +
+      **publish-update** scope on the `keel` crate (or unrestricted).
 
 - [ ] Add it as a repo secret named `CARGO_REGISTRY_TOKEN`
       (Settings → Secrets and variables → Actions).
@@ -80,8 +67,7 @@ member crates in topological order.
       `description` / `license` / `readme` fields:
 
   ```sh
-  cargo install cargo-workspaces --locked
-  cargo workspaces publish --dry-run --from-git
+  cargo publish --dry-run
   ```
 
 ### Homebrew tap
@@ -142,10 +128,9 @@ and pushes a single commit per release.
 
 ### Repo hygiene
 
-- [ ] Fix the pre-existing format diff in `crates/keel-tui/`
-      (`cargo fmt -p keel-tui`) so `cargo fmt --all --check` in CI
-      stays green when the release workflow shells out to `cargo` on
-      the runner.
+- [ ] `cargo fmt --check && cargo clippy --all-targets -- -D warnings`
+      green so CI stays clean when the release workflow shells out to
+      `cargo` on the runner.
 
 ---
 
@@ -161,13 +146,13 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The build job patches `[workspace.package] version` from the tag, so
+The build job patches `[package] version` from the tag, so
 `Cargo.toml` does **not** need to be bumped before tagging.
 
 After a stable release, verify:
 
 - GitHub release: contains four tarballs + `SHA256SUMS`, not marked pre-release.
-- crates.io: all eight crates show the new version.
+- crates.io: `keel` shows the new version.
 - Homebrew tap: a new commit on `main` titled `keel vX.Y.Z`.
 - Floating tags: `git ls-remote --tags origin` shows `vX` and `vX.Y`
   pointing at the same commit as `vX.Y.Z`.
@@ -181,8 +166,7 @@ After a stable release, verify:
 If a stable tag was cut by mistake:
 
 - crates.io publishes are **permanent**. Yank with `cargo yank --vers
-  X.Y.Z -p <crate>` for each affected crate; you cannot un-publish.
-  Bump the patch and re-release.
+  X.Y.Z`; you cannot un-publish. Bump the patch and re-release.
 - Delete the GitHub release + tag (`gh release delete vX.Y.Z`,
   `git push --delete origin vX.Y.Z`).
 - Force-push the floating tags back to the previous stable

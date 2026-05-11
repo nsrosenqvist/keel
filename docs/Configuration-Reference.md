@@ -2,7 +2,7 @@
 
 Every key in `keel.toml`, with type, default, and a one-line
 example. The schema lives in
-[`crates/keel-config/src/`](https://github.com/nsrosenqvist/keel/tree/main/crates/keel-config/src);
+[`src/config/`](https://github.com/nsrosenqvist/keel/tree/main/src/config/src);
 unknown keys are rejected at load time so typos don't silently
 become no-ops.
 

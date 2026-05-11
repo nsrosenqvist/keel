@@ -21,78 +21,87 @@ These shape every code change:
   time.
 - **One source of truth per concern.** A recipe is defined once.
   The CLI runs it. The TUI runs it. Both go through
-  `keel-runtime`.
+  `keel::runtime`.
 - **No dead config.** Every option in `keel.toml` must change
   observable behaviour, or it doesn't ship.
 
-## Crate map
+## Module map
 
-| Crate | Bounded context |
+Each top-level directory under `src/` is a bounded context.
+
+| Module | Bounded context |
 |---|---|
-| `keel-cli` | Binary; clap; subcommand dispatch. The only crate that knows about `clap`. |
-| `keel-config` | TOML / YAML parsing; schema; env resolution. No I/O orchestration. |
-| `keel-runtime` | Recipe resolver; executor; output sinks; preflight. |
-| `keel-container` | `Backend` trait; compose / docker / podman / null impls. |
-| `keel-tui` | Embedded ratatui dashboard; stateful `App`; pure render fn. |
-| `keel-cache` | Content-addressed git cache shared by hooks + agents. |
-| `keel-hooks` | `.pre-commit-config.yaml` reader; native runner; git hook shim installer. |
-| `keel-agents` | Upstream-sourced agent instructions / skills pipeline. |
+| `keel::cli` | Binary; clap; subcommand dispatch. The only module that knows about `clap`. |
+| `keel::config` | TOML / YAML parsing; schema; env resolution. No I/O orchestration. |
+| `keel::runtime` | Recipe resolver; executor; output sinks; preflight. |
+| `keel::container` | `Backend` trait; compose / docker / podman / null impls. |
+| `keel::tui` | Embedded ratatui dashboard; stateful `App`; pure render fn. |
+| `keel::cache` | Content-addressed git cache shared by hooks + agents. |
+| `keel::hooks` | `.pre-commit-config.yaml` reader; native runner; git hook shim installer. |
+| `keel::agents` | Upstream-sourced agent instructions / skills pipeline. |
 
 ```
-crates/
-  keel-cli/        # binary; clap; subcommand dispatch
-  keel-config/     # TOML / YAML parsing; schema; env resolution
-  keel-runtime/    # recipe resolution; supervision; preflight
-  keel-container/  # Backend trait; compose / docker / podman impls
-  keel-tui/        # ratatui app; panes; palette
-  keel-cache/      # content-addressed git cache shared by hooks + agents
-  keel-hooks/      # .pre-commit-config.yaml reader; git hook installer
-  keel-agents/     # upstream-sourced agent instructions / skills pipeline
-examples/            # runnable keel projects
-docs/                # this wiki, synced via .github/workflows/wiki-sync.yml
+src/
+  main.rs        # thin wrapper → keel::cli::run
+  lib.rs         # exposes every bounded-context module
+  cli/           # binary; clap; subcommand dispatch
+  config/        # TOML / YAML parsing; schema; env resolution
+  runtime/       # recipe resolution; supervision; preflight
+  container/     # Backend trait; compose / docker / podman impls
+  tui/           # ratatui app; panes; palette
+  cache/         # content-addressed git cache shared by hooks + agents
+  hooks/         # .pre-commit-config.yaml reader; git hook installer
+  agents/        # upstream-sourced agent instructions / skills pipeline
+examples/        # runnable keel projects
+docs/            # this wiki, synced via .github/workflows/wiki-sync.yml
 ```
 
 ## Layering
 
-The dependency graph is a DAG (no cycles). From "leaves" to
-"trunk":
+The dependency graph between modules is a DAG (no cycles). From
+"leaves" to "trunk":
 
 ```
-keel-cache  →  keel-hooks   ↘
-                                  →  keel-cli
-keel-cache  →  keel-agents  ↗
+cache  →  hooks    ↘
+                       →  cli
+cache  →  agents   ↗
 
-keel-config →  keel-runtime →  keel-cli
-              ↘  keel-tui     ↗
-keel-container →  keel-runtime
+config →  runtime  →  cli
+        ↘  tui      ↗
+container →  runtime
 ```
 
-`keel-cli` is the only crate that imports everything else. The
+`keel::cli` is the only module that imports everything else. The
 TUI and the CLI are different views of the same runtime, never two
 implementations of the same logic.
 
+The bounded contexts are enforced by directory + `pub(crate)` /
+`pub(super)` visibility rather than crate boundaries — the project
+ships as a single `keel` binary crate; the layering is a code-review
+and refactor-discipline concern, not a compiler-enforced one.
+
 ## Cross-context patterns
 
-### Value objects across crates
+### Value objects across modules
 
 Each context defines its own concrete types and exposes value
 objects (no behaviour, no `&mut self`) for travel between contexts.
-Example: `keel-cache::RepoRef` is the input shape both
-`keel-hooks` and `keel-agents` translate their domain types
-into; the cache crate stays unaware of either consumer's `Repo` /
+Example: `keel::cache::RepoRef` is the input shape both
+`keel::hooks` and `keel::agents` translate their domain types
+into; the cache module stays unaware of either consumer's `Repo` /
 `SourceSpec`.
 
 ### Backend trait
 
-`keel-container::Backend` is the only abstraction `keel-runtime`
-depends on. Implementations live in `keel-container` (`compose`,
+`keel::container::Backend` is the only abstraction `keel::runtime`
+depends on. Implementations live in `keel::container` (`compose`,
 `docker`, `podman`, `null`) and a custom backend in
-`keel-container::custom` for `[[services.systemd]]` /
+`keel::container::custom` for `[[services.systemd]]` /
 `[[services.custom]]` declarations.
 
 ### Idempotent managed blocks
 
-`keel-config::managed_block` writes a marker-delimited section
+`keel::config::managed_block` writes a marker-delimited section
 into a file (used by the worktree dotenv writer and the
 `.keel/.gitignore` writer). The block is replaced in place on
 each write; user content above and below is preserved; identical

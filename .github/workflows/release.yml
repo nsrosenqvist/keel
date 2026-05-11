@@ -42,9 +42,7 @@ jobs:
         id: detect
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Patches `[workspace.package] version = "..."`. All member
-          # crates inherit via `version.workspace = true`, so the bump
-          # propagates without touching individual Cargo.tomls.
+          # Patches `[package] version = "..."` in the root Cargo.toml.
           # BSD sed (macOS) requires a backup extension with -i; GNU sed does not.
           if [[ "$OSTYPE" == darwin* ]]; then
             sed -i '' "1,/^version = .*/s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
@@ -154,17 +152,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-workspaces
-        run: cargo install cargo-workspaces --locked
-
-      - name: Publish workspace to crates.io
-        # `--from-git` reads the version from Cargo.toml (which we just
-        # patched) instead of trying to bump it. `--skip-published`
-        # makes the job idempotent on re-runs and lets us tolerate a
-        # crate already being on the registry from an earlier failed
-        # attempt. cargo-workspaces handles topological order across
-        # the eight member crates.
-        run: cargo workspaces publish --from-git --yes --skip-published --no-git-commit
+      - name: Publish keel to crates.io
+        # The version in Cargo.toml was patched by the build job.
+        # `cargo publish` is idempotent only insofar as it refuses to
+        # re-publish an existing version; a manual re-run after a
+        # successful publish will fail loudly, which is what we want.
+        run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

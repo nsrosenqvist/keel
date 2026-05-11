@@ -1,7 +1,7 @@
 # Commands Reference
 
 Every `keel <subcommand>` and its flags. Source of truth:
-[`crates/keel-cli/src/app.rs`](https://github.com/nsrosenqvist/keel/blob/main/crates/keel-cli/src/app.rs).
+[`src/cli/app.rs`](https://github.com/nsrosenqvist/keel/blob/main/src/cli/app.rs).
 Anything not matched by an explicit subcommand falls through to
 recipe / script resolution, then to compose passthrough — see
 [Recipes and Scripts](./Recipes-and-Scripts.md).
@@ -46,7 +46,7 @@ service status. Exits non-zero on any failure. See
 
 ## `keel init [--template <NAME>]`
 
-Scaffold a starter `keel.toml` at the project root with detection
+Generate a starter `keel.toml` at the project root with detection
 hints for the host stack. `--template` picks a stack explicitly
 instead of auto-detecting (compose / docker / podman / minimal).
 

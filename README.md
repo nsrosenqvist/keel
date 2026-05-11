@@ -1,21 +1,28 @@
 # keel
 
-A dev-loop wrapper that adapts to your project, instead of forcing
-your project to adapt to it. Write commands declaratively in
-`keel.toml`, as shell scripts under `.keel/commands/`, or both.
-Wrap Docker Compose, run host tooling, install pre-commit-compatible
-git hooks, sync agent instructions and skills from upstream repos,
-and supervise the whole stack from a built-in TUI.
+> *Bends to your project. Holds it together.*
 
-> **Status:** pre-alpha. Useable end-to-end on Linux and macOS for
-> the features documented in the wiki.
+Keel is a dev-loop conductor. One `keel.toml` holds Docker
+Compose, scripts, hooks, and agent instructions together — so
+your stack runs the way *your project* runs it, not the way a
+tool demands.
+
+Write commands declaratively in `keel.toml` or as shell scripts
+under `.keel/commands/`. Wrap Docker Compose, run host tooling,
+install git hooks that natively run a `.pre-commit-config.yaml`
+subset, sync agent instructions from upstream repos, and
+supervise the whole stack from a built-in TUI.
+
+- **Site:** [keel.rs](https://keel.rs)
+- **Status:** pre-alpha. End-to-end usable on Linux and macOS
+  for the features documented in the wiki.
 
 ## Install
 
 ```sh
-cargo install --path crates/keel-cli   # from a clone
+cargo install --path .          # from a clone
 # Or, once published:
-# cargo install keel-cli
+# cargo install keel
 ```
 
 The binary is named `keel`.

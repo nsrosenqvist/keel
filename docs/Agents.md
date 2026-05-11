@@ -7,7 +7,7 @@ locally cached, no third-party tool in the loop.
 
 ## The pipeline
 
-1. **Cache.** `keel-cache::clone_or_reuse` (the same primitive the
+1. **Cache.** `keel::cache::clone_or_reuse` (the same primitive the
    hooks subsystem uses) caches the upstream at
    `.keel/cache/agents/<slug(url)-rev>/`. Floating refs (anything
    that isn't a 7–40 hex SHA or a semver-shaped tag) auto-refetch on

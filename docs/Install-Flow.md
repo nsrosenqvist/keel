@@ -108,7 +108,7 @@ make pull-fixtures
 
 ## Renderer
 
-A small line-redraw printer (`crates/keel-cli/src/commands/install/renderer.rs`)
+A small line-redraw printer (`src/cli/commands/install/renderer.rs`)
 — **not** a TUI. Each step gets a row that updates in place
 (◐ running with spinner → ✓ ok / ✗ failed / → skipped, plus
 duration). The active step's tail output (last 3 lines) shows below
@@ -139,7 +139,7 @@ its row.
 `install.state.json`, and `agents.state.json`. Idempotent —
 re-running install when the file is already correct leaves the mtime
 alone. Path is configurable via `[install] gitignore = "..."`. The
-shared `crates/keel-config/src/managed_block.rs` helper is the
+shared `src/config/managed_block.rs` helper is the
 single implementation of the marker pattern (also used by the
 worktree dotenv writer).
 

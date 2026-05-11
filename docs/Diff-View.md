@@ -1,7 +1,7 @@
 # Diff View
 
 The diff view (`G` in the [TUI](./TUI.md)) is a built-in
-branch-review surface anchored to the merge-base with the project's
+branch-review surface pinned to the merge-base with the project's
 trunk branch.
 
 Scope: every file that differs from the merge-base — committed-since-
@@ -23,7 +23,7 @@ In order, first match wins:
 
 The chosen trunk is surfaced in the top bar as
 `<branch> vs <trunk>` so you always see what the file count and
-per-file diffs are anchored against.
+per-file diffs are scoped against.
 
 ## Manual override
 

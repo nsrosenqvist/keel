@@ -13,7 +13,7 @@ keel is a single Rust binary. Two install paths:
 ```sh
 git clone https://github.com/nsrosenqvist/keel
 cd keel
-cargo install --path crates/keel-cli
+cargo install --path .
 ```
 
 The binary is named `keel` and lands in `~/.cargo/bin/`.
@@ -21,7 +21,7 @@ The binary is named `keel` and lands in `~/.cargo/bin/`.
 ### Once published to crates.io
 
 ```sh
-cargo install keel-cli
+cargo install keel
 ```
 
 (Pre-alpha; not yet on crates.io. Track the project README for the
@@ -33,7 +33,7 @@ publish announcement.)
 keel --version
 ```
 
-## 2. Scaffold a starter `keel.toml`
+## 2. Generate a starter `keel.toml`
 
 Inside any project directory:
 

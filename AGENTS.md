@@ -80,7 +80,7 @@ and add `!` after type/scope:
   allow. No runtime reflection — TOML schemas are serde-derived at
   compile time.
 - **One source of truth per concern.** A recipe is defined once. The
-  CLI runs it. The TUI runs it. Both go through `keel-runtime`.
+  CLI runs it. The TUI runs it. Both go through `keel::runtime`.
 - **No dead config.** Every option in `keel.toml` must change
   observable behaviour, or it doesn't ship.
 

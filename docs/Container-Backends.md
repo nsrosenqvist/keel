@@ -1,7 +1,7 @@
 # Container Backends
 
 keel talks to your containers through a Backend abstraction
-(`crates/keel-container/`). The backend is selected by
+(`src/container/`). The backend is selected by
 `[runtime].backend`; everything else is passthrough.
 
 ## Supported backends
