@@ -37,6 +37,8 @@ pub mod worker;
 
 mod lazygit;
 mod terminal;
+#[cfg(test)]
+mod test_support;
 
 pub use app::{App, View};
 pub use runner::{CapturedLine, RunState};

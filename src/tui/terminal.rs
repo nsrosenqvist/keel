@@ -267,7 +267,7 @@ async fn drive(
 }
 
 
-async fn handle_event(app: &mut App, event: Event) {
+pub(crate) async fn handle_event(app: &mut App, event: Event) {
     match event {
         Event::Key(KeyEvent {
             kind: KeyEventKind::Press,
