@@ -363,13 +363,13 @@ pub(crate) async fn refresh_tmux_windows(app: &mut App, expecting_session: bool)
                 // Usually a user-initiated detach (ctrl+d on the
                 // last window). Surface a short hint but skip the
                 // tmux stderr / diagnostic dump — it's not a bug.
-                app.flash = Some(format!("tmux session `{session}` ended"));
+                app.flash(format!("tmux session `{session}` ended"));
             }
         }
         WindowList::SpawnFailed(msg) => {
             app.terminals_set_windows(Vec::new());
             let line = format!("tmux query failed: {msg}");
-            app.flash = Some(line.clone());
+            app.flash(line.clone());
             app.diagnostic(format!("[tmux] {line}"));
         }
     }

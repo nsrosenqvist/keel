@@ -2492,11 +2492,11 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 }
 
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
-    if let Some(flash) = &app.flash {
+    if let Some(flash) = app.flash_message() {
         let p = Paragraph::new(Line::from(vec![
             Span::styled(" ! ", Style::default().fg(Color::Black).bg(Color::Yellow)),
             Span::raw(" "),
-            Span::styled(flash.clone(), Style::default().fg(Color::Yellow)),
+            Span::styled(flash.to_string(), Style::default().fg(Color::Yellow)),
         ]));
         frame.render_widget(p, area);
         return;

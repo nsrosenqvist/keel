@@ -290,8 +290,12 @@ pub struct App {
     /// in `spawn_watcher_panes`.
     watchers: BTreeMap<String, WatcherPane>,
     /// Last rejection / status banner (decays after a few seconds — kept
-    /// simple by just clearing on the next successful action).
-    pub flash: Option<String>,
+    /// simple by just clearing on the next successful action). Mutate
+    /// through [`App::flash`] / [`App::clear_flash`]; read through
+    /// [`App::flash_message`]. The direct field is `pub(crate)` so
+    /// callers in the TUI crate can still pattern-match in tests but
+    /// the keel library doesn't expose it externally.
+    pub(crate) flash_message: Option<String>,
     /// Active modal, if any. Replaces the four parallel
     /// `Option<...>` fields (palette / confirm / args_prompt /
     /// switcher) plus the redundant `Mode` enum — `None` ↔ normal
@@ -383,7 +387,7 @@ impl App {
             lifecycle_run: None,
             services,
             watchers: BTreeMap::new(),
-            flash: None,
+            flash_message: None,
             modal: None,
             pending_switch: None,
             project_root: PathBuf::from("."),
@@ -670,7 +674,7 @@ impl App {
 
         let run = RunState::spawn(&executor, item.name, args);
         self.runs.insert(key, run);
-        self.flash = None;
+        self.clear_flash();
         Ok(())
     }
 
@@ -1269,7 +1273,7 @@ impl App {
         match row {
             TerminalsRow::Service(name) => {
                 if let Err(msg) = self.queue_service_attach(&name) {
-                    self.flash = Some(msg);
+                    self.flash(msg);
                 }
             }
             TerminalsRow::Window(window) => {
@@ -1441,6 +1445,24 @@ impl App {
 
     pub fn drain_diagnostics(&mut self) -> Vec<String> {
         std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Show a transient status banner. Most action paths flash on
+    /// rejection; the slot clears on the next render-loop tick or
+    /// when [`Self::clear_flash`] runs.
+    pub fn flash(&mut self, msg: impl Into<String>) {
+        self.flash_message = Some(msg.into());
+    }
+
+    /// Clear the flash slot. Called by the event loop on each tick
+    /// so banners decay between keystrokes.
+    pub fn clear_flash(&mut self) {
+        self.flash_message = None;
+    }
+
+    /// Current flash banner text, or `None` when no banner is active.
+    pub fn flash_message(&self) -> Option<&str> {
+        self.flash_message.as_deref()
     }
 
     pub fn diff(&self) -> &DiffView {

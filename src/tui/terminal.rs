@@ -149,7 +149,7 @@ async fn drive(
             if let Some(ensure) = &req.ensure
                 && let Err(e) = ensure.backend.ensure_up().await
             {
-                app.flash = Some(format!("devcontainer ensure-up failed: {e}"));
+                app.flash(format!("devcontainer ensure-up failed: {e}"));
                 continue;
             }
             // Yield the terminal to tmux. Drop the events reader
@@ -240,7 +240,7 @@ async fn drive(
             drop(events);
             leave_terminal(terminal)?;
             if let Err(msg) = crate::tui::lazygit::run(app.project_root()).await {
-                app.flash = Some(msg.clone());
+                app.flash(msg.clone());
                 app.diagnostic(format!("[lazygit] {msg}"));
             }
             *terminal = enter_terminal(&terminal_title(app))?;
@@ -277,7 +277,7 @@ pub(crate) async fn handle_event(app: &mut App, event: Event) {
         }) => {
             // Any key dismisses a stale flash. The dispatched handler
             // may re-arm a fresh one for this event.
-            app.flash = None;
+            app.clear_flash();
             match app.mode() {
                 Mode::Normal => handle_key_normal(app, code, modifiers).await,
                 Mode::Palette => handle_key_palette(app, code, modifiers).await,
@@ -529,7 +529,7 @@ fn activate_palette_selection(app: &mut App) {
             app.open_kill_restart_confirm();
         }
         Some(Err(rej)) => {
-            app.flash = Some(launch_message(rej));
+            app.flash(launch_message(rej));
         }
         None => {}
     }
@@ -602,7 +602,7 @@ fn handle_mouse_confirm(app: &mut App, me: MouseEvent) {
         .is_some_and(|r| rect_contains(r, me.column, me.row));
     if yes_hit {
         if let Some(rej) = app.confirm_resolve(true) {
-            app.flash = Some(launch_message(rej));
+            app.flash(launch_message(rej));
         }
     } else if no_hit {
         app.confirm_resolve(false);
@@ -683,25 +683,25 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             // (selected row's run), then a lifecycle run if any, then
             // fall through to compose stop on the selected service.
             if app.abort_selected_run() {
-                app.flash = Some("aborted run".into());
+                app.flash("aborted run");
             } else if app.abort_lifecycle_run() {
-                app.flash = Some("aborted lifecycle run".into());
+                app.flash("aborted lifecycle run");
             } else if let Some(service) = app.selected_service().map(|s| s.name.clone())
                 && let Err(rej) = app
                     .run_service_action(crate::container::service_action::STOP, &[service.as_str()])
                     .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Char('S') => {
             if app.abort_lifecycle_run() {
-                app.flash = Some("aborted lifecycle run".into());
+                app.flash("aborted lifecycle run");
             } else if let Err(rej) = app
                 .run_service_action(crate::container::service_action::STOP, &[])
                 .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Char('r') => {
@@ -713,7 +713,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                     )
                     .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Char('R') => {
@@ -721,7 +721,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 .run_service_action(crate::container::service_action::RESTART, &[])
                 .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         // `u`: up the selected service. Pairs with `U` (up all) just
@@ -734,7 +734,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                     .run_service_action(crate::container::service_action::UP, &[service.as_str()])
                     .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Char('U') => {
@@ -742,7 +742,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 .run_service_action(crate::container::service_action::UP, &[])
                 .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         // `W` is handled in the global view-switch block above so
@@ -755,7 +755,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
                 .run_service_action(crate::container::service_action::DOWN, &[])
                 .await
             {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Enter => activate_control_center_selection(app).await,
@@ -781,9 +781,9 @@ async fn activate_control_center_selection(app: &mut App) {
     if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
         ensure_tmux_probed(app).await;
         if app.terminals().tmux_available == Some(false) {
-            app.flash = Some("tmux not installed — install it to attach".into());
+            app.flash("tmux not installed — install it to attach");
         } else if let Err(msg) = app.queue_service_attach(&service) {
-            app.flash = Some(msg);
+            app.flash(msg);
         }
     } else if app.selected_accepts_args() && !selected_is_running(app) {
         // Discoverability path: a `forward_args = true` row gets
@@ -797,7 +797,7 @@ async fn activate_control_center_selection(app: &mut App) {
                 app.open_kill_restart_confirm();
             }
             Err(rej) => {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
     }
@@ -838,7 +838,7 @@ async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifier
                     app.open_kill_restart_confirm();
                 }
                 Some(Err(rej)) => {
-                    app.flash = Some(launch_message(rej));
+                    app.flash(launch_message(rej));
                 }
                 None => {}
             }
@@ -896,7 +896,7 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             if app.diff().lazygit_available {
                 app.request_lazygit();
             } else {
-                app.flash = Some("install lazygit to enable the L keybind".into());
+                app.flash("install lazygit to enable the L keybind");
             }
             return;
         }
@@ -1852,7 +1852,7 @@ fn handle_key_args_prompt(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
             Some(Err(LaunchRejection::AlreadyRunning)) => {
                 app.open_kill_restart_confirm();
             }
-            Some(Err(rej)) => app.flash = Some(launch_message(rej)),
+            Some(Err(rej)) => app.flash(launch_message(rej)),
             None => {}
         },
         KeyCode::Char(c) => app.args_prompt_push_char(c),
@@ -1875,7 +1875,7 @@ fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Some(rej) = app.confirm_resolve(true) {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         KeyCode::Enter => {
@@ -1883,7 +1883,7 @@ fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             // if the user tabbed to No, Enter dismisses.
             let accept = app.confirm_dialog().map(|d| d.yes_focused).unwrap_or(true);
             if let Some(rej) = app.confirm_resolve(accept) {
-                app.flash = Some(launch_message(rej));
+                app.flash(launch_message(rej));
             }
         }
         _ => {}
