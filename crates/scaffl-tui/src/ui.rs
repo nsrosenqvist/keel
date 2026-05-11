@@ -2689,6 +2689,7 @@ mod tests {
             index: 0,
             name: "zsh".into(),
             cwd: None,
+            has_bell: false,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 
@@ -2751,6 +2752,7 @@ mod tests {
             index: 0,
             name: "zsh".into(),
             cwd: None,
+            has_bell: false,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 

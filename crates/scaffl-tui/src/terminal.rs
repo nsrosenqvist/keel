@@ -330,6 +330,37 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         .status()
         .await;
 
+    // Turn on per-window bell monitoring so #{window_bell_flag}
+    // fires when a program in the window emits BEL. Coding agents
+    // (Claude Code, codex, …) ring the terminal bell to grab the
+    // user's attention; the Terminals list surfaces those bells as
+    // a per-row indicator. tmux auto-clears the flag when the
+    // window becomes current, so attaching doubles as dismissal.
+    //
+    // Scope is per-session: each existing window gets the option
+    // set explicitly, and an `after-new-window` hook keeps future
+    // windows (including those the user creates via ctrl+b c
+    // outside scaffl) in sync. Nothing global on the server.
+    if let WindowList::Ok(windows) = list_tmux_windows(&req.session).await {
+        for w in &windows {
+            let target = format!("{}:{}", req.session, w.index);
+            let _ = Command::new("tmux")
+                .args(["set-window-option", "-t", &target, "monitor-bell", "on"])
+                .status()
+                .await;
+        }
+    }
+    let _ = Command::new("tmux")
+        .args([
+            "set-hook",
+            "-t",
+            &req.session,
+            "after-new-window",
+            "set-window-option monitor-bell on",
+        ])
+        .status()
+        .await;
+
     // Inject the scaffl-flavoured status bar so users always see
     // the detach hint. Mirrors AOE's layout: session name styled
     // on the left, then a separator and the detach instruction;
@@ -400,7 +431,7 @@ async fn list_tmux_windows(session: &str) -> WindowList {
             "-t",
             session,
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{window_bell_flag}",
         ])
         .stdin(std::process::Stdio::null())
         .output()
@@ -448,13 +479,16 @@ async fn capture_pane(session: &str, window: u32) -> Vec<String> {
 }
 
 /// Parse the tab-separated `tmux list-windows -F` output we ask
-/// for. Lines look like `0\tzsh\t/home/me/proj` or
-/// `1\tsvc:app\t/`. The path may be empty for windows that haven't
-/// launched a process yet — preserved as `None`. Public for tests.
+/// for. Lines look like `0\tzsh\t/home/me/proj\t1` or
+/// `1\tsvc:app\t/\t0`. The path may be empty for windows that haven't
+/// launched a process yet — preserved as `None`. The bell column is
+/// `1` when set, empty or `0` otherwise; missing entirely on older
+/// tmux versions, in which case it's treated as cleared. Public for
+/// tests.
 pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
     let mut out = Vec::new();
     for line in input.lines() {
-        let mut parts = line.splitn(3, '\t');
+        let mut parts = line.splitn(4, '\t');
         let Some(idx_str) = parts.next() else {
             continue;
         };
@@ -465,10 +499,12 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
             continue;
         };
         let cwd = parts.next().map(str::to_string).filter(|s| !s.is_empty());
+        let has_bell = matches!(parts.next(), Some("1"));
         out.push(crate::app::TmuxWindow {
             index,
             name: name.to_string(),
             cwd,
+            has_bell,
         });
     }
     out
@@ -1783,13 +1819,15 @@ mod tests {
 
     #[test]
     fn parse_tmux_windows_handles_typical_output() {
-        // \t-separated: index, window_name, pane_current_path.
-        let input = "0\tzsh\t/home/me/proj\n1\tsvc:app\t/\n2\tvim\t/home/me/proj/src\n";
+        // \t-separated: index, window_name, pane_current_path, bell_flag.
+        let input =
+            "0\tzsh\t/home/me/proj\t0\n1\tsvc:app\t/\t0\n2\tvim\t/home/me/proj/src\t0\n";
         let windows = parse_tmux_windows(input);
         assert_eq!(windows.len(), 3);
         assert_eq!(windows[0].index, 0);
         assert_eq!(windows[0].name, "zsh");
         assert_eq!(windows[0].cwd.as_deref(), Some("/home/me/proj"));
+        assert!(!windows[0].has_bell);
         assert_eq!(windows[1].name, "svc:app");
         assert_eq!(windows[1].cwd.as_deref(), Some("/"));
         assert_eq!(windows[2].index, 2);
@@ -1799,16 +1837,39 @@ mod tests {
     #[test]
     fn parse_tmux_windows_handles_missing_cwd() {
         // pane_current_path can be empty for fresh windows.
-        let input = "0\tzsh\t\n";
+        let input = "0\tzsh\t\t0\n";
         let windows = parse_tmux_windows(input);
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].name, "zsh");
         assert!(windows[0].cwd.is_none());
+        assert!(!windows[0].has_bell);
+    }
+
+    #[test]
+    fn parse_tmux_windows_reads_bell_flag() {
+        // window_bell_flag is "1" when the window has pending bell,
+        // empty or "0" otherwise.
+        let input = "0\tzsh\t/home/me\t1\n1\tvim\t/home/me\t0\n2\tnvim\t/home/me\t\n";
+        let windows = parse_tmux_windows(input);
+        assert_eq!(windows.len(), 3);
+        assert!(windows[0].has_bell);
+        assert!(!windows[1].has_bell);
+        assert!(!windows[2].has_bell);
+    }
+
+    #[test]
+    fn parse_tmux_windows_tolerates_missing_bell_column() {
+        // Older tmux versions don't emit the bell column at all —
+        // treat as cleared rather than dropping the row.
+        let input = "0\tzsh\t/home/me\n";
+        let windows = parse_tmux_windows(input);
+        assert_eq!(windows.len(), 1);
+        assert!(!windows[0].has_bell);
     }
 
     #[test]
     fn parse_tmux_windows_skips_malformed_lines() {
-        let input = "0\tzsh\t/home/me\nnot a window\n2\tvim\t/home/me/src\n";
+        let input = "0\tzsh\t/home/me\t0\nnot a window\n2\tvim\t/home/me/src\t0\n";
         let windows = parse_tmux_windows(input);
         assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].name, "zsh");

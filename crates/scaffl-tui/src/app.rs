@@ -170,11 +170,16 @@ pub struct TerminalsState {
 /// `cwd` carries the active pane's `pane_current_path` when
 /// available (`tmux list-windows -F`'s response can omit it for
 /// just-spawned windows that haven't launched a process yet).
+/// `has_bell` mirrors tmux's `#{window_bell_flag}` — set when a
+/// program in the window emitted BEL (coding agents do this to
+/// grab attention) and auto-cleared by tmux when the window
+/// becomes current.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxWindow {
     pub index: u32,
     pub name: String,
     pub cwd: Option<String>,
+    pub has_bell: bool,
 }
 
 /// One visible row in the Terminals view's sidebar. Services first
@@ -2782,11 +2787,13 @@ mod tests {
                 index: 0,
                 name: "zsh".into(),
                 cwd: None,
+                has_bell: false,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "vim".into(),
                 cwd: None,
+                has_bell: false,
             },
         ]);
         let rows = app.terminals_rows();
@@ -2808,11 +2815,13 @@ mod tests {
                 index: 0,
                 name: "zsh".into(),
                 cwd: None,
+                has_bell: false,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "svc:app".into(),
                 cwd: None,
+                has_bell: false,
             },
         ]);
         let rows = app.terminals_rows();
@@ -2842,6 +2851,7 @@ mod tests {
             index: 3,
             name: "vim".into(),
             cwd: None,
+            has_bell: false,
         }]);
         app.terminals.selected = 0;
         app.terminals_confirm();
@@ -2881,6 +2891,7 @@ mod tests {
             index: 0,
             name: "zsh".into(),
             cwd: None,
+            has_bell: false,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -2898,6 +2909,7 @@ mod tests {
             index: 0,
             name: "zsh".into(),
             cwd: None,
+            has_bell: false,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -2914,6 +2926,7 @@ mod tests {
             index: 0,
             name: "zsh".into(),
             cwd: None,
+            has_bell: false,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
