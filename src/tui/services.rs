@@ -131,7 +131,7 @@ impl ServicePane {
 
     /// Check whether the tail child has exited. If it exited non-zero
     /// (typical "Cannot connect to the Docker daemon" / "no such
-    /// service" cases) promote the captured buffer into [`tail_error`]
+    /// service" cases) promote the captured buffer into [`Self::tail_error`]
     /// so the renderer shows it on the padded error path instead of
     /// the flush log buffer.
     ///

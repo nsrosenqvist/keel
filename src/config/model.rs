@@ -255,7 +255,7 @@ pub struct ServicesConfig {
 /// for each lifecycle action. `status` is required because the TUI
 /// needs to render running/stopped state; `start` and `stop` are
 /// required because every keymap action needs a target. The rest are
-/// optional with sensible fallbacks (see [`CustomService::actions`]).
+/// optional with sensible fallbacks (see the fields below).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CustomService {

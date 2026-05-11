@@ -2415,11 +2415,10 @@ impl App {
         }
     }
 
-    /// Block until the diff preload finishes (or fails). Used by
-    /// [`crate::tui::terminal::ensure_diff_loaded`] so a manual diff
-    /// refresh / `g` keybind / `--view diff` startup doesn't fire
-    /// duplicate git commands when the boot preload is in flight.
-    /// No-op once drained.
+    /// Block until the diff preload finishes (or fails). Used by the
+    /// diff-view entry path so a manual diff refresh / `g` keybind /
+    /// `--view diff` startup doesn't fire duplicate git commands when
+    /// the boot preload is in flight. No-op once drained.
     pub async fn await_diff_preload(&mut self) {
         let Some(rx) = self.boot.diff_rx.take() else {
             return;
