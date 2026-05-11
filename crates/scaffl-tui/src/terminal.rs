@@ -486,9 +486,9 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
 ///   - Ok with windows  → adopt them.
 ///   - Ok with no windows → adopt the empty list (the session
 ///     exists but every window has died).
-///   - NoSession after the user just attached → flash a hint;
-///     a hook or rebind in the user's tmux config probably
-///     destroyed the session on detach.
+///   - NoSession after the user just attached → flash a short
+///     hint. Usually the user killed the session themselves
+///     (ctrl+d on the last window); no diagnostic dump.
 ///   - SpawnFailed → flash the spawn error.
 async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
     let session = app.terminals().session_name.clone();
@@ -505,14 +505,13 @@ async fn refresh_tmux_windows(app: &mut App, expecting_session: bool) {
             }
             app.terminals_set_windows(w);
         }
-        WindowList::NoSession(msg) => {
+        WindowList::NoSession(_msg) => {
             app.terminals_set_windows(Vec::new());
             if expecting_session {
-                let line = format!(
-                    "tmux session `{session}` vanished after detach — check ~/.tmux.conf hooks: {msg}"
-                );
-                app.flash = Some(line.clone());
-                app.diagnostic(format!("[tmux] {line}"));
+                // Usually a user-initiated detach (ctrl+d on the
+                // last window). Surface a short hint but skip the
+                // tmux stderr / diagnostic dump — it's not a bug.
+                app.flash = Some(format!("tmux session `{session}` ended"));
             }
         }
         WindowList::SpawnFailed(msg) => {
