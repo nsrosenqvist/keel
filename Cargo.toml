@@ -1,6 +1,6 @@
 [package]
 name = "keel"
-description = "Dev-loop wrapper that adapts to your project"
+description = "Dev-loop conductor: one config for Docker Compose, scripts, hooks, and agents"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
