@@ -248,7 +248,7 @@ async fn drive(
             events = spawn_event_reader();
             // Lazygit may have committed / staged / reset; the
             // current diff snapshot is no longer authoritative.
-            app.diff_mark_stale();
+            app.diff_mut().mark_stale();
             ensure_diff_loaded(app).await;
             terminal.draw(|f| ui::render(app, f))?;
             continue;
@@ -393,7 +393,7 @@ async fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
                 hit_test(&rects, me.column, me.row)
             };
             if let Some(idx) = hit {
-                app.diff_select_at(idx);
+                app.diff_mut().select_at(idx);
                 // Mirror the keyboard path: trigger the lazy load so
                 // the body actually shows the clicked file's diff
                 // instead of sitting on "loading diff…".
@@ -408,23 +408,23 @@ async fn handle_mouse_diff(app: &mut App, me: MouseEvent) {
         // or Shift+vertical-wheel as the wheel-only-mouse fallback.
         // Gated on body focus so a click on the files list still
         // scrolls files, not the body's horizontal axis.
-        MouseEventKind::ScrollRight if over_body => app.diff_body_h_scroll_by(HSCROLL_COLS),
-        MouseEventKind::ScrollLeft if over_body => app.diff_body_h_scroll_by(-HSCROLL_COLS),
+        MouseEventKind::ScrollRight if over_body => app.diff_mut().body_h_scroll_by(HSCROLL_COLS),
+        MouseEventKind::ScrollLeft if over_body => app.diff_mut().body_h_scroll_by(-HSCROLL_COLS),
         MouseEventKind::ScrollDown if over_body && shift => {
-            app.diff_body_h_scroll_by(HSCROLL_COLS);
+            app.diff_mut().body_h_scroll_by(HSCROLL_COLS);
         }
-        MouseEventKind::ScrollUp if over_body && shift => app.diff_body_h_scroll_by(-HSCROLL_COLS),
-        MouseEventKind::ScrollDown if over_body => app.diff_body_scroll_by(WHEEL_LINES),
-        MouseEventKind::ScrollUp if over_body => app.diff_body_scroll_by(-WHEEL_LINES),
+        MouseEventKind::ScrollUp if over_body && shift => app.diff_mut().body_h_scroll_by(-HSCROLL_COLS),
+        MouseEventKind::ScrollDown if over_body => app.diff_mut().body_scroll_by(WHEEL_LINES),
+        MouseEventKind::ScrollUp if over_body => app.diff_mut().body_scroll_by(-WHEEL_LINES),
         MouseEventKind::ScrollDown if over_files => {
             for _ in 0..WHEEL_LINES {
-                app.diff_select_next();
+                app.diff_mut().select_next();
             }
             ensure_diff_for_selected(app).await;
         }
         MouseEventKind::ScrollUp if over_files => {
             for _ in 0..WHEEL_LINES {
-                app.diff_select_prev();
+                app.diff_mut().select_prev();
             }
             ensure_diff_for_selected(app).await;
         }
@@ -873,21 +873,21 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             return;
         }
         KeyCode::Char('r') => {
-            app.diff_mark_stale();
+            app.diff_mut().mark_stale();
             ensure_diff_loaded(app).await;
             return;
         }
         KeyCode::Tab | KeyCode::BackTab => {
-            app.diff_toggle_focus();
+            app.diff_mut().toggle_focus();
             return;
         }
         KeyCode::Char('w') => {
-            app.diff_toggle_wrap();
+            app.diff_mut().toggle_wrap();
             return;
         }
         KeyCode::Char('v') => {
-            app.diff_toggle_body_mode();
-            if app.diff_body_mode() == BodyMode::Read {
+            app.diff_mut().toggle_body_mode();
+            if app.diff().body_mode() == BodyMode::Read {
                 ensure_read_for_selected(app).await;
             }
             return;
@@ -903,56 +903,56 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::Char(']') => {
             // Hunk jump is meaningless in read mode — drop the key
             // rather than writing into the wrong scroll map.
-            if app.diff_body_mode() == BodyMode::Read {
+            if app.diff().body_mode() == BodyMode::Read {
                 return;
             }
-            app.diff_set_focus(DiffFocus::Body);
-            app.diff_jump_hunk_next();
+            app.diff_mut().set_focus(DiffFocus::Body);
+            app.diff_mut().jump_hunk_next();
             return;
         }
         KeyCode::Char('[') => {
-            if app.diff_body_mode() == BodyMode::Read {
+            if app.diff().body_mode() == BodyMode::Read {
                 return;
             }
-            app.diff_set_focus(DiffFocus::Body);
-            app.diff_jump_hunk_prev();
+            app.diff_mut().set_focus(DiffFocus::Body);
+            app.diff_mut().jump_hunk_prev();
             return;
         }
         _ => {}
     }
-    match app.diff_focus() {
+    match app.diff().focus() {
         DiffFocus::Files => match code {
             KeyCode::Down | KeyCode::Char('j') => {
-                app.diff_select_next();
+                app.diff_mut().select_next();
                 ensure_diff_for_selected(app).await;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                app.diff_select_prev();
+                app.diff_mut().select_prev();
                 ensure_diff_for_selected(app).await;
             }
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-                app.diff_set_focus(DiffFocus::Body);
+                app.diff_mut().set_focus(DiffFocus::Body);
             }
             _ => {}
         },
         DiffFocus::Body => match code {
-            KeyCode::Down | KeyCode::Char('j') => app.diff_body_scroll_by(1),
-            KeyCode::Up | KeyCode::Char('k') => app.diff_body_scroll_by(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.diff_mut().body_scroll_by(1),
+            KeyCode::Up | KeyCode::Char('k') => app.diff_mut().body_scroll_by(-1),
             KeyCode::PageDown => {
                 let half = (app.diff().body_height.get() / 2).max(1) as i32;
-                app.diff_body_scroll_by(half);
+                app.diff_mut().body_scroll_by(half);
             }
             KeyCode::PageUp => {
                 let half = (app.diff().body_height.get() / 2).max(1) as i32;
-                app.diff_body_scroll_by(-half);
+                app.diff_mut().body_scroll_by(-half);
             }
-            KeyCode::Home => app.diff_body_scroll_to_top(),
-            KeyCode::End | KeyCode::Char('G') => app.diff_body_scroll_to_bottom(),
-            KeyCode::Char('g') if app.diff_consume_g_chord() => {
-                app.diff_body_scroll_to_top();
+            KeyCode::Home => app.diff_mut().body_scroll_to_top(),
+            KeyCode::End | KeyCode::Char('G') => app.diff_mut().body_scroll_to_bottom(),
+            KeyCode::Char('g') if app.diff_mut().consume_g_chord() => {
+                app.diff_mut().body_scroll_to_top();
             }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Esc => {
-                app.diff_set_focus(DiffFocus::Files);
+                app.diff_mut().set_focus(DiffFocus::Files);
             }
             _ => {}
         },
@@ -977,7 +977,7 @@ async fn refresh_diff_anchor(app: &mut App) {
     let anchor_short = anchor
         .as_deref()
         .map(|sha| sha.chars().take(7).collect::<String>());
-    app.diff_set_anchor(trunk, anchor, branch, anchor_short);
+    app.diff_mut().set_anchor(trunk, anchor, branch, anchor_short);
 }
 
 /// Resolve the current branch name (`git rev-parse --abbrev-ref HEAD`).
@@ -1018,27 +1018,27 @@ async fn ensure_diff_loaded(app: &mut App) {
         let project_root = app.project_root().to_path_buf();
         let anchor = app.diff().anchor.clone();
         match load_diff_files(&project_root, anchor.as_deref()).await {
-            Ok(files) => app.diff_set_files(files),
-            Err(msg) => app.diff_set_error(msg),
+            Ok(files) => app.diff_mut().set_files(files),
+            Err(msg) => app.diff_mut().set_error(msg),
         }
     }
     ensure_diff_for_selected(app).await;
 }
 
 async fn ensure_diff_for_selected(app: &mut App) {
-    let Some(file) = app.diff_selected_file().cloned() else {
+    let Some(file) = app.diff().selected_file().cloned() else {
         return;
     };
-    if app.diff_cache_for(&file.path).is_none() {
+    if app.diff().cache_for(&file.path).is_none() {
         let project_root = app.project_root().to_path_buf();
         let anchor = app.diff().anchor.clone();
         let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
-        app.diff_set_cache(file.path.clone(), lines);
+        app.diff_mut().set_cache(file.path.clone(), lines);
     }
     // If the user is currently viewing read mode, also populate the
     // read cache so a selection change doesn't show a "loading…"
     // placeholder. Diff-mode selection doesn't pre-fetch read.
-    if app.diff_body_mode() == BodyMode::Read {
+    if app.diff().body_mode() == BodyMode::Read {
         ensure_read_for_selected(app).await;
     }
 }
@@ -1050,29 +1050,29 @@ async fn ensure_diff_for_selected(app: &mut App) {
 /// separators) so the renderer can tint changed regions — needs
 /// the diff cache to be populated first.
 async fn ensure_read_for_selected(app: &mut App) {
-    let Some(file) = app.diff_selected_file().cloned() else {
+    let Some(file) = app.diff().selected_file().cloned() else {
         return;
     };
-    if app.diff_read_cache_for(&file.path).is_some() {
+    if app.diff().read_cache_for(&file.path).is_some() {
         return;
     }
     // Make sure the diff cache is populated so we can annotate. In
     // the typical toggle path the diff is already cached, but
     // `[/]` no-ops and direct-into-read jumps shouldn't lose the
     // annotation.
-    if app.diff_cache_for(&file.path).is_none() {
+    if app.diff().cache_for(&file.path).is_none() {
         let project_root = app.project_root().to_path_buf();
         let anchor = app.diff().anchor.clone();
         let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
-        app.diff_set_cache(file.path.clone(), lines);
+        app.diff_mut().set_cache(file.path.clone(), lines);
     }
     let project_root = app.project_root().to_path_buf();
     let anchor = app.diff().anchor.clone();
     let mut lines = load_read_for_file(&project_root, &file, anchor.as_deref()).await;
-    if let Some(diff_lines) = app.diff_cache_for(&file.path) {
+    if let Some(diff_lines) = app.diff().cache_for(&file.path) {
         lines = annotate_read_with_diff(lines, diff_lines);
     }
-    app.diff_set_read_cache(file.path.clone(), lines);
+    app.diff_mut().set_read_cache(file.path.clone(), lines);
 }
 
 /// Build the changed-file list. With `anchor` set, we want

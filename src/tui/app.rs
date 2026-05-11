@@ -15,10 +15,7 @@ use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
 use crate::tui::services::ServicePane;
 use crate::tui::views::control_center::state::{Item, ItemKind};
-use crate::tui::views::diff::line_width::{diff_line_rendered_width, read_line_rendered_width};
-use crate::tui::views::diff::state::{
-    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, ReadLine,
-};
+use crate::tui::views::diff::state::{DiffFile, DiffView};
 use crate::tui::views::terminals::state::{TerminalsRow, TerminalsView, TmuxWindow};
 use crate::tui::watchers::{WatcherError, WatcherPane};
 use ratatui::layout::Rect;
@@ -113,104 +110,6 @@ fn shell_escape(s: String) -> String {
     }
     out.push('\'');
     out
-}
-
-/// State for the Diff view (`g`). Populated lazily on first
-/// switch, rebuilt on `r`. Per-file diff bodies cache so
-/// navigating among files doesn't re-shell-out to git.
-#[derive(Debug, Clone, Default)]
-pub struct DiffState {
-    pub files: Vec<DiffFile>,
-    pub selected: usize,
-    pub cache: std::collections::HashMap<String, Vec<DiffLine>>,
-    /// True once `files` has been populated at least once. Lets the
-    /// renderer distinguish "no changes" from "haven't checked yet".
-    pub loaded: bool,
-    /// Last error from `git status` / `git diff`, if any.
-    pub error: Option<String>,
-    /// Trunk branch the diff is scoped against (e.g. "main"). None
-    /// when no trunk could be detected — diff falls back to
-    /// `git diff HEAD` and the top bar omits the `vs <trunk>` slot.
-    pub trunk: Option<String>,
-    /// SHA of the merge-base between `trunk` and HEAD. The diff
-    /// commands compare working tree against this anchor so users
-    /// see "everything I've changed since branching off trunk"
-    /// rather than just the working-tree-vs-last-commit slice.
-    /// None → fall back to HEAD as the anchor.
-    pub anchor: Option<String>,
-    /// 7-char short form of `anchor`, surfaced in the header banner
-    /// so users can spot when a freshly-pulled trunk shifts the
-    /// comparison forward without hunting for the SHA themselves.
-    pub anchor_short: Option<String>,
-    /// The current branch name (`git rev-parse --abbrev-ref HEAD`).
-    /// Different from `App::branch`: that one is set by the CLI at
-    /// startup (and may carry a detached-HEAD basename); this one
-    /// is refreshed on every diff reload so amends / checkouts
-    /// inside the same TUI session are reflected.
-    pub branch: Option<String>,
-    /// Sum of `additions` across `files` — the headline `+N` in
-    /// the comparison banner.
-    pub additions_total: usize,
-    pub deletions_total: usize,
-    /// Which pane has focus. Tab toggles.
-    pub focus: DiffFocus,
-    /// Per-file scroll offset (top line index). Stored per path so
-    /// jumping to another file and back resumes the same position.
-    pub body_scroll: std::collections::HashMap<String, usize>,
-    /// Last viewport height the body was rendered at. Cell so the
-    /// renderer can write through `&App`. Read by PgUp/PgDn and G
-    /// to size half-pages and clamp to the bottom of the diff.
-    pub body_height: std::cell::Cell<u16>,
-    /// Last viewport width the body was rendered at. Used by the
-    /// horizontal-scroll clamp so panning stops when the rightmost
-    /// column of the longest row reaches the right edge of the
-    /// viewport. Stays at 0 until the first body render — h-scroll
-    /// silently clamps to 0 in that case (no body yet to scroll).
-    pub body_width: std::cell::Cell<u16>,
-    /// Last frame's outer rect for the files-list pane and the
-    /// diff-body pane. None when the diff view isn't being rendered,
-    /// so a stale rect from a previous view can't match a wheel
-    /// event against the current view's geometry. Mouse routing
-    /// hit-tests against these.
-    pub files_rect: std::cell::Cell<Option<Rect>>,
-    pub body_rect: std::cell::Cell<Option<Rect>>,
-    /// Wrap long diff lines (`w`). Off by default — most diffs are
-    /// readable without wrapping and horizontal "loss" is preferred
-    /// over visual jitter. On for narrow terminals.
-    pub wrap: bool,
-    /// Per-file horizontal scroll offset (columns from x=0) for the
-    /// diff body. Independent from `body_scroll` so toggling files
-    /// preserves each file's pan position. Cleared per-file on
-    /// `diff_toggle_wrap` when wrap is enabled — a non-zero offset
-    /// under wrap silently chops the left side of every wrapped row.
-    pub body_h_scroll: std::collections::HashMap<String, usize>,
-    /// Per-file horizontal scroll offset for read mode. Mirrors
-    /// `body_h_scroll`. Independent from the diff-mode map so toggling
-    /// `v` preserves each mode's pan position.
-    pub read_h_scroll: std::collections::HashMap<String, usize>,
-    /// Per-file row rects in the files list. Populated by the
-    /// renderer on every frame; hit-tested by the mouse handler to
-    /// route clicks to a file index.
-    pub file_row_rects: std::cell::RefCell<Vec<Rect>>,
-    /// True when `lazygit` was found on PATH at startup; the `L`
-    /// keybind hides itself from the footer hint when false.
-    pub lazygit_available: bool,
-    /// Two-key chord state: timestamp of the last `g` press while
-    /// body-focused. A second `g` within 500 ms triggers gg → top.
-    /// Cleared by any other key.
-    pub last_g_press: Option<std::time::Instant>,
-    /// Whether the body pane is currently showing the diff or the
-    /// full file. Toggled with `v`. Global, not per-file — toggling
-    /// flips the active file's view in place.
-    pub body_mode: BodyMode,
-    /// Per-file cache of full-file contents for read mode. Lazily
-    /// populated on the first switch into read mode for a given
-    /// file; cleared by `r` (refresh) alongside the diff cache.
-    pub read_cache: std::collections::HashMap<String, Vec<ReadLine>>,
-    /// Per-file scroll offset for read mode. Kept independent from
-    /// `body_scroll` so toggling modes preserves each mode's
-    /// position.
-    pub read_scroll: std::collections::HashMap<String, usize>,
 }
 
 /// One-shot signal from the Terminals view to the event loop:
@@ -345,7 +244,7 @@ impl WorktreeSwitcher {
 }
 
 /// Resolved diff preload state, computed off the boot path by
-/// [`App::spawn_boot_tasks`] and applied to [`DiffState`] by
+/// [`App::spawn_boot_tasks`] and applied to [`DiffView`] by
 /// [`App::drain_boot_results`] (or [`App::await_diff_preload`] when
 /// the initial view is Diff). The fields mirror the assignments the
 /// old synchronous `preload_diff_status` used to make.
@@ -456,7 +355,7 @@ pub struct App {
     /// run lazygit foreground, and resume.
     pub pending_lazygit: bool,
     /// Diff view state. Lazily populated on first switch / refresh.
-    diff: DiffState,
+    diff: DiffView,
     /// Diagnostic messages flushed to stderr after the TUI exits.
     /// Used for issues that disappear from the flash slot before the
     /// user can read them (e.g. tmux session vanishing on detach
@@ -524,7 +423,7 @@ impl App {
             pending_attach: None,
             pending_kill_window: None,
             pending_lazygit: false,
-            diff: DiffState::default(),
+            diff: DiffView::default(),
             diagnostics: Vec::new(),
             boot: BootChannels::default(),
             worker: None,
@@ -1531,396 +1430,12 @@ impl App {
         std::mem::take(&mut self.diagnostics)
     }
 
-    pub fn diff(&self) -> &DiffState {
+    pub fn diff(&self) -> &DiffView {
         &self.diff
     }
 
-    /// Replace the file list (typically after a `git status` reload).
-    /// Clamps the selection so it can't point past the end. Cache
-    /// stays — the user might re-edit and want the same diff back.
-    /// Recomputes the additions / deletions totals from the
-    /// per-file numbers so the comparison banner stays in sync.
-    pub fn diff_set_files(&mut self, files: Vec<DiffFile>) {
-        self.diff.additions_total = files.iter().map(|f| f.additions).sum();
-        self.diff.deletions_total = files.iter().map(|f| f.deletions).sum();
-        self.diff.files = files;
-        self.diff.loaded = true;
-        if self.diff.selected >= self.diff.files.len() {
-            self.diff.selected = self.diff.files.len().saturating_sub(1);
-        }
-        self.diff.error = None;
-    }
-
-    pub fn diff_set_error(&mut self, msg: String) {
-        self.diff.error = Some(msg);
-        self.diff.loaded = true;
-    }
-
-    /// Pin the trunk branch + merge-base SHA the diff loaders should
-    /// use as their anchor. Either may be None: a trunk without a
-    /// merge-base means the trunk exists but has no shared history
-    /// (rare); no trunk at all means we degrade to `git diff HEAD`.
-    /// `branch` is the current HEAD branch and `anchor_short` is the
-    /// 7-char form of the SHA — both surface in the comparison
-    /// banner.
-    pub fn diff_set_anchor(
-        &mut self,
-        trunk: Option<String>,
-        anchor: Option<String>,
-        branch: Option<String>,
-        anchor_short: Option<String>,
-    ) {
-        self.diff.trunk = trunk;
-        self.diff.anchor = anchor;
-        self.diff.branch = branch;
-        self.diff.anchor_short = anchor_short;
-    }
-
-    /// Set whether `lazygit` is on PATH. Called once at startup.
-    pub fn diff_set_lazygit_available(&mut self, available: bool) {
-        self.diff.lazygit_available = available;
-    }
-
-    pub fn diff_select_next(&mut self) {
-        if self.diff.files.is_empty() {
-            return;
-        }
-        self.diff.selected = (self.diff.selected + 1).min(self.diff.files.len() - 1);
-    }
-
-    pub fn diff_select_prev(&mut self) {
-        self.diff.selected = self.diff.selected.saturating_sub(1);
-    }
-
-    /// Set the file selection to `idx`, clamped to the last file.
-    /// No-op when the file list is empty.
-    pub fn diff_select_at(&mut self, idx: usize) {
-        if self.diff.files.is_empty() {
-            return;
-        }
-        self.diff.selected = idx.min(self.diff.files.len() - 1);
-    }
-
-    pub fn diff_selected_file(&self) -> Option<&DiffFile> {
-        self.diff.files.get(self.diff.selected)
-    }
-
-    pub fn diff_cache_for(&self, path: &str) -> Option<&Vec<DiffLine>> {
-        self.diff.cache.get(path)
-    }
-
-    pub fn diff_set_cache(&mut self, path: String, lines: Vec<DiffLine>) {
-        self.diff.cache.insert(path, lines);
-    }
-
-    pub fn diff_read_cache_for(&self, path: &str) -> Option<&Vec<ReadLine>> {
-        self.diff.read_cache.get(path)
-    }
-
-    pub fn diff_set_read_cache(&mut self, path: String, lines: Vec<ReadLine>) {
-        self.diff.read_cache.insert(path, lines);
-    }
-
-    pub fn diff_body_mode(&self) -> BodyMode {
-        self.diff.body_mode
-    }
-
-    /// Flip the body pane between Diff and Read. Drops any pending
-    /// `g` chord so a half-armed gg doesn't carry across modes.
-    pub fn diff_toggle_body_mode(&mut self) {
-        self.diff.body_mode = match self.diff.body_mode {
-            BodyMode::Diff => BodyMode::Read,
-            BodyMode::Read => BodyMode::Diff,
-        };
-        self.diff.last_g_press = None;
-    }
-
-    /// Mark the diff state stale so the next render pulls fresh
-    /// data. Used by the `r` keybind in the diff view. Clears both
-    /// caches so a toggled view also re-fetches after refresh.
-    pub fn diff_mark_stale(&mut self) {
-        self.diff.loaded = false;
-        self.diff.cache.clear();
-        self.diff.body_scroll.clear();
-        self.diff.read_cache.clear();
-        self.diff.read_scroll.clear();
-        self.diff.additions_total = 0;
-        self.diff.deletions_total = 0;
-    }
-
-    pub fn diff_focus(&self) -> DiffFocus {
-        self.diff.focus
-    }
-
-    /// Toggle keyboard focus between the file list and the diff
-    /// body. Wired to Tab / Shift+Tab.
-    pub fn diff_toggle_focus(&mut self) {
-        self.diff.focus = match self.diff.focus {
-            DiffFocus::Files => DiffFocus::Body,
-            DiffFocus::Body => DiffFocus::Files,
-        };
-        // Drop any pending `g` chord on focus change so a stale `g`
-        // can't hop to top after the user already moved on.
-        self.diff.last_g_press = None;
-    }
-
-    /// Set focus directly. Used by handlers that have semantic
-    /// intent (e.g. Enter on the file list moves into the body).
-    pub fn diff_set_focus(&mut self, focus: DiffFocus) {
-        self.diff.focus = focus;
-        self.diff.last_g_press = None;
-    }
-
-    /// Current scroll offset (top line) for the selected file in
-    /// the active body mode.
-    pub fn diff_body_scroll(&self) -> usize {
-        let path = match self.diff_selected_file() {
-            Some(f) => &f.path,
-            None => return 0,
-        };
-        self.active_scroll_map().get(path).copied().unwrap_or(0)
-    }
-
-    /// Move the body scroll by `delta` lines, clamped to the
-    /// content length (per active mode) minus the last viewport
-    /// height. Negative values scroll up.
-    pub fn diff_body_scroll_by(&mut self, delta: i32) {
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        let total = self.active_content_len(&path);
-        let viewport = self.diff.body_height.get() as usize;
-        let max = total.saturating_sub(viewport.max(1));
-        let cur = self.active_scroll_map().get(&path).copied().unwrap_or(0) as i64;
-        let next = (cur + delta as i64).max(0).min(max as i64) as usize;
-        self.active_scroll_map_mut().insert(path, next);
-    }
-
-    pub fn diff_body_scroll_to_top(&mut self) {
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        self.active_scroll_map_mut().insert(path, 0);
-    }
-
-    pub fn diff_body_scroll_to_bottom(&mut self) {
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        let total = self.active_content_len(&path);
-        let viewport = self.diff.body_height.get() as usize;
-        let bottom = total.saturating_sub(viewport.max(1));
-        self.active_scroll_map_mut().insert(path, bottom);
-    }
-
-    fn active_scroll_map(&self) -> &std::collections::HashMap<String, usize> {
-        match self.diff.body_mode {
-            BodyMode::Diff => &self.diff.body_scroll,
-            BodyMode::Read => &self.diff.read_scroll,
-        }
-    }
-
-    fn active_scroll_map_mut(&mut self) -> &mut std::collections::HashMap<String, usize> {
-        match self.diff.body_mode {
-            BodyMode::Diff => &mut self.diff.body_scroll,
-            BodyMode::Read => &mut self.diff.read_scroll,
-        }
-    }
-
-    fn active_h_scroll_map(&self) -> &std::collections::HashMap<String, usize> {
-        match self.diff.body_mode {
-            BodyMode::Diff => &self.diff.body_h_scroll,
-            BodyMode::Read => &self.diff.read_h_scroll,
-        }
-    }
-
-    fn active_h_scroll_map_mut(&mut self) -> &mut std::collections::HashMap<String, usize> {
-        match self.diff.body_mode {
-            BodyMode::Diff => &mut self.diff.body_h_scroll,
-            BodyMode::Read => &mut self.diff.read_h_scroll,
-        }
-    }
-
-    /// Max rendered width (in columns) across every line of the
-    /// active body mode's cache for `path`. Returns 0 when the cache
-    /// is missing — h-scroll then clamps to 0, which is the safest
-    /// pre-load behavior. Mirrors the formulas the renderer uses in
-    /// [`crate::tui::ui::render_body_diff`] / `render_body_read`;
-    /// kept in sync by hand. Cheap enough to call on every wheel
-    /// event (linear in file line count; ~10µs per 1000 lines).
-    fn active_max_line_width(&self, path: &str) -> usize {
-        match self.diff.body_mode {
-            BodyMode::Diff => {
-                let Some(lines) = self.diff.cache.get(path) else {
-                    return 0;
-                };
-                let max_lineno = lines
-                    .iter()
-                    .filter_map(|l| l.new_lineno.map(u64::from).or(l.old_lineno.map(u64::from)))
-                    .max()
-                    .unwrap_or(0);
-                let gutter_w = max_lineno.to_string().len().max(1);
-                // Per-row layout: "<old> <new> <sigil> <content>" =
-                // 2*gutter_w + 4 + content. Headers / hunks skip the
-                // gutter and sigil — just their raw text width.
-                lines
-                    .iter()
-                    .map(|l| diff_line_rendered_width(l, gutter_w))
-                    .max()
-                    .unwrap_or(0)
-            }
-            BodyMode::Read => {
-                let Some(lines) = self.diff.read_cache.get(path) else {
-                    return 0;
-                };
-                let max_lineno = lines.iter().map(|l| l.lineno).max().unwrap_or(0);
-                let gutter_w = max_lineno.to_string().len().max(1);
-                lines
-                    .iter()
-                    .map(|l| read_line_rendered_width(l, gutter_w))
-                    .max()
-                    .unwrap_or(0)
-            }
-        }
-    }
-
-    /// Upper bound on `body_h_scroll` for the selected file: the
-    /// position where the rightmost char of the longest row sits at
-    /// the right edge of the viewport. 0 when the longest line
-    /// fits within the viewport (no panning needed). 0 also pre-render
-    /// (body_width starts at 0) — h-scroll stays parked at column 0
-    /// until the first frame lands.
-    fn diff_max_h_scroll(&self, path: &str) -> usize {
-        let max_line = self.active_max_line_width(path);
-        let viewport = self.diff.body_width.get() as usize;
-        max_line.saturating_sub(viewport)
-    }
-
-    /// Current horizontal scroll offset (columns from x=0) for the
-    /// selected file in the active body mode. Always returns `0`
-    /// when wrap is on — wrap mode has no horizontal axis, and a
-    /// stale map entry must not bleed into rendering. Also clamps
-    /// against the longest-line upper bound so a terminal resize
-    /// that shrinks the max can't leave the renderer with a stale
-    /// out-of-range value.
-    pub fn diff_body_h_scroll(&self) -> usize {
-        if self.diff.wrap {
-            return 0;
-        }
-        let path = match self.diff_selected_file() {
-            Some(f) => &f.path,
-            None => return 0,
-        };
-        let raw = self.active_h_scroll_map().get(path).copied().unwrap_or(0);
-        raw.min(self.diff_max_h_scroll(path))
-    }
-
-    /// Pan the body by `delta` columns. Clamped at 0 (no left of
-    /// column zero) and at the rightmost column of the longest row
-    /// (no panning into empty space). No-op while wrap is on, so
-    /// wheel events during wrap mode can't dirty the map.
-    pub fn diff_body_h_scroll_by(&mut self, delta: i32) {
-        if self.diff.wrap {
-            return;
-        }
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        let max = self.diff_max_h_scroll(&path) as i64;
-        let cur = self.active_h_scroll_map().get(&path).copied().unwrap_or(0) as i64;
-        let next = (cur + delta as i64).max(0).min(max) as usize;
-        self.active_h_scroll_map_mut().insert(path, next);
-    }
-
-    fn active_content_len(&self, path: &str) -> usize {
-        match self.diff.body_mode {
-            BodyMode::Diff => self.diff.cache.get(path).map(|v| v.len()).unwrap_or(0),
-            BodyMode::Read => self.diff.read_cache.get(path).map(|v| v.len()).unwrap_or(0),
-        }
-    }
-
-    /// Jump to the next `@@` hunk header below the current scroll
-    /// position. No-op if no further hunk exists.
-    pub fn diff_jump_hunk_next(&mut self) {
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        let Some(lines) = self.diff.cache.get(&path) else {
-            return;
-        };
-        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0);
-        let next = lines
-            .iter()
-            .enumerate()
-            .skip(cur + 1)
-            .find(|(_, l)| l.kind == DiffLineKind::Hunk)
-            .map(|(i, _)| i);
-        if let Some(i) = next {
-            let viewport = self.diff.body_height.get() as usize;
-            let max = lines.len().saturating_sub(viewport.max(1));
-            self.diff.body_scroll.insert(path, i.min(max));
-        }
-    }
-
-    /// Jump to the previous `@@` hunk header above the current
-    /// scroll position. No-op at the top.
-    pub fn diff_jump_hunk_prev(&mut self) {
-        let Some(file) = self.diff.files.get(self.diff.selected) else {
-            return;
-        };
-        let path = file.path.clone();
-        let Some(lines) = self.diff.cache.get(&path) else {
-            return;
-        };
-        let cur = self.diff.body_scroll.get(&path).copied().unwrap_or(0);
-        let prev = lines
-            .iter()
-            .enumerate()
-            .take(cur)
-            .rev()
-            .find(|(_, l)| l.kind == DiffLineKind::Hunk)
-            .map(|(i, _)| i);
-        if let Some(i) = prev {
-            self.diff.body_scroll.insert(path, i);
-        }
-    }
-
-    pub fn diff_toggle_wrap(&mut self) {
-        self.diff.wrap = !self.diff.wrap;
-        // Turning wrap *on* with a non-zero h-offset would silently
-        // chop the first N columns of every wrapped row. Clear the
-        // active file's entry in both maps to keep the model honest;
-        // `diff_body_h_scroll` also clamps to 0 while wrap is on as
-        // a belt-and-suspenders against any other code path that
-        // mutates the map without going through this toggle.
-        if self.diff.wrap {
-            let Some(file) = self.diff.files.get(self.diff.selected) else {
-                return;
-            };
-            let path = file.path.clone();
-            self.diff.body_h_scroll.remove(&path);
-            self.diff.read_h_scroll.remove(&path);
-        }
-    }
-
-    /// Record a `g` press while body-focused. A second `g` within
-    /// `window` returns true (caller jumps to top); otherwise
-    /// false (caller arms the chord by storing the timestamp).
-    pub fn diff_consume_g_chord(&mut self) -> bool {
-        let now = std::time::Instant::now();
-        let window = std::time::Duration::from_millis(500);
-        let armed = self
-            .diff
-            .last_g_press
-            .map(|t| now.duration_since(t) <= window)
-            .unwrap_or(false);
-        self.diff.last_g_press = if armed { None } else { Some(now) };
-        armed
+    pub fn diff_mut(&mut self) -> &mut DiffView {
+        &mut self.diff
     }
 
     /// Drain a one-shot lazygit-handoff request. The event loop
@@ -2286,16 +1801,16 @@ impl App {
     }
 
     fn apply_diff_preload(&mut self, preload: DiffPreload) {
-        self.diff_set_anchor(
+        self.diff.set_anchor(
             preload.trunk,
             preload.anchor,
             preload.branch,
             preload.anchor_short,
         );
-        self.diff_set_lazygit_available(preload.lazygit_available);
+        self.diff.set_lazygit_available(preload.lazygit_available);
         match preload.files {
-            Ok(files) => self.diff_set_files(files),
-            Err(msg) => self.diff_set_error(msg),
+            Ok(files) => self.diff.set_files(files),
+            Err(msg) => self.diff.set_error(msg),
         }
     }
 
@@ -2544,7 +2059,9 @@ fn collect_service_panes(config: &Config) -> BTreeMap<String, ServicePane> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::views::diff::state::{DiffStatus, ReadLineKind};
+    use crate::tui::views::diff::state::{
+        BodyMode, DiffFocus, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
+    };
     use pretty_assertions::assert_eq;
 
     /// Test cfg with no container backend, so the synthetic container
@@ -3145,7 +2662,6 @@ mod tests {
 
     #[test]
     fn diff_line_kind_classifies_known_prefixes() {
-        use crate::tui::app::DiffLineKind;
         assert_eq!(
             DiffLineKind::classify("@@ -1,5 +1,5 @@"),
             DiffLineKind::Hunk
@@ -3235,17 +2751,17 @@ mod tests {
     #[test]
     fn diff_select_clamps_at_bounds() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![
+        app.diff_mut().set_files(vec![
             df("a", DiffStatus::Modified),
             df("b", DiffStatus::Added),
         ]);
-        app.diff_select_next();
+        app.diff_mut().select_next();
         assert_eq!(app.diff().selected, 1);
-        app.diff_select_next();
+        app.diff_mut().select_next();
         assert_eq!(app.diff().selected, 1);
-        app.diff_select_prev();
+        app.diff_mut().select_prev();
         assert_eq!(app.diff().selected, 0);
-        app.diff_select_prev();
+        app.diff_mut().select_prev();
         assert_eq!(app.diff().selected, 0);
     }
 
@@ -3262,13 +2778,13 @@ mod tests {
     #[test]
     fn diff_select_at_clamps() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![
+        app.diff_mut().set_files(vec![
             df("a", DiffStatus::Modified),
             df("b", DiffStatus::Added),
         ]);
-        app.diff_select_at(usize::MAX);
+        app.diff_mut().select_at(usize::MAX);
         assert_eq!(app.diff().selected, 1);
-        app.diff_select_at(0);
+        app.diff_mut().select_at(0);
         assert_eq!(app.diff().selected, 0);
     }
 
@@ -3287,12 +2803,12 @@ mod tests {
     #[test]
     fn diff_body_h_scroll_by_clamps_at_zero() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
         // Seed a cache with a long content line so the upper-bound
         // clamp leaves plenty of room for the test to drive the
         // value past 12 columns. Without lines, max_h_scroll = 0.
         app.diff.body_width.set(20);
-        app.diff_set_cache(
+        app.diff_mut().set_cache(
             "a".into(),
             vec![DiffLine {
                 kind: DiffLineKind::Context,
@@ -3302,25 +2818,25 @@ mod tests {
                 spans: vec![],
             }],
         );
-        assert_eq!(app.diff_body_h_scroll(), 0);
+        assert_eq!(app.diff().body_h_scroll(), 0);
         // Negative delta on an already-zero offset stays at zero —
         // can't pan past the left edge.
-        app.diff_body_h_scroll_by(-5);
-        assert_eq!(app.diff_body_h_scroll(), 0);
-        app.diff_body_h_scroll_by(12);
-        assert_eq!(app.diff_body_h_scroll(), 12);
-        app.diff_body_h_scroll_by(-20);
-        assert_eq!(app.diff_body_h_scroll(), 0);
+        app.diff_mut().body_h_scroll_by(-5);
+        assert_eq!(app.diff().body_h_scroll(), 0);
+        app.diff_mut().body_h_scroll_by(12);
+        assert_eq!(app.diff().body_h_scroll(), 12);
+        app.diff_mut().body_h_scroll_by(-20);
+        assert_eq!(app.diff().body_h_scroll(), 0);
     }
 
     #[test]
     fn diff_body_h_scroll_clamps_at_longest_line() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
         // Viewport = 20 cols, content = 30 chars, gutter formula
         // adds 2*1 + 4 = 6 → rendered width = 36 → max_scroll = 16.
         app.diff.body_width.set(20);
-        app.diff_set_cache(
+        app.diff_mut().set_cache(
             "a".into(),
             vec![DiffLine {
                 kind: DiffLineKind::Context,
@@ -3331,25 +2847,25 @@ mod tests {
             }],
         );
         // Slam to the right — far past the longest line.
-        app.diff_body_h_scroll_by(9999);
-        assert_eq!(app.diff_body_h_scroll(), 16);
+        app.diff_mut().body_h_scroll_by(9999);
+        assert_eq!(app.diff().body_h_scroll(), 16);
         // No further movement once at the cap.
-        app.diff_body_h_scroll_by(50);
-        assert_eq!(app.diff_body_h_scroll(), 16);
+        app.diff_mut().body_h_scroll_by(50);
+        assert_eq!(app.diff().body_h_scroll(), 16);
         // Shrinking the viewport raises the cap; growing it lowers
         // the cap, and the *read* side clamps any stale stored value.
         app.diff.body_width.set(100);
-        assert_eq!(app.diff_body_h_scroll(), 0);
+        assert_eq!(app.diff().body_h_scroll(), 0);
     }
 
     #[test]
     fn diff_toggle_wrap_on_clears_h_scroll_for_active_file() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
         // Seed a wide line + tight viewport so the upper-bound clamp
         // leaves enough headroom for the test to pan to 16.
         app.diff.body_width.set(20);
-        app.diff_set_cache(
+        app.diff_mut().set_cache(
             "a".into(),
             vec![DiffLine {
                 kind: DiffLineKind::Context,
@@ -3361,50 +2877,50 @@ mod tests {
         );
         // Wrap starts off; pan right a few notches.
         assert!(!app.diff().wrap);
-        app.diff_body_h_scroll_by(16);
-        assert_eq!(app.diff_body_h_scroll(), 16);
+        app.diff_mut().body_h_scroll_by(16);
+        assert_eq!(app.diff().body_h_scroll(), 16);
         // Turning wrap on must drop the offset so the wrapped view
         // can't render with a non-zero h-scroll (which would chop
         // the first N columns of every wrapped row).
-        app.diff_toggle_wrap();
+        app.diff_mut().toggle_wrap();
         assert!(app.diff().wrap);
-        assert_eq!(app.diff_body_h_scroll(), 0);
+        assert_eq!(app.diff().body_h_scroll(), 0);
         // Toggling wrap off again starts fresh at 0 (we don't bother
         // restoring the pre-toggle offset — the user can re-pan).
-        app.diff_toggle_wrap();
+        app.diff_mut().toggle_wrap();
         assert!(!app.diff().wrap);
-        assert_eq!(app.diff_body_h_scroll(), 0);
+        assert_eq!(app.diff().body_h_scroll(), 0);
     }
 
     #[test]
     fn diff_mark_stale_clears_cache() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
-        app.diff_set_cache("a".into(), vec![]);
-        assert!(app.diff_cache_for("a").is_some());
-        app.diff_mark_stale();
-        assert!(app.diff_cache_for("a").is_none());
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_cache("a".into(), vec![]);
+        assert!(app.diff().cache_for("a").is_some());
+        app.diff_mut().mark_stale();
+        assert!(app.diff().cache_for("a").is_none());
         assert!(!app.diff().loaded);
     }
 
     #[test]
     fn diff_focus_toggles() {
         let mut app = App::new(cfg());
-        assert_eq!(app.diff_focus(), DiffFocus::Files);
-        app.diff_toggle_focus();
-        assert_eq!(app.diff_focus(), DiffFocus::Body);
-        app.diff_toggle_focus();
-        assert_eq!(app.diff_focus(), DiffFocus::Files);
+        assert_eq!(app.diff().focus(), DiffFocus::Files);
+        app.diff_mut().toggle_focus();
+        assert_eq!(app.diff().focus(), DiffFocus::Body);
+        app.diff_mut().toggle_focus();
+        assert_eq!(app.diff().focus(), DiffFocus::Files);
     }
 
     #[test]
     fn diff_jump_hunk_skips_to_next_at_marker() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
         // Tight viewport so scroll clamping (which keeps the last
         // visible line at the bottom) doesn't pin the offset to 0.
         app.diff.body_height.set(2);
-        app.diff_set_cache(
+        app.diff_mut().set_cache(
             "a".into(),
             vec![
                 DiffLine {
@@ -3444,34 +2960,34 @@ mod tests {
                 },
             ],
         );
-        app.diff_jump_hunk_next();
-        assert_eq!(app.diff_body_scroll(), 1);
-        app.diff_jump_hunk_next();
-        assert_eq!(app.diff_body_scroll(), 3);
-        app.diff_jump_hunk_next();
+        app.diff_mut().jump_hunk_next();
+        assert_eq!(app.diff().body_scroll(), 1);
+        app.diff_mut().jump_hunk_next();
+        assert_eq!(app.diff().body_scroll(), 3);
+        app.diff_mut().jump_hunk_next();
         // No further hunk — stays put.
-        assert_eq!(app.diff_body_scroll(), 3);
-        app.diff_jump_hunk_prev();
-        assert_eq!(app.diff_body_scroll(), 1);
-        app.diff_jump_hunk_prev();
-        assert_eq!(app.diff_body_scroll(), 1);
+        assert_eq!(app.diff().body_scroll(), 3);
+        app.diff_mut().jump_hunk_prev();
+        assert_eq!(app.diff().body_scroll(), 1);
+        app.diff_mut().jump_hunk_prev();
+        assert_eq!(app.diff().body_scroll(), 1);
     }
 
     #[test]
     fn body_mode_toggles_diff_and_read() {
         let mut app = App::new(cfg());
-        assert_eq!(app.diff_body_mode(), BodyMode::Diff);
-        app.diff_toggle_body_mode();
-        assert_eq!(app.diff_body_mode(), BodyMode::Read);
-        app.diff_toggle_body_mode();
-        assert_eq!(app.diff_body_mode(), BodyMode::Diff);
+        assert_eq!(app.diff().body_mode(), BodyMode::Diff);
+        app.diff_mut().toggle_body_mode();
+        assert_eq!(app.diff().body_mode(), BodyMode::Read);
+        app.diff_mut().toggle_body_mode();
+        assert_eq!(app.diff().body_mode(), BodyMode::Diff);
     }
 
     #[test]
     fn diff_mark_stale_clears_read_cache() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
-        app.diff_set_read_cache(
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_read_cache(
             "a".into(),
             vec![ReadLine {
                 kind: ReadLineKind::Plain,
@@ -3480,18 +2996,18 @@ mod tests {
                 spans: vec![],
             }],
         );
-        assert!(app.diff_read_cache_for("a").is_some());
-        app.diff_mark_stale();
-        assert!(app.diff_read_cache_for("a").is_none());
+        assert!(app.diff().read_cache_for("a").is_some());
+        app.diff_mut().mark_stale();
+        assert!(app.diff().read_cache_for("a").is_none());
     }
 
     #[test]
     fn scroll_routes_to_active_mode() {
         let mut app = App::new(cfg());
-        app.diff_set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
         // Diff-mode content + tight viewport so scroll is unclamped.
         app.diff.body_height.set(1);
-        app.diff_set_cache(
+        app.diff_mut().set_cache(
             "a".into(),
             vec![
                 DiffLine {
@@ -3527,39 +3043,39 @@ mod tests {
                 spans: vec![],
             })
             .collect();
-        app.diff_set_read_cache("a".into(), read_lines);
+        app.diff_mut().set_read_cache("a".into(), read_lines);
 
         // Scroll in diff mode, confirm only body_scroll changes.
-        app.diff_body_scroll_by(2);
-        assert_eq!(app.diff_body_scroll(), 2);
+        app.diff_mut().body_scroll_by(2);
+        assert_eq!(app.diff().body_scroll(), 2);
         assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
         assert!(!app.diff.read_scroll.contains_key("a"));
 
         // Switch to read mode; scroll reads from the read map (empty).
-        app.diff_toggle_body_mode();
-        assert_eq!(app.diff_body_mode(), BodyMode::Read);
-        assert_eq!(app.diff_body_scroll(), 0);
+        app.diff_mut().toggle_body_mode();
+        assert_eq!(app.diff().body_mode(), BodyMode::Read);
+        assert_eq!(app.diff().body_scroll(), 0);
 
         // Scroll in read mode; only read_scroll changes.
-        app.diff_body_scroll_by(3);
-        assert_eq!(app.diff_body_scroll(), 3);
+        app.diff_mut().body_scroll_by(3);
+        assert_eq!(app.diff().body_scroll(), 3);
         assert_eq!(app.diff.read_scroll.get("a").copied(), Some(3));
         assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
 
         // Switch back — diff scroll is preserved.
-        app.diff_toggle_body_mode();
-        assert_eq!(app.diff_body_scroll(), 2);
+        app.diff_mut().toggle_body_mode();
+        assert_eq!(app.diff().body_scroll(), 2);
     }
 
     #[test]
     fn diff_g_chord_fires_on_second_press() {
         let mut app = App::new(cfg());
         // First press arms the chord.
-        assert!(!app.diff_consume_g_chord());
+        assert!(!app.diff_mut().consume_g_chord());
         // Second press within the window fires.
-        assert!(app.diff_consume_g_chord());
+        assert!(app.diff_mut().consume_g_chord());
         // After firing the state resets — next first press doesn't fire.
-        assert!(!app.diff_consume_g_chord());
+        assert!(!app.diff_mut().consume_g_chord());
     }
 
     #[test]

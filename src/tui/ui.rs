@@ -460,7 +460,7 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
         BodyMode::Diff => "diff",
         BodyMode::Read => "read",
     };
-    let title_text = match app.diff_selected_file() {
+    let title_text = match app.diff().selected_file() {
         Some(f) => format!("{mode_label} · {}", f.path),
         None => mode_label.into(),
     };
@@ -485,7 +485,7 @@ fn render_diff_body(app: &App, frame: &mut Frame, area: Rect) {
     // viewport's right edge.
     diff.body_width.set(area.width.saturating_sub(4));
 
-    let Some(file) = app.diff_selected_file() else {
+    let Some(file) = app.diff().selected_file() else {
         let body = Paragraph::new(Line::from(Span::styled(
             "select a file on the left",
             Style::default().fg(Color::DarkGray),
@@ -510,7 +510,7 @@ fn render_body_diff(
     inner_height: u16,
 ) {
     let diff = app.diff();
-    let lines = match app.diff_cache_for(&file.path) {
+    let lines = match app.diff().cache_for(&file.path) {
         Some(l) => l,
         None => {
             let body = Paragraph::new(Line::from(Span::styled(
@@ -557,7 +557,7 @@ fn render_body_diff(
     // has no horizontal axis, and a stale map entry must not bleed
     // into rendering. Cast saturates so a >u16::MAX offset (which
     // would be a bug elsewhere) doesn't wrap around.
-    let h_scroll: u16 = app.diff_body_h_scroll().min(u16::MAX as usize) as u16;
+    let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
     if diff.wrap {
         // Wrap mode: render every line; let Paragraph handle the
         // scroll. Slower for huge diffs, fine for typical PRs.
@@ -596,7 +596,7 @@ fn render_body_read(
     inner_height: u16,
 ) {
     let diff = app.diff();
-    let lines = match app.diff_read_cache_for(&file.path) {
+    let lines = match app.diff().read_cache_for(&file.path) {
         Some(l) => l,
         None => {
             let body = Paragraph::new(Line::from(Span::styled(
@@ -625,7 +625,7 @@ fn render_body_read(
     };
 
     let scroll = diff.read_scroll.get(&file.path).copied().unwrap_or(0);
-    let h_scroll: u16 = app.diff_body_h_scroll().min(u16::MAX as usize) as u16;
+    let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
     if diff.wrap {
         let rendered: Vec<Line<'static>> = lines
             .iter()
@@ -2425,8 +2425,8 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
 }
 
 fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
-    let in_read = app.diff_body_mode() == BodyMode::Read;
-    let mut hints: Vec<(&'static str, &'static str)> = match app.diff_focus() {
+    let in_read = app.diff().body_mode() == BodyMode::Read;
+    let mut hints: Vec<(&'static str, &'static str)> = match app.diff().focus() {
         DiffFocus::Files => {
             let mut h: Vec<(&'static str, &'static str)> = vec![("↑↓", "file"), ("tab", "body")];
             if !in_read {
@@ -2443,7 +2443,7 @@ fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             h
         }
     };
-    hints.push(match app.diff_body_mode() {
+    hints.push(match app.diff().body_mode() {
         BodyMode::Diff => ("v", "read"),
         BodyMode::Read => ("v", "diff"),
     });
@@ -2705,7 +2705,7 @@ mod tests {
         let backend = TestBackend::new(120, 6);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(cfg()).with_branch(Some("main".into()));
-        app.diff_set_files(vec![
+        app.diff_mut().set_files(vec![
             DiffFile {
                 path: "src/a.rs".into(),
                 status: DiffStatus::Modified,
