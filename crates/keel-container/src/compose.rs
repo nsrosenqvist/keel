@@ -51,6 +51,41 @@ impl ComposeBackend {
         }
     }
 
+    /// Build the `docker compose exec` command for a single invocation.
+    /// `pipe_stdin = true` forces `-T` (no TTY) regardless of
+    /// `opts.tty`, because piping stdin and TTY allocation are
+    /// mutually exclusive in compose exec.
+    fn build_exec_command(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+        pipe_stdin: bool,
+    ) -> Command {
+        let prefix = self.prefix();
+        let (head, tail) = prefix.split_first().expect("non-empty prefix");
+        let mut cmd = Command::new(head);
+        cmd.args(tail);
+        cmd.arg("exec");
+        if pipe_stdin {
+            cmd.arg("-T");
+            cmd.stdin(Stdio::piped());
+        } else if opts.tty {
+            cmd.arg("-it");
+        } else {
+            cmd.arg("-T");
+        }
+        for (k, v) in &opts.env {
+            cmd.arg("-e").arg(format!("{k}={v}"));
+        }
+        if let Some(wd) = &opts.workdir {
+            cmd.arg("-w").arg(wd);
+        }
+        cmd.arg(service);
+        cmd.args(argv);
+        cmd
+    }
+
     async fn probe(argv: &[&str]) -> bool {
         let (head, tail) = match argv.split_first() {
             Some(parts) => parts,
@@ -102,24 +137,7 @@ impl Backend for ComposeBackend {
         argv: &[&str],
         opts: &ExecOptions,
     ) -> Result<i32, BackendError> {
-        let prefix = self.prefix();
-        let (head, tail) = prefix.split_first().expect("non-empty prefix");
-        let mut cmd = Command::new(head);
-        cmd.args(tail);
-        cmd.arg("exec");
-        if opts.tty {
-            cmd.arg("-it");
-        } else {
-            cmd.arg("-T");
-        }
-        for (k, v) in &opts.env {
-            cmd.arg("-e").arg(format!("{k}={v}"));
-        }
-        if let Some(wd) = &opts.workdir {
-            cmd.arg("-w").arg(wd);
-        }
-        cmd.arg(service);
-        cmd.args(argv);
+        let mut cmd = self.build_exec_command(service, argv, opts, /*pipe_stdin=*/ false);
         let status = cmd.status().await?;
         Ok(status.code().unwrap_or(-1))
     }
@@ -133,24 +151,7 @@ impl Backend for ComposeBackend {
     ) -> Result<i32, BackendError> {
         use tokio::io::AsyncWriteExt;
 
-        let prefix = self.prefix();
-        let (head, tail) = prefix.split_first().expect("non-empty prefix");
-        let mut cmd = Command::new(head);
-        cmd.args(tail);
-        cmd.arg("exec");
-        // -T disables TTY allocation; piping stdin and -it are
-        // mutually exclusive in compose exec, and `tty` on opts is
-        // intentionally ignored here.
-        cmd.arg("-T");
-        for (k, v) in &opts.env {
-            cmd.arg("-e").arg(format!("{k}={v}"));
-        }
-        if let Some(wd) = &opts.workdir {
-            cmd.arg("-w").arg(wd);
-        }
-        cmd.arg(service);
-        cmd.args(argv);
-        cmd.stdin(Stdio::piped());
+        let mut cmd = self.build_exec_command(service, argv, opts, /*pipe_stdin=*/ true);
         cmd.kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(BackendError::Spawn)?;
@@ -165,6 +166,33 @@ impl Backend for ComposeBackend {
         }
         let status = child.wait().await.map_err(BackendError::Spawn)?;
         Ok(status.code().unwrap_or(-1))
+    }
+
+    async fn spawn_exec(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<tokio::process::Child, BackendError> {
+        let mut cmd = self.build_exec_command(service, argv, opts, /*pipe_stdin=*/ false);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
+    }
+
+    async fn spawn_exec_with_stdin(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<tokio::process::Child, BackendError> {
+        let mut cmd = self.build_exec_command(service, argv, opts, /*pipe_stdin=*/ true);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
     }
 
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError> {

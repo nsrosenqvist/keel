@@ -380,10 +380,17 @@ impl Executor {
         if let Some(service) = &recipe.service {
             let opts = ExecOptions {
                 tty: recipe.tty,
-                env: env.into_map(),
+                env: env.project_only_map(),
                 workdir: None,
             };
             let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+            if self.sink.capture() {
+                let child = self
+                    .backend
+                    .spawn_exec(service, &argv_refs, &opts)
+                    .await?;
+                return self.stream_child_to_sink(child).await;
+            }
             return self
                 .backend
                 .exec(service, &argv_refs, &opts)
@@ -394,13 +401,19 @@ impl Executor {
         if let WorkspaceTarget::Devcontainer(dc) = &self.workspace {
             let opts = ExecOptions {
                 tty: recipe.tty,
-                env: env.into_map(),
+                env: env.project_only_map(),
                 workdir: None,
             };
             let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
             // Pass the container name as `service` — DevcontainerBackend
             // ignores the arg but `Backend::exec`'s signature requires
             // a name. ensure_up runs inside the backend itself.
+            if self.sink.capture() {
+                let child = dc
+                    .spawn_exec(dc.container_name(), &argv_refs, &opts)
+                    .await?;
+                return self.stream_child_to_sink(child).await;
+            }
             return dc
                 .exec(dc.container_name(), &argv_refs, &opts)
                 .await
@@ -435,9 +448,40 @@ impl Executor {
         // is dropped, and kill_on_drop fires SIGKILL. Without this,
         // aborting the JoinHandle would leak the process.
         cmd.kill_on_drop(true);
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .map_err(|e| RuntimeError::Backend(keel_container::BackendError::Spawn(e)))?;
+        self.stream_child_to_sink(child).await
+    }
+
+    /// Write `body` into the child's piped stdin (closing it on EOF
+    /// so `bash -s` / `sh -s` start) and stream the rest through the
+    /// configured sink. Used for the in-container script exec path
+    /// when the TUI sink wants line-by-line capture.
+    async fn write_stdin_and_stream(
+        &self,
+        mut child: tokio::process::Child,
+        body: &str,
+    ) -> Result<i32, RuntimeError> {
+        use tokio::io::AsyncWriteExt;
+        if let Some(mut stdin_handle) = child.stdin.take() {
+            stdin_handle
+                .write_all(body.as_bytes())
+                .await
+                .map_err(|e| RuntimeError::Backend(keel_container::BackendError::Spawn(e)))?;
+            drop(stdin_handle);
+        }
+        self.stream_child_to_sink(child).await
+    }
+
+    /// Pump a piped-stdio [`tokio::process::Child`] through the
+    /// configured sink and await its exit code. Shared between host
+    /// exec (where we own the spawn) and container exec (where the
+    /// backend hands us the already-spawned [`Child`]).
+    async fn stream_child_to_sink(
+        &self,
+        mut child: tokio::process::Child,
+    ) -> Result<i32, RuntimeError> {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
 
@@ -530,9 +574,16 @@ impl Executor {
             }
             let opts = ExecOptions {
                 tty: false, // forced off — stdin pipe + TTY are mutually exclusive
-                env: env.into_map(),
+                env: env.project_only_map(),
                 workdir: None,
             };
+            if self.sink.capture() {
+                let child = self
+                    .backend
+                    .spawn_exec_with_stdin(service, &argv, &opts)
+                    .await?;
+                return self.write_stdin_and_stream(child, &body).await;
+            }
             return self
                 .backend
                 .exec_with_stdin(service, &argv, &opts, &body)
@@ -555,9 +606,15 @@ impl Executor {
             }
             let opts = ExecOptions {
                 tty: false,
-                env: env.into_map(),
+                env: env.project_only_map(),
                 workdir: None,
             };
+            if self.sink.capture() {
+                let child = dc
+                    .spawn_exec_with_stdin(dc.container_name(), &argv, &opts)
+                    .await?;
+                return self.write_stdin_and_stream(child, &body).await;
+            }
             return dc
                 .exec_with_stdin(dc.container_name(), &argv, &opts, &body)
                 .await
@@ -588,7 +645,7 @@ impl Executor {
         let env = self.effective_env(None).await?;
         let opts = ExecOptions {
             tty,
-            env: env.into_map(),
+            env: env.project_only_map(),
             workdir: None,
         };
         self.backend

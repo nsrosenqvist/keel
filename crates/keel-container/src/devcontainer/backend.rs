@@ -240,6 +240,38 @@ impl DevcontainerBackend {
         run_docker(&mut cmd, "run").await
     }
 
+    /// Build the `docker exec` command for a single invocation.
+    /// `pipe_stdin = true` forces `-i` (no TTY) regardless of
+    /// `opts.tty`, because `docker exec -it` rejects piped stdin.
+    fn build_exec_command(
+        &self,
+        argv: &[&str],
+        opts: &ExecOptions,
+        pipe_stdin: bool,
+    ) -> Command {
+        let effective_opts;
+        let opts_ref = if pipe_stdin && opts.tty {
+            effective_opts = ExecOptions {
+                tty: false,
+                env: opts.env.clone(),
+                workdir: opts.workdir.clone(),
+            };
+            &effective_opts
+        } else {
+            opts
+        };
+        let built = self.exec_argv(argv, opts_ref);
+        let (head, tail) = built
+            .split_first()
+            .expect("exec_argv always produces at least program + subcommand");
+        let mut cmd = Command::new(head);
+        cmd.args(tail);
+        if pipe_stdin {
+            cmd.stdin(Stdio::piped());
+        }
+        cmd
+    }
+
     /// Argv builder for `docker exec`. Split out so tests can snapshot
     /// the argv shape without invoking docker.
     pub fn exec_argv(&self, argv: &[&str], opts: &ExecOptions) -> Vec<String> {
@@ -470,12 +502,7 @@ impl Backend for DevcontainerBackend {
         self.ensure_up()
             .await
             .map_err(|e| BackendError::Reported(e.to_string()))?;
-        let built = self.exec_argv(argv, opts);
-        let (head, tail) = built
-            .split_first()
-            .expect("exec_argv always produces at least program + subcommand");
-        let mut cmd = Command::new(head);
-        cmd.args(tail);
+        let mut cmd = self.build_exec_command(argv, opts, /*pipe_stdin=*/ false);
         let status = cmd.status().await.map_err(BackendError::Spawn)?;
         Ok(status.code().unwrap_or(-1))
     }
@@ -492,15 +519,7 @@ impl Backend for DevcontainerBackend {
         self.ensure_up()
             .await
             .map_err(|e| BackendError::Reported(e.to_string()))?;
-        // Force `-i` (no TTY) — `docker exec -it` rejects piped stdin
-        // for the same reason `docker compose exec` does.
-        let mut forced = opts.clone();
-        forced.tty = false;
-        let built = self.exec_argv(argv, &forced);
-        let (head, tail) = built.split_first().expect("non-empty argv");
-        let mut cmd = Command::new(head);
-        cmd.args(tail);
-        cmd.stdin(Stdio::piped());
+        let mut cmd = self.build_exec_command(argv, opts, /*pipe_stdin=*/ true);
         cmd.kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(BackendError::Spawn)?;
@@ -513,6 +532,39 @@ impl Backend for DevcontainerBackend {
         }
         let status = child.wait().await.map_err(BackendError::Spawn)?;
         Ok(status.code().unwrap_or(-1))
+    }
+
+    async fn spawn_exec(
+        &self,
+        _service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        self.ensure_up()
+            .await
+            .map_err(|e| BackendError::Reported(e.to_string()))?;
+        let mut cmd = self.build_exec_command(argv, opts, /*pipe_stdin=*/ false);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::null());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
+    }
+
+    async fn spawn_exec_with_stdin(
+        &self,
+        _service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        self.ensure_up()
+            .await
+            .map_err(|e| BackendError::Reported(e.to_string()))?;
+        let mut cmd = self.build_exec_command(argv, opts, /*pipe_stdin=*/ true);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.kill_on_drop(true);
+        cmd.spawn().map_err(BackendError::Spawn)
     }
 
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError> {

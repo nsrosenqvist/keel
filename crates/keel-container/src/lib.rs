@@ -84,6 +84,42 @@ pub trait Backend: Send + Sync {
         ))
     }
 
+    /// Spawn an exec and return the [`Child`] with stdout/stderr
+    /// piped. The caller streams its output (typically through an
+    /// `OutputSink` in `keel-runtime`) and awaits exit. Used by the
+    /// TUI so per-recipe output lands in the recipe's pane rather
+    /// than bleeding onto the raw terminal under the TUI frame.
+    ///
+    /// The default impl errors — backends that don't materially run
+    /// commands (`Null`, `Custom`) inherit it; the streaming variant
+    /// is only wired for Compose and the devcontainer backend.
+    async fn spawn_exec(
+        &self,
+        _service: &str,
+        _argv: &[&str],
+        _opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        Err(BackendError::Reported(
+            "this backend does not support sink-aware exec".into(),
+        ))
+    }
+
+    /// As [`Self::spawn_exec`], but the returned [`Child`] has stdin
+    /// piped so the caller can write a script body before waiting on
+    /// the process. stdout / stderr are piped too. `tty` is forced
+    /// off internally — piped stdin and an allocated TTY are mutually
+    /// exclusive in `docker exec` / `compose exec`.
+    async fn spawn_exec_with_stdin(
+        &self,
+        _service: &str,
+        _argv: &[&str],
+        _opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        Err(BackendError::Reported(
+            "this backend does not support sink-aware stdin-piped exec".into(),
+        ))
+    }
+
     /// Run a passthrough command directly against the backend (e.g.
     /// `docker compose ps`). Used by `compose_passthrough`.
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError>;

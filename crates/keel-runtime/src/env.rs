@@ -18,14 +18,25 @@
 use crate::error::RuntimeError;
 use crate::worktree::Identity;
 use keel_config::{Config, EnvSpec};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use tokio::process::Command;
 
 /// Resolved environment ready to hand to a process.
+///
+/// Two views live side by side:
+///   * `vars` — the merged result of process env + project config; used
+///     for host-side execution where the child should inherit everything
+///     a normal shell would (PATH, HOME, …) plus project overrides.
+///   * `project_keys` — the subset of keys *declared* by project config
+///     (dotenv files, KEEL_* injection, `[env]`, recipe / script
+///     overrides). Used for container exec, where leaking host PATH
+///     etc. via `-e KEY=VAL` would overwrite the image's defaults and
+///     break command resolution.
 #[derive(Debug, Default, Clone)]
 pub struct Env {
     vars: BTreeMap<String, String>,
+    project_keys: BTreeSet<String>,
 }
 
 impl Env {
@@ -38,6 +49,7 @@ impl Env {
     pub fn from_process() -> Self {
         Self {
             vars: std::env::vars().collect(),
+            project_keys: BTreeSet::new(),
         }
     }
 
@@ -59,6 +71,7 @@ impl Env {
         identity: &Identity,
     ) -> Result<Self, RuntimeError> {
         let mut vars: BTreeMap<String, String> = std::env::vars().collect();
+        let mut project_keys: BTreeSet<String> = BTreeSet::new();
 
         for raw_path in &config.env_files.files {
             let expanded = expand_vars(raw_path, &vars);
@@ -80,24 +93,33 @@ impl Env {
                     path: path.clone(),
                     source,
                 })?;
+                project_keys.insert(k.clone());
                 vars.insert(k, v);
             }
         }
 
         // Inject worktree-derived env *before* [env] resolution so user
         // entries can reference KEEL_WORKTREE_OFFSET via `offset`.
-        inject_worktree_env(&mut vars, config, identity);
+        inject_worktree_env(&mut vars, &mut project_keys, config, identity);
 
         for (name, spec) in &config.env {
             if let Some(value) = resolve_spec(name, spec, &vars).await? {
+                project_keys.insert(name.clone());
                 vars.insert(name.clone(), value);
             }
         }
 
-        Ok(Self { vars })
+        Ok(Self {
+            vars,
+            project_keys,
+        })
     }
 
-    /// Apply per-recipe overrides on top of the base env.
+    /// Apply per-recipe overrides on top of the base env. Overrides are
+    /// always project-declared (they came from `[command.X.env]`, a
+    /// script's `env = {...}`, or KEEL_*-prefixed executor injection) —
+    /// mark them so they survive the project-only filter used for
+    /// container exec.
     pub fn with_overrides<I, K, V>(mut self, overrides: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -105,7 +127,9 @@ impl Env {
         V: Into<String>,
     {
         for (k, v) in overrides {
-            self.vars.insert(k.into(), v.into());
+            let k = k.into();
+            self.project_keys.insert(k.clone());
+            self.vars.insert(k, v.into());
         }
         self
     }
@@ -120,6 +144,18 @@ impl Env {
 
     pub fn into_map(self) -> BTreeMap<String, String> {
         self.vars
+    }
+
+    /// Snapshot of the project-declared subset only. Use this for
+    /// container exec, where inherited host vars (PATH, HOME, …)
+    /// would otherwise overwrite the image's defaults and break
+    /// command resolution. Keys come from dotenv files, KEEL_*
+    /// injection, `[env]`, and recipe / script overrides.
+    pub fn project_only_map(&self) -> BTreeMap<String, String> {
+        self.project_keys
+            .iter()
+            .filter_map(|k| self.vars.get(k).map(|v| (k.clone(), v.clone())))
+            .collect()
     }
 
     /// Apply this env to `cmd`, replacing the inherited process
@@ -147,26 +183,36 @@ impl Env {
 /// Inject `KEEL_WORKTREE_*` and (when isolation is on)
 /// `COMPOSE_PROJECT_NAME` into `vars`. Won't clobber values the user
 /// has already set in `.env` or process env — those take priority.
-fn inject_worktree_env(vars: &mut BTreeMap<String, String>, config: &Config, identity: &Identity) {
+/// Keys are always recorded as project-declared (even when the value
+/// was kept from existing env) because keel owns the semantics of
+/// these names.
+fn inject_worktree_env(
+    vars: &mut BTreeMap<String, String>,
+    project_keys: &mut BTreeSet<String>,
+    config: &Config,
+    identity: &Identity,
+) {
     // Always inject the slug + offset so the user can reference them
     // unconditionally in `[env]` specs. Empty slug → empty string and
     // offset 0.
     vars.entry("KEEL_WORKTREE_SLUG".into())
         .or_insert_with(|| identity.slug.clone());
+    project_keys.insert("KEEL_WORKTREE_SLUG".into());
     vars.entry("KEEL_WORKTREE_OFFSET".into())
         .or_insert_with(|| identity.offset.to_string());
+    project_keys.insert("KEEL_WORKTREE_OFFSET".into());
 
     // Compose project name: only when isolation is on, slug is
     // non-empty, and the user hasn't already set it.
-    if config.worktrees.isolate_compose
-        && identity.is_isolated()
-        && !vars.contains_key("COMPOSE_PROJECT_NAME")
-    {
-        let project = config.project.name.as_deref().unwrap_or("keel");
-        vars.insert(
-            "COMPOSE_PROJECT_NAME".into(),
-            format!("{project}-{slug}", slug = identity.slug),
-        );
+    if config.worktrees.isolate_compose && identity.is_isolated() {
+        if !vars.contains_key("COMPOSE_PROJECT_NAME") {
+            let project = config.project.name.as_deref().unwrap_or("keel");
+            vars.insert(
+                "COMPOSE_PROJECT_NAME".into(),
+                format!("{project}-{slug}", slug = identity.slug),
+            );
+        }
+        project_keys.insert("COMPOSE_PROJECT_NAME".into());
     }
 }
 
@@ -483,6 +529,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_only_map_excludes_inherited_host_env() {
+        // SAFETY: tests in this module run sequentially.
+        unsafe {
+            std::env::set_var("KEEL_HOST_LEAK", "from-shell");
+        }
+        let cfg = cfg_with_env(&[(
+            "KEEL_PROJECT_VAR",
+            EnvSpec {
+                value: Some("from-config".into()),
+                ..Default::default()
+            },
+        )]);
+        let env = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
+            .await
+            .unwrap();
+        unsafe {
+            std::env::remove_var("KEEL_HOST_LEAK");
+        }
+        let project = env.project_only_map();
+        assert_eq!(
+            project.get("KEEL_PROJECT_VAR").map(String::as_str),
+            Some("from-config")
+        );
+        assert!(
+            !project.contains_key("KEEL_HOST_LEAK"),
+            "host-only var must not leak into container env"
+        );
+        // PATH is the canonical host-only leak — confirm it's filtered.
+        assert!(
+            !project.contains_key("PATH"),
+            "PATH must not be passed to container exec; it would override the image's default and break command lookup"
+        );
+        // KEEL_WORKTREE_* are project-declared even though their value
+        // came from the executor's identity injection.
+        assert!(project.contains_key("KEEL_WORKTREE_SLUG"));
+        assert!(project.contains_key("KEEL_WORKTREE_OFFSET"));
+    }
+
+    #[tokio::test]
+    async fn project_only_map_includes_recipe_overrides() {
+        let env = Env::new().with_overrides([("MY_VAR", "from-recipe")]);
+        let project = env.project_only_map();
+        assert_eq!(
+            project.get("MY_VAR").map(String::as_str),
+            Some("from-recipe")
+        );
+    }
+
+    #[tokio::test]
+    async fn project_only_map_includes_dotenv_keys() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, ".env", "FROM_DOTENV=yes\n");
+        let mut cfg = Config::default();
+        cfg.env_files.files.push(".env".into());
+        let env = Env::resolve(&cfg, dir.path()).await.unwrap();
+        let project = env.project_only_map();
+        assert_eq!(
+            project.get("FROM_DOTENV").map(String::as_str),
+            Some("yes")
+        );
+    }
+
+    #[tokio::test]
     async fn recipe_overrides_win() {
         let cfg = cfg_with_env(&[(
             "APP_ENV",
@@ -538,7 +647,8 @@ mod tests {
             offset: 42,
         };
         let mut vars = BTreeMap::new();
-        inject_worktree_env(&mut vars, &cfg, &identity);
+        let mut keys = BTreeSet::new();
+        inject_worktree_env(&mut vars, &mut keys, &cfg, &identity);
         assert_eq!(
             vars.get("KEEL_WORKTREE_SLUG").map(String::as_str),
             Some("feature-x")
@@ -551,6 +661,9 @@ mod tests {
             vars.get("COMPOSE_PROJECT_NAME").map(String::as_str),
             Some("myapp-feature-x")
         );
+        assert!(keys.contains("KEEL_WORKTREE_SLUG"));
+        assert!(keys.contains("KEEL_WORKTREE_OFFSET"));
+        assert!(keys.contains("COMPOSE_PROJECT_NAME"));
     }
 
     #[test]
@@ -565,12 +678,17 @@ mod tests {
             offset: 42,
         };
         let mut vars = BTreeMap::new();
+        let mut keys = BTreeSet::new();
         vars.insert("COMPOSE_PROJECT_NAME".into(), "user-chose-this".into());
-        inject_worktree_env(&mut vars, &cfg, &identity);
+        inject_worktree_env(&mut vars, &mut keys, &cfg, &identity);
         assert_eq!(
             vars.get("COMPOSE_PROJECT_NAME").map(String::as_str),
             Some("user-chose-this")
         );
+        // Still flagged project-declared even when value pre-existed —
+        // keel owns the semantics of the name, so it must survive the
+        // container-exec filter.
+        assert!(keys.contains("COMPOSE_PROJECT_NAME"));
     }
 
     #[test]
@@ -580,7 +698,8 @@ mod tests {
         let mut cfg = keel_config::Config::default();
         cfg.project.name = Some("myapp".into());
         let mut vars = BTreeMap::new();
-        inject_worktree_env(&mut vars, &cfg, &Identity::none());
+        let mut keys = BTreeSet::new();
+        inject_worktree_env(&mut vars, &mut keys, &cfg, &Identity::none());
         assert_eq!(
             vars.get("KEEL_WORKTREE_SLUG").map(String::as_str),
             Some("")
@@ -590,6 +709,7 @@ mod tests {
             Some("0")
         );
         assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
+        assert!(!keys.contains("COMPOSE_PROJECT_NAME"));
     }
 
     #[test]
@@ -605,7 +725,8 @@ mod tests {
             offset: 1,
         };
         let mut vars = BTreeMap::new();
-        inject_worktree_env(&mut vars, &cfg, &identity);
+        let mut keys = BTreeSet::new();
+        inject_worktree_env(&mut vars, &mut keys, &cfg, &identity);
         assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
         // slug + offset still injected.
         assert_eq!(

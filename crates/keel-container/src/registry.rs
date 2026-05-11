@@ -116,6 +116,34 @@ impl Backend for ServiceRegistry {
         }
     }
 
+    async fn spawn_exec(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        match self.route(service) {
+            Some(b) => b.spawn_exec(service, argv, opts).await,
+            None => self.require_container()?.spawn_exec(service, argv, opts).await,
+        }
+    }
+
+    async fn spawn_exec_with_stdin(
+        &self,
+        service: &str,
+        argv: &[&str],
+        opts: &ExecOptions,
+    ) -> Result<Child, BackendError> {
+        match self.route(service) {
+            Some(b) => b.spawn_exec_with_stdin(service, argv, opts).await,
+            None => {
+                self.require_container()?
+                    .spawn_exec_with_stdin(service, argv, opts)
+                    .await
+            }
+        }
+    }
+
     async fn passthrough(&self, args: &[&str]) -> Result<i32, BackendError> {
         self.require_container()?.passthrough(args).await
     }

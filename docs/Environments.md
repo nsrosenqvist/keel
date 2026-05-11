@@ -23,6 +23,31 @@ In order, later wins:
 3. **`[env]` table**, key by key.
 4. **Recipe `env =` overrides** for the recipe currently running.
 
+## Host execution vs. container exec
+
+When a recipe runs on the host (no `in = "<service>"`, no devcontainer),
+the child process inherits the full merged set above — process env,
+dotenv files, `[env]`, recipe overrides — so commands like `git` and
+`cargo` find their PATH the way they normally would.
+
+When a recipe runs inside a container — either `in = "<compose-service>"`
+or under an opt-in devcontainer — only the **project-declared** subset
+is forwarded via `-e KEY=VAL`:
+
+- Keys loaded from `[env_files]` dotenv files.
+- Keys defined under `[env]`.
+- The injected `KEEL_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
+- Per-recipe / per-script `env = {...}` overrides.
+
+Inherited process env (host `PATH`, `HOME`, `USER`, `SHELL`, …) is
+intentionally **not** propagated. The container's image defaults and
+the devcontainer spec's own `containerEnv` / `remoteEnv` provide those
+— leaking the host values via `-e PATH=...` overrides the container's
+PATH and breaks command resolution (`exec "sh": not found`). To make
+a host-shell var visible inside a container, declare it explicitly in
+`[env]` (e.g. `MY_TOKEN = { default = "" }` to pick up the existing
+process value, or `from_command = "..."` to derive it).
+
 ## `[env]` per-key resolution
 
 Each `[env.<KEY>]` is one of these shapes (spec fields combine):
