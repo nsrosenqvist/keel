@@ -1,5 +1,6 @@
 //! State for the diff view (`g`).
 
+use crate::tui::shared::scroll::{Axis, BodyScroll};
 use crate::tui::syntax::HighlightedSpan;
 use crate::tui::views::diff::line_width::{diff_line_rendered_width, read_line_rendered_width};
 use ratatui::layout::Rect;
@@ -192,9 +193,12 @@ pub struct DiffView {
     pub deletions_total: usize,
     /// Which pane has focus. Tab toggles.
     pub focus: DiffFocus,
-    /// Per-file scroll offset (top line index). Stored per path so
-    /// jumping to another file and back resumes the same position.
-    pub body_scroll: HashMap<String, usize>,
+    /// Scroll offsets (vertical + horizontal) for the diff body mode,
+    /// keyed by file path. Switching modes preserves each mode's pan
+    /// + scroll position.
+    pub diff_scroll: BodyScroll,
+    /// Scroll offsets for the read body mode.
+    pub read_scroll: BodyScroll,
     /// Last viewport height the body was rendered at. Cell so the
     /// renderer can write through `&DiffView`. Read by PgUp/PgDn and
     /// G to size half-pages and clamp to the bottom of the diff.
@@ -216,16 +220,6 @@ pub struct DiffView {
     /// readable without wrapping and horizontal "loss" is preferred
     /// over visual jitter. On for narrow terminals.
     pub wrap: bool,
-    /// Per-file horizontal scroll offset (columns from x=0) for the
-    /// diff body. Independent from `body_scroll` so toggling files
-    /// preserves each file's pan position. Cleared per-file on
-    /// `toggle_wrap` when wrap is enabled — a non-zero offset under
-    /// wrap silently chops the left side of every wrapped row.
-    pub body_h_scroll: HashMap<String, usize>,
-    /// Per-file horizontal scroll offset for read mode. Mirrors
-    /// `body_h_scroll`. Independent from the diff-mode map so toggling
-    /// `v` preserves each mode's pan position.
-    pub read_h_scroll: HashMap<String, usize>,
     /// Per-file row rects in the files list. Populated by the
     /// renderer on every frame; hit-tested by the mouse handler to
     /// route clicks to a file index.
@@ -245,10 +239,6 @@ pub struct DiffView {
     /// populated on the first switch into read mode for a given
     /// file; cleared by `r` (refresh) alongside the diff cache.
     pub read_cache: HashMap<String, Vec<ReadLine>>,
-    /// Per-file scroll offset for read mode. Kept independent from
-    /// `body_scroll` so toggling modes preserves each mode's
-    /// position.
-    pub read_scroll: HashMap<String, usize>,
 }
 
 impl DiffView {
@@ -358,7 +348,7 @@ impl DiffView {
     pub fn mark_stale(&mut self) {
         self.loaded = false;
         self.cache.clear();
-        self.body_scroll.clear();
+        self.diff_scroll.clear();
         self.read_cache.clear();
         self.read_scroll.clear();
         self.additions_total = 0;
@@ -395,7 +385,7 @@ impl DiffView {
             Some(f) => &f.path,
             None => return 0,
         };
-        self.active_scroll_map().get(path).copied().unwrap_or(0)
+        self.active_scroll().get(path, Axis::Vertical)
     }
 
     /// Move the body scroll by `delta` lines, clamped to the
@@ -409,9 +399,7 @@ impl DiffView {
         let total = self.active_content_len(&path);
         let viewport = self.body_height.get() as usize;
         let max = total.saturating_sub(viewport.max(1));
-        let cur = self.active_scroll_map().get(&path).copied().unwrap_or(0) as i64;
-        let next = (cur + delta as i64).max(0).min(max as i64) as usize;
-        self.active_scroll_map_mut().insert(path, next);
+        self.active_scroll_mut().scroll_by(&path, Axis::Vertical, delta, max);
     }
 
     pub fn body_scroll_to_top(&mut self) {
@@ -419,7 +407,7 @@ impl DiffView {
             return;
         };
         let path = file.path.clone();
-        self.active_scroll_map_mut().insert(path, 0);
+        self.active_scroll_mut().set(&path, Axis::Vertical, 0);
     }
 
     pub fn body_scroll_to_bottom(&mut self) {
@@ -430,34 +418,20 @@ impl DiffView {
         let total = self.active_content_len(&path);
         let viewport = self.body_height.get() as usize;
         let bottom = total.saturating_sub(viewport.max(1));
-        self.active_scroll_map_mut().insert(path, bottom);
+        self.active_scroll_mut().set(&path, Axis::Vertical, bottom);
     }
 
-    fn active_scroll_map(&self) -> &HashMap<String, usize> {
+    fn active_scroll(&self) -> &BodyScroll {
         match self.body_mode {
-            BodyMode::Diff => &self.body_scroll,
+            BodyMode::Diff => &self.diff_scroll,
             BodyMode::Read => &self.read_scroll,
         }
     }
 
-    fn active_scroll_map_mut(&mut self) -> &mut HashMap<String, usize> {
+    fn active_scroll_mut(&mut self) -> &mut BodyScroll {
         match self.body_mode {
-            BodyMode::Diff => &mut self.body_scroll,
+            BodyMode::Diff => &mut self.diff_scroll,
             BodyMode::Read => &mut self.read_scroll,
-        }
-    }
-
-    fn active_h_scroll_map(&self) -> &HashMap<String, usize> {
-        match self.body_mode {
-            BodyMode::Diff => &self.body_h_scroll,
-            BodyMode::Read => &self.read_h_scroll,
-        }
-    }
-
-    fn active_h_scroll_map_mut(&mut self) -> &mut HashMap<String, usize> {
-        match self.body_mode {
-            BodyMode::Diff => &mut self.body_h_scroll,
-            BodyMode::Read => &mut self.read_h_scroll,
         }
     }
 
@@ -525,8 +499,9 @@ impl DiffView {
             Some(f) => &f.path,
             None => return 0,
         };
-        let raw = self.active_h_scroll_map().get(path).copied().unwrap_or(0);
-        raw.min(self.max_h_scroll(path))
+        self.active_scroll()
+            .get(path, Axis::Horizontal)
+            .min(self.max_h_scroll(path))
     }
 
     /// Pan the body by `delta` columns. Clamped at 0 (no left of
@@ -541,10 +516,9 @@ impl DiffView {
             return;
         };
         let path = file.path.clone();
-        let max = self.max_h_scroll(&path) as i64;
-        let cur = self.active_h_scroll_map().get(&path).copied().unwrap_or(0) as i64;
-        let next = (cur + delta as i64).max(0).min(max) as usize;
-        self.active_h_scroll_map_mut().insert(path, next);
+        let max = self.max_h_scroll(&path);
+        self.active_scroll_mut()
+            .scroll_by(&path, Axis::Horizontal, delta, max);
     }
 
     fn active_content_len(&self, path: &str) -> usize {
@@ -555,7 +529,9 @@ impl DiffView {
     }
 
     /// Jump to the next `@@` hunk header below the current scroll
-    /// position. No-op if no further hunk exists.
+    /// position. No-op if no further hunk exists. Hunk navigation is
+    /// only meaningful in diff mode (read mode has no hunk markers),
+    /// so this always operates on `diff_scroll`.
     pub fn jump_hunk_next(&mut self) {
         let Some(file) = self.files.get(self.selected) else {
             return;
@@ -564,7 +540,7 @@ impl DiffView {
         let Some(lines) = self.cache.get(&path) else {
             return;
         };
-        let cur = self.body_scroll.get(&path).copied().unwrap_or(0);
+        let cur = self.diff_scroll.get(&path, Axis::Vertical);
         let next = lines
             .iter()
             .enumerate()
@@ -574,7 +550,7 @@ impl DiffView {
         if let Some(i) = next {
             let viewport = self.body_height.get() as usize;
             let max = lines.len().saturating_sub(viewport.max(1));
-            self.body_scroll.insert(path, i.min(max));
+            self.diff_scroll.set(&path, Axis::Vertical, i.min(max));
         }
     }
 
@@ -588,7 +564,7 @@ impl DiffView {
         let Some(lines) = self.cache.get(&path) else {
             return;
         };
-        let cur = self.body_scroll.get(&path).copied().unwrap_or(0);
+        let cur = self.diff_scroll.get(&path, Axis::Vertical);
         let prev = lines
             .iter()
             .enumerate()
@@ -597,7 +573,7 @@ impl DiffView {
             .find(|(_, l)| l.kind == DiffLineKind::Hunk)
             .map(|(i, _)| i);
         if let Some(i) = prev {
-            self.body_scroll.insert(path, i);
+            self.diff_scroll.set(&path, Axis::Vertical, i);
         }
     }
 
@@ -605,17 +581,17 @@ impl DiffView {
         self.wrap = !self.wrap;
         // Turning wrap *on* with a non-zero h-offset would silently
         // chop the first N columns of every wrapped row. Clear the
-        // active file's entry in both maps to keep the model honest;
+        // active file's entry in both modes to keep the model honest;
         // `body_h_scroll` also clamps to 0 while wrap is on as a
         // belt-and-suspenders against any other code path that
-        // mutates the map without going through this toggle.
+        // mutates the offset without going through this toggle.
         if self.wrap {
             let Some(file) = self.files.get(self.selected) else {
                 return;
             };
             let path = file.path.clone();
-            self.body_h_scroll.remove(&path);
-            self.read_h_scroll.remove(&path);
+            self.diff_scroll.remove(&path, Axis::Horizontal);
+            self.read_scroll.remove(&path, Axis::Horizontal);
         }
     }
 

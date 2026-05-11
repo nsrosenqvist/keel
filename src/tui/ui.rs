@@ -552,8 +552,9 @@ fn render_body_diff(
         Some(pane.max(longest))
     };
 
-    let scroll = diff.body_scroll.get(&file.path).copied().unwrap_or(0);
-    // `diff_body_h_scroll` clamps to 0 when wrap is on — wrap mode
+    use crate::tui::shared::scroll::Axis;
+    let scroll = diff.diff_scroll.get(&file.path, Axis::Vertical);
+    // `body_h_scroll` clamps to 0 when wrap is on — wrap mode
     // has no horizontal axis, and a stale map entry must not bleed
     // into rendering. Cast saturates so a >u16::MAX offset (which
     // would be a bug elsewhere) doesn't wrap around.
@@ -624,7 +625,8 @@ fn render_body_read(
         Some(pane.max(longest))
     };
 
-    let scroll = diff.read_scroll.get(&file.path).copied().unwrap_or(0);
+    use crate::tui::shared::scroll::Axis;
+    let scroll = diff.read_scroll.get(&file.path, Axis::Vertical);
     let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
     if diff.wrap {
         let rendered: Vec<Line<'static>> = lines

@@ -3085,11 +3085,13 @@ mod tests {
             .collect();
         app.diff_mut().set_read_cache("a".into(), read_lines);
 
-        // Scroll in diff mode, confirm only body_scroll changes.
+        use crate::tui::shared::scroll::Axis;
+
+        // Scroll in diff mode, confirm only diff_scroll changes.
         app.diff_mut().body_scroll_by(2);
         assert_eq!(app.diff().body_scroll(), 2);
-        assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
-        assert!(!app.diff.read_scroll.contains_key("a"));
+        assert_eq!(app.diff().diff_scroll.get("a", Axis::Vertical), 2);
+        assert_eq!(app.diff().read_scroll.get("a", Axis::Vertical), 0);
 
         // Switch to read mode; scroll reads from the read map (empty).
         app.diff_mut().toggle_body_mode();
@@ -3099,8 +3101,8 @@ mod tests {
         // Scroll in read mode; only read_scroll changes.
         app.diff_mut().body_scroll_by(3);
         assert_eq!(app.diff().body_scroll(), 3);
-        assert_eq!(app.diff.read_scroll.get("a").copied(), Some(3));
-        assert_eq!(app.diff.body_scroll.get("a").copied(), Some(2));
+        assert_eq!(app.diff().read_scroll.get("a", Axis::Vertical), 3);
+        assert_eq!(app.diff().diff_scroll.get("a", Axis::Vertical), 2);
 
         // Switch back — diff scroll is preserved.
         app.diff_mut().toggle_body_mode();
