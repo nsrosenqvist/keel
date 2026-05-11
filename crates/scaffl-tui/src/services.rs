@@ -6,21 +6,20 @@
 //! [`crate::runner::RunState`]'s buffer so the renderer can treat them
 //! the same way.
 //!
-//! Status (running / stopped / missing) is polled at most once every
-//! 2 seconds; the result drives the indicator dot in the sidebar.
+//! Status (running / stopped / missing) is polled by the background
+//! [`crate::worker`] on its own cadence; the worker pushes
+//! `ServiceStatus` snapshots that the render loop folds into
+//! `ServicePane::status` via `App::drain_worker_snapshots`.
 
 use crate::runner::{CapturedLine, OUTPUT_BUFFER_CAP, push_capped};
 use scaffl_container::{Backend, BackendError, ServiceStatus};
 use scaffl_runtime::{OutputLine, OutputStream};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
-
-const STATUS_REFRESH: Duration = Duration::from_secs(2);
 
 /// State for a single service pane.
 pub struct ServicePane {
@@ -36,7 +35,6 @@ pub struct ServicePane {
     /// Last error from `Backend::tail_logs`, if any. Surfaces in the
     /// pane title so the user knows why it's empty.
     pub tail_error: Option<String>,
-    status_checked: Option<Instant>,
 }
 
 impl ServicePane {
@@ -50,7 +48,6 @@ impl ServicePane {
             stderr_task: None,
             status: None,
             tail_error: None,
-            status_checked: None,
         }
     }
 
@@ -180,21 +177,6 @@ impl ServicePane {
         }
     }
 
-    /// Refresh the cached status if the last check is older than the
-    /// status-refresh window (2 seconds).
-    pub async fn refresh_status(&mut self, backend: &Arc<dyn Backend>) {
-        let now = Instant::now();
-        let stale = self
-            .status_checked
-            .is_none_or(|t| now.duration_since(t) >= STATUS_REFRESH);
-        if !stale {
-            return;
-        }
-        self.status_checked = Some(now);
-        if let Ok(s) = backend.status(&self.name).await {
-            self.status = Some(s);
-        }
-    }
 }
 
 fn format_error(e: &BackendError) -> String {

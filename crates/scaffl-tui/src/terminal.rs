@@ -97,11 +97,16 @@ async fn drive(
     let mut events = spawn_event_reader();
     loop {
         // Pre-render hooks: drain queued output and advance run state.
+        // All blocking I/O lives off this path — boot tasks deliver
+        // their results via channels (drain_boot_results), the
+        // worker polls service status on its own cadence
+        // (drain_worker_snapshots), and everything else here is a
+        // non-blocking poll.
         app.drain_boot_results();
+        app.drain_worker_snapshots();
         app.drain_runs();
         app.poll_runs().await;
         app.drain_services();
-        app.refresh_service_status().await;
         app.tick_watchers().await;
 
         terminal.draw(|f| ui::render(app, f))?;
@@ -165,10 +170,9 @@ async fn drive(
             // Reload cached window list — new shell created, or
             // user typed `exit` and the window died.
             refresh_tmux_windows(app, true).await;
-            // Paint the post-attach state *now*, before the next
-            // loop iteration's slow pre-render hooks
-            // (`refresh_service_status` shells out to compose for
-            // each service — ~200ms with two of them).
+            // Paint the post-attach state *now* so the user sees
+            // the refreshed terminals view immediately, without
+            // waiting for the next event-driven render.
             terminal.draw(|f| ui::render(app, f))?;
             continue;
         }

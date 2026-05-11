@@ -692,6 +692,10 @@ pub struct App {
     /// the event loop's pre-render hook so the first frame can paint
     /// before service discovery / diff preload / watcher init finish.
     boot: BootChannels,
+    /// Background state worker. Owns the periodic service status
+    /// poll that used to block the render loop ~200 ms per tick on a
+    /// busy compose daemon. Set when a non-None backend is wired in.
+    worker: Option<crate::worker::WorkerHandle>,
 }
 
 impl App {
@@ -727,6 +731,7 @@ impl App {
             diff: DiffState::default(),
             diagnostics: Vec::new(),
             boot: BootChannels::default(),
+            worker: None,
         }
     }
 
@@ -1983,13 +1988,19 @@ impl App {
     }
 
     /// Poll completion for every active run plus the lifecycle slot.
-    /// Each `RunState` short-circuits on already-done.
+    /// Each `RunState` short-circuits on already-done. Pokes the
+    /// worker when the lifecycle slot transitions to done so service
+    /// indicators flip without waiting for the next 2-second tick.
     pub async fn poll_runs(&mut self) {
         for run in self.runs.values_mut() {
             run.poll_completion().await;
         }
         if let Some(run) = self.lifecycle_run.as_mut() {
+            let was_done = run.is_done();
             run.poll_completion().await;
+            if !was_done && run.is_done() {
+                self.poke_worker_status();
+            }
         }
     }
 
@@ -2013,6 +2024,15 @@ impl App {
     /// finish — boot time is no longer gated on a slow Docker daemon
     /// or a cold git cache.
     pub fn spawn_boot_tasks(&mut self, project_root: &Path) {
+        // 0. Spawn the background state worker if we have a backend.
+        // Seeded with whatever services the config already declared
+        // so the first poll tick has work to do without waiting for
+        // discovery to land.
+        if let Some(backend) = self.backend.as_ref().map(Arc::clone) {
+            let initial = self.services.keys().cloned().collect();
+            self.worker = Some(crate::worker::spawn(backend, initial));
+        }
+
         // 1. Service discovery — one-shot.
         if let Some(backend) = self.backend.as_ref().map(Arc::clone) {
             let (tx, rx) = oneshot::channel();
@@ -2134,6 +2154,13 @@ impl App {
             }
             if added {
                 self.items = build_items_from(&self.config, &self.services, &self.watchers);
+                // Refresh the worker's service set so the auto-
+                // discovered rows start receiving status updates.
+                if let Some(w) = self.worker.as_ref() {
+                    let _ = w.cmd_tx.send(crate::worker::WorkerCommand::SetServices(
+                        self.services.keys().cloned().collect(),
+                    ));
+                }
             }
         }
 
@@ -2207,6 +2234,40 @@ impl App {
         }
     }
 
+    /// Apply any worker snapshots that have arrived since the last
+    /// call. Non-blocking — replaces the inline
+    /// `refresh_service_status` await that used to shell out to
+    /// compose for each service on every pre-render tick.
+    pub fn drain_worker_snapshots(&mut self) {
+        let Some(w) = self.worker.as_mut() else {
+            return;
+        };
+        loop {
+            match w.snap_rx.try_recv() {
+                Ok(crate::worker::WorkerSnapshot::ServiceStatus { name, status }) => {
+                    if let Some(pane) = self.services.get_mut(&name) {
+                        pane.status = Some(status);
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.worker = None;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Signal the worker that service-affecting state just changed
+    /// (e.g. compose `up`/`down`/`restart`) so it polls immediately
+    /// rather than waiting for the next interval tick. Best-effort —
+    /// the next tick would still pick the change up within ~2 s.
+    pub fn poke_worker_status(&self) {
+        if let Some(w) = self.worker.as_ref() {
+            let _ = w.cmd_tx.send(crate::worker::WorkerCommand::PokeServiceStatus);
+        }
+    }
+
     /// Spawn tail processes for every service pane that doesn't already
     /// have one. Called once at startup; idempotent if called again.
     pub async fn spawn_service_tails(&mut self) {
@@ -2241,17 +2302,6 @@ impl App {
             // Rebuild items so the new services land in the sidebar's
             // services group, preserving ordering for the rest.
             self.items = build_items_from(&self.config, &self.services, &self.watchers);
-        }
-    }
-
-    /// Refresh service status indicators. Each pane decides whether
-    /// enough time has elapsed to actually re-poll.
-    pub async fn refresh_service_status(&mut self) {
-        let Some(backend) = self.backend.as_ref().map(Arc::clone) else {
-            return;
-        };
-        for pane in self.services.values_mut() {
-            pane.refresh_status(&backend).await;
         }
     }
 

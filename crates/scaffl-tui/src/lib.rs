@@ -30,6 +30,7 @@ pub mod services;
 pub mod syntax;
 pub mod ui;
 pub mod watchers;
+pub mod worker;
 
 mod lazygit;
 mod terminal;
