@@ -6,10 +6,12 @@ use crate::config::{Config, Recipe, ScriptCommand, model::UiPane};
 use crate::container::Backend;
 use crate::container::devcontainer::DevcontainerBackend;
 use crate::runtime::Executor;
+use crate::tui::dialogs::Modal;
 use crate::tui::dialogs::args_prompt::ArgsPrompt;
 use crate::tui::dialogs::confirm::{ConfirmAction, ConfirmDialog};
 use crate::tui::dialogs::switcher::{
     BranchSpec, NewFormField, NewWorktreeAction, NewWorktreeForm, SwitcherConfirm, WorktreeRow,
+    WorktreeSwitcher,
 };
 use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
@@ -219,29 +221,6 @@ fn sync_path_from_branch(form: &mut NewWorktreeForm) {
     }
 }
 
-/// Whole switcher state. The list always has a sentinel "+ new
-/// worktree" row at the end; selecting it opens `creating`.
-#[derive(Debug, Clone)]
-pub struct WorktreeSwitcher {
-    pub entries: Vec<WorktreeRow>,
-    pub selected: usize,
-    pub creating: Option<NewWorktreeForm>,
-    /// Per-row rects for the entries list (including the trailing
-    /// "+ new worktree" sentinel). Populated by the renderer; hit-
-    /// tested by the mouse handler to route clicks to a row index.
-    pub row_rects: std::cell::RefCell<Vec<Rect>>,
-}
-
-impl WorktreeSwitcher {
-    /// Index of the synthetic "+ new worktree" row — always last.
-    pub fn new_row_index(&self) -> usize {
-        self.entries.len()
-    }
-    /// Total rows including the new-worktree sentinel.
-    pub fn total_rows(&self) -> usize {
-        self.entries.len() + 1
-    }
-}
 
 /// Resolved diff preload state, computed off the boot path by
 /// [`App::spawn_boot_tasks`] and applied to [`DiffView`] by
@@ -313,17 +292,12 @@ pub struct App {
     /// Last rejection / status banner (decays after a few seconds — kept
     /// simple by just clearing on the next successful action).
     pub flash: Option<String>,
-    mode: Mode,
-    palette: Option<Palette>,
-    /// Open confirmation dialog, if any. Routes keys when
-    /// `mode == Confirm`.
-    confirm: Option<ConfirmDialog>,
-    /// Open args prompt, if any. Routes keys when
-    /// `mode == ArgsPrompt`.
-    args_prompt: Option<ArgsPrompt>,
-    /// Open worktree switcher, if any. Routes keys when
-    /// `mode == WorktreeSwitcher`.
-    switcher: Option<WorktreeSwitcher>,
+    /// Active modal, if any. Replaces the four parallel
+    /// `Option<...>` fields (palette / confirm / args_prompt /
+    /// switcher) plus the redundant `Mode` enum — `None` ↔ normal
+    /// mode, `Some(Modal::X)` ↔ X mode. Eliminates a class of
+    /// mode/state desync bugs.
+    modal: Option<Modal>,
     /// Path the event loop should hot-reload into. When set, `drive`
     /// returns `DriveOutcome::SwitchWorktree(path)` and the outer
     /// loop tears the App down and rebuilds it.
@@ -410,11 +384,7 @@ impl App {
             services,
             watchers: BTreeMap::new(),
             flash: None,
-            mode: Mode::Normal,
-            palette: None,
-            confirm: None,
-            args_prompt: None,
-            switcher: None,
+            modal: None,
             pending_switch: None,
             project_root: PathBuf::from("."),
             branch: None,
@@ -726,25 +696,35 @@ impl App {
     }
 
     pub fn mode(&self) -> Mode {
-        self.mode
+        match &self.modal {
+            None => Mode::Normal,
+            Some(Modal::Palette(_)) => Mode::Palette,
+            Some(Modal::Confirm(_)) => Mode::Confirm,
+            Some(Modal::ArgsPrompt(_)) => Mode::ArgsPrompt,
+            Some(Modal::Switcher(_)) => Mode::WorktreeSwitcher,
+        }
     }
 
     pub fn palette(&self) -> Option<&Palette> {
-        self.palette.as_ref()
+        match &self.modal {
+            Some(Modal::Palette(p)) => Some(p),
+            _ => None,
+        }
     }
 
     pub fn open_palette(&mut self) {
-        self.mode = Mode::Palette;
-        self.palette = Some(Palette::new(&self.items));
+        self.modal = Some(Modal::Palette(Palette::new(&self.items)));
     }
 
     pub fn close_palette(&mut self) {
-        self.mode = Mode::Normal;
-        self.palette = None;
+        self.modal = None;
     }
 
     pub fn palette_mut(&mut self) -> Option<&mut Palette> {
-        self.palette.as_mut()
+        match &mut self.modal {
+            Some(Modal::Palette(p)) => Some(p),
+            _ => None,
+        }
     }
 
     /// Resolve the palette: select the matched row, close the palette,
@@ -758,7 +738,7 @@ impl App {
     /// `LaunchRejection::AlreadyRunning` is returned as-is; the caller
     /// is expected to open the kill-and-restart modal.
     pub fn confirm_palette(&mut self) -> Option<Result<(), LaunchRejection>> {
-        let palette = self.palette.as_ref()?;
+        let palette = self.palette()?;
         let m = palette.selected_match()?;
         let args = palette.parsed_args();
         let item_idx = m.item_index;
@@ -799,21 +779,30 @@ impl App {
         if self.runs.get(&key).is_none_or(|r| r.is_done()) {
             return;
         }
-        self.confirm = Some(ConfirmDialog {
+        self.modal = Some(Modal::Confirm(ConfirmDialog {
             title: format!("`{}` is running", item.name),
             body: "Kill and restart?".into(),
             yes_focused: true,
             action: ConfirmAction::KillAndRestart { key },
-        });
-        self.mode = Mode::Confirm;
+        }));
     }
 
     pub fn confirm_dialog(&self) -> Option<&ConfirmDialog> {
-        self.confirm.as_ref()
+        match &self.modal {
+            Some(Modal::Confirm(d)) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn confirm_dialog_mut(&mut self) -> Option<&mut ConfirmDialog> {
+        match &mut self.modal {
+            Some(Modal::Confirm(d)) => Some(d),
+            _ => None,
+        }
     }
 
     pub fn confirm_toggle_focus(&mut self) {
-        if let Some(c) = self.confirm.as_mut() {
+        if let Some(c) = self.confirm_dialog_mut() {
             c.yes_focused = !c.yes_focused;
         }
     }
@@ -853,26 +842,35 @@ impl App {
         if !self.selected_accepts_args() {
             return;
         }
-        self.args_prompt = Some(ArgsPrompt {
+        self.modal = Some(Modal::ArgsPrompt(ArgsPrompt {
             item_name: item.name,
             kind: item.kind,
             input: String::new(),
-        });
-        self.mode = Mode::ArgsPrompt;
+        }));
     }
 
     pub fn args_prompt(&self) -> Option<&ArgsPrompt> {
-        self.args_prompt.as_ref()
+        match &self.modal {
+            Some(Modal::ArgsPrompt(p)) => Some(p),
+            _ => None,
+        }
+    }
+
+    fn args_prompt_mut(&mut self) -> Option<&mut ArgsPrompt> {
+        match &mut self.modal {
+            Some(Modal::ArgsPrompt(p)) => Some(p),
+            _ => None,
+        }
     }
 
     pub fn args_prompt_push_char(&mut self, c: char) {
-        if let Some(p) = self.args_prompt.as_mut() {
+        if let Some(p) = self.args_prompt_mut() {
             p.input.push(c);
         }
     }
 
     pub fn args_prompt_pop_char(&mut self) {
-        if let Some(p) = self.args_prompt.as_mut() {
+        if let Some(p) = self.args_prompt_mut() {
             p.input.pop();
         }
     }
@@ -881,8 +879,13 @@ impl App {
     /// dismiss otherwise. Tokenises the input shell-style; returns
     /// the launch outcome (mirroring [`Self::confirm_palette`]).
     pub fn args_prompt_resolve(&mut self, accept: bool) -> Option<Result<(), LaunchRejection>> {
-        let prompt = self.args_prompt.take()?;
-        self.mode = Mode::Normal;
+        let prompt = match self.modal.take() {
+            Some(Modal::ArgsPrompt(p)) => p,
+            other => {
+                self.modal = other;
+                return None;
+            }
+        };
         if !accept {
             return None;
         }
@@ -908,27 +911,35 @@ impl App {
     /// is auto-flagged so the user sees where they are.
     pub fn open_worktree_switcher(&mut self, entries: Vec<WorktreeRow>) {
         let selected = entries.iter().position(|e| e.is_current).unwrap_or(0);
-        self.switcher = Some(WorktreeSwitcher {
+        self.modal = Some(Modal::Switcher(WorktreeSwitcher {
             entries,
             selected,
             creating: None,
             row_rects: std::cell::RefCell::new(Vec::new()),
-        });
-        self.mode = Mode::WorktreeSwitcher;
+        }));
     }
 
     pub fn switcher(&self) -> Option<&WorktreeSwitcher> {
-        self.switcher.as_ref()
+        match &self.modal {
+            Some(Modal::Switcher(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn switcher_mut(&mut self) -> Option<&mut WorktreeSwitcher> {
+        match &mut self.modal {
+            Some(Modal::Switcher(s)) => Some(s),
+            _ => None,
+        }
     }
 
     /// Close the switcher without acting.
     pub fn close_switcher(&mut self) {
-        self.switcher = None;
-        self.mode = Mode::Normal;
+        self.modal = None;
     }
 
     pub fn switcher_select_next(&mut self) {
-        if let Some(s) = self.switcher.as_mut() {
+        if let Some(s) = self.switcher_mut() {
             let total = s.total_rows();
             if total > 0 {
                 s.selected = (s.selected + 1).min(total - 1);
@@ -937,7 +948,7 @@ impl App {
     }
 
     pub fn switcher_select_prev(&mut self) {
-        if let Some(s) = self.switcher.as_mut() {
+        if let Some(s) = self.switcher_mut() {
             s.selected = s.selected.saturating_sub(1);
         }
     }
@@ -946,7 +957,7 @@ impl App {
     /// (which is the synthetic "+ new worktree" sentinel). No-op when
     /// the switcher isn't open.
     pub fn switcher_select_at(&mut self, idx: usize) {
-        if let Some(s) = self.switcher.as_mut() {
+        if let Some(s) = self.switcher_mut() {
             let total = s.total_rows();
             if total > 0 {
                 s.selected = idx.min(total - 1);
@@ -960,7 +971,7 @@ impl App {
     /// caller to fetch the branch list and open the create form
     /// (the branch fetch is async; we don't block the App in here).
     pub fn switcher_confirm(&mut self) -> SwitcherConfirm {
-        let Some(s) = self.switcher.as_ref() else {
+        let Some(s) = self.switcher() else {
             return SwitcherConfirm::NoOp;
         };
         if s.selected == s.new_row_index() {
@@ -990,9 +1001,9 @@ impl App {
         branches: Vec<crate::runtime::BranchEntry>,
         parent_override: Option<std::path::PathBuf>,
     ) {
-        let Some(s) = self.switcher.as_mut() else {
-            return;
-        };
+        // Compute parent before borrowing the switcher mutably so the
+        // project-root immutable borrow doesn't overlap.
+        //
         // `Path::new(".").parent()` returns `Some("")` (the empty
         // path), which makes `Path::join` drop the parent entirely.
         // Fall back to the project root when parent is empty too.
@@ -1000,6 +1011,9 @@ impl App {
             Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
             _ => self.project_root.clone(),
         });
+        let Some(s) = self.switcher_mut() else {
+            return;
+        };
         let filtered: Vec<usize> = (0..branches.len()).collect();
         let form = NewWorktreeForm {
             branch_input: String::new(),
@@ -1021,7 +1035,7 @@ impl App {
     /// Mutate the open new-worktree form. Caller dispatches keys to
     /// these helpers from the switcher key handler.
     pub fn switcher_form_push_char(&mut self, c: char) {
-        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
             match form.focus {
                 NewFormField::Path => {
                     form.path_input.push(c);
@@ -1038,7 +1052,7 @@ impl App {
     }
 
     pub fn switcher_form_pop_char(&mut self) {
-        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
             match form.focus {
                 NewFormField::Path => {
                     form.path_input.pop();
@@ -1055,7 +1069,7 @@ impl App {
     }
 
     pub fn switcher_form_toggle_focus(&mut self) {
-        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
             form.focus = match form.focus {
                 NewFormField::Path => NewFormField::Branch,
                 NewFormField::Branch => NewFormField::Path,
@@ -1067,7 +1081,7 @@ impl App {
     /// when focus is on the branch field (the path field has no
     /// list to navigate).
     pub fn switcher_form_select_next(&mut self) {
-        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut())
+        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut())
             && form.focus == NewFormField::Branch
         {
             let total = form.total_options();
@@ -1078,7 +1092,7 @@ impl App {
     }
 
     pub fn switcher_form_select_prev(&mut self) {
-        if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut())
+        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut())
             && form.focus == NewFormField::Branch
         {
             form.selected = form.selected.saturating_sub(1);
@@ -1086,7 +1100,7 @@ impl App {
     }
 
     pub fn switcher_form_cancel(&mut self) {
-        if let Some(s) = self.switcher.as_mut() {
+        if let Some(s) = self.switcher_mut() {
             s.creating = None;
         }
     }
@@ -1095,14 +1109,14 @@ impl App {
     /// the caller invokes git from this data and reports back via
     /// [`Self::switcher_form_finish`].
     pub fn switcher_form_snapshot(&self) -> Option<NewWorktreeForm> {
-        self.switcher.as_ref().and_then(|s| s.creating.clone())
+        self.switcher().and_then(|s| s.creating.clone())
     }
 
     /// What the caller should ask `git worktree add` to do. Folds
     /// the focus + selection + sentinel logic into a single tuple
     /// the terminal layer can shell out from.
     pub fn switcher_form_resolve(&self) -> Option<NewWorktreeAction> {
-        let form = self.switcher.as_ref().and_then(|s| s.creating.as_ref())?;
+        let form = self.switcher().and_then(|s| s.creating.as_ref())?;
         if form.path_input.trim().is_empty() {
             return None;
         }
@@ -1147,7 +1161,7 @@ impl App {
                 self.close_switcher();
             }
             Err(msg) => {
-                if let Some(form) = self.switcher.as_mut().and_then(|s| s.creating.as_mut()) {
+                if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
                     form.error = Some(msg);
                 }
             }
@@ -1347,7 +1361,7 @@ impl App {
         let session = self.terminals.session_name.clone();
         let name = window.name.clone();
         let index = window.index;
-        self.confirm = Some(ConfirmDialog {
+        self.modal = Some(Modal::Confirm(ConfirmDialog {
             title: format!("close `{name}`?"),
             body: "the tmux window and any running processes will end.".into(),
             yes_focused: true,
@@ -1356,8 +1370,7 @@ impl App {
                 index,
                 name,
             },
-        });
-        self.mode = Mode::Confirm;
+        }));
     }
 
     pub fn take_pending_kill_window(&mut self) -> Option<KillWindow> {
@@ -1449,8 +1462,13 @@ impl App {
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
-        let d = self.confirm.take()?;
-        self.mode = Mode::Normal;
+        let d = match self.modal.take() {
+            Some(Modal::Confirm(d)) => d,
+            other => {
+                self.modal = other;
+                return None;
+            }
+        };
         // Clear the dialog's button rects so a click that lands after
         // the dialog closed can't match against a stale layout.
         self.confirm_yes_rect.set(None);

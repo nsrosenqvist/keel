@@ -1949,7 +1949,7 @@ fn render_palette(app: &App, palette: &Palette, accent: Color, frame: &mut Frame
 }
 
 fn render_worktree_switcher(
-    switcher: &crate::tui::app::WorktreeSwitcher,
+    switcher: &crate::tui::dialogs::switcher::WorktreeSwitcher,
     accent: Color,
     frame: &mut Frame,
 ) {
@@ -1964,7 +1964,7 @@ fn render_worktree_switcher(
 }
 
 fn render_switcher_list(
-    switcher: &crate::tui::app::WorktreeSwitcher,
+    switcher: &crate::tui::dialogs::switcher::WorktreeSwitcher,
     accent: Color,
     frame: &mut Frame,
 ) {

@@ -6,6 +6,8 @@
 //! [`crate::tui::app`] until Phase 4 fuses the modals.
 
 use crate::runtime::BranchEntry;
+use ratatui::layout::Rect;
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 /// One row in the worktree switcher list. Slug is computed by the
@@ -125,4 +127,28 @@ pub enum SwitcherConfirm {
     OpenCreateForm,
     /// Switcher modal wasn't open → key dispatcher should ignore.
     NoOp,
+}
+
+/// Whole switcher state. The list always has a sentinel "+ new
+/// worktree" row at the end; selecting it opens `creating`.
+#[derive(Debug, Clone)]
+pub struct WorktreeSwitcher {
+    pub entries: Vec<WorktreeRow>,
+    pub selected: usize,
+    pub creating: Option<NewWorktreeForm>,
+    /// Per-row rects for the entries list (including the trailing
+    /// "+ new worktree" sentinel). Populated by the renderer; hit-
+    /// tested by the mouse handler to route clicks to a row index.
+    pub row_rects: RefCell<Vec<Rect>>,
+}
+
+impl WorktreeSwitcher {
+    /// Index of the synthetic "+ new worktree" row — always last.
+    pub fn new_row_index(&self) -> usize {
+        self.entries.len()
+    }
+    /// Total rows including the new-worktree sentinel.
+    pub fn total_rows(&self) -> usize {
+        self.entries.len() + 1
+    }
 }
