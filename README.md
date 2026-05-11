@@ -19,10 +19,17 @@ supervise the whole stack from a built-in TUI.
 
 ## Install
 
+From source today (any platform):
+
 ```sh
 cargo install --path .          # from a clone
-# Or, once published:
-# cargo install keel
+```
+
+Once the first stable release is cut:
+
+```sh
+brew install nsrosenqvist/keel/keel   # macOS / Linux
+cargo install keel                    # from crates.io
 ```
 
 The binary is named `keel`.
