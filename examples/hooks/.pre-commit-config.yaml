@@ -1,8 +1,8 @@
-# Standard pre-commit-format file. scaffl parses it directly — no
+# Standard pre-commit-format file. keel parses it directly — no
 # `pre-commit` binary required. External repos are cloned into
-# `.scaffl/cache/hooks/<rev>/` and run natively.
+# `.keel/cache/hooks/<rev>/` and run natively.
 #
-# scaffl runs hooks whose effective `language` is `system` or
+# keel runs hooks whose effective `language` is `system` or
 # `script`. Anything else (`python`, `node`, `ruby`, `golang`, …)
 # errors at install time with a clear message — wrap the tool with
 # a shell script and use `language: script`, or pick a tool already
@@ -26,8 +26,8 @@ repos:
         language: system
         files: \.ya?ml$
 
-  # External repo. `rev:` is the pinned tag; scaffl clones the repo
-  # into .scaffl/cache/hooks/<slug(url)-rev>/ and reads the upstream
+  # External repo. `rev:` is the pinned tag; keel clones the repo
+  # into .keel/cache/hooks/<slug(url)-rev>/ and reads the upstream
   # `.pre-commit-hooks.yaml` to find each hook's `entry` and
   # `language`. The hooks below all resolve to `language: system`
   # (shell utilities), so they run natively.

@@ -1,4 +1,4 @@
-# Releasing scaffl
+# Releasing keel
 
 The release pipeline lives in [`.github/workflows/release.yml`](.github/workflows/release.yml)
 and triggers on any tag matching `v[0-9]+.[0-9]+.[0-9]+*`. Pre-release
@@ -19,8 +19,8 @@ no external accounts. Useful for proving the pipeline end-to-end before
 risking a stable tag.
 
 - [ ] Workflow file is on `main`.
-- [ ] On the dev machine, `cargo build --release --bin scaffl` succeeds
-      and `env!("SCAFFL_TARGET")` resolves to a known target triple.
+- [ ] On the dev machine, `cargo build --release --bin keel` succeeds
+      and `env!("KEEL_TARGET")` resolves to a known target triple.
 - [ ] Push a throwaway tag to test:
 
   ```sh
@@ -35,8 +35,8 @@ risking a stable tag.
 - [ ] From the freshly built binary:
 
   ```sh
-  scaffl update                # → "already on the latest version"
-  scaffl update --prerelease   # → upgrades to v0.0.2-rc.1
+  keel update                # → "already on the latest version"
+  keel update --prerelease   # → upgrades to v0.0.2-rc.1
   ```
 
 - [ ] Delete the test tag + GitHub release once the pipeline is green:
@@ -61,14 +61,14 @@ member crates in topological order.
       `cargo publish` from a placeholder repo, or `cargo owner --add`
       after first publish):
 
-  - `scaffl-cli`
-  - `scaffl-config`
-  - `scaffl-runtime`
-  - `scaffl-container`
-  - `scaffl-tui`
-  - `scaffl-cache`
-  - `scaffl-agents`
-  - `scaffl-hooks`
+  - `keel-cli`
+  - `keel-config`
+  - `keel-runtime`
+  - `keel-container`
+  - `keel-tui`
+  - `keel-cache`
+  - `keel-agents`
+  - `keel-hooks`
 
 - [ ] Generate a crates.io API token with **publish-new** + **publish-update**
       scope on all eight crates.
@@ -86,64 +86,64 @@ member crates in topological order.
 
 ### Homebrew tap
 
-The `update-homebrew` job checks out `nsrosenqvist/homebrew-scaffl`,
-patches `Formula/scaffl.rb` with the new version + four sha256 sums,
+The `update-homebrew` job checks out `nsrosenqvist/homebrew-keel`,
+patches `Formula/keel.rb` with the new version + four sha256 sums,
 and pushes a single commit per release.
 
-- [ ] Create the public repo `nsrosenqvist/homebrew-scaffl`.
+- [ ] Create the public repo `nsrosenqvist/homebrew-keel`.
 
-- [ ] Seed `Formula/scaffl.rb` with **four** `sha256 "PLACEHOLDER"`
+- [ ] Seed `Formula/keel.rb` with **four** `sha256 "PLACEHOLDER"`
       entries in this exact order — the workflow's `re.sub` walks them
       top-to-bottom: macOS arm, macOS x86, Linux arm, Linux x86. A
       minimal starting point:
 
   ```ruby
-  class Scaffl < Formula
+  class Keel < Formula
     desc "Dev-loop wrapper that adapts to your project"
-    homepage "https://github.com/niklasrosenqvist/scaffl"
+    homepage "https://github.com/nsrosenqvist/keel"
     version "0.0.0"
     license any_of: ["MIT", "Apache-2.0"]
 
     on_macos do
       on_arm do
-        url "https://github.com/niklasrosenqvist/scaffl/releases/download/v#{version}/scaffl-aarch64-apple-darwin.tar.gz"
+        url "https://github.com/nsrosenqvist/keel/releases/download/v#{version}/keel-aarch64-apple-darwin.tar.gz"
         sha256 "PLACEHOLDER"
       end
       on_intel do
-        url "https://github.com/niklasrosenqvist/scaffl/releases/download/v#{version}/scaffl-x86_64-apple-darwin.tar.gz"
+        url "https://github.com/nsrosenqvist/keel/releases/download/v#{version}/keel-x86_64-apple-darwin.tar.gz"
         sha256 "PLACEHOLDER"
       end
     end
 
     on_linux do
       on_arm do
-        url "https://github.com/niklasrosenqvist/scaffl/releases/download/v#{version}/scaffl-aarch64-unknown-linux-gnu.tar.gz"
+        url "https://github.com/nsrosenqvist/keel/releases/download/v#{version}/keel-aarch64-unknown-linux-gnu.tar.gz"
         sha256 "PLACEHOLDER"
       end
       on_intel do
-        url "https://github.com/niklasrosenqvist/scaffl/releases/download/v#{version}/scaffl-x86_64-unknown-linux-gnu.tar.gz"
+        url "https://github.com/nsrosenqvist/keel/releases/download/v#{version}/keel-x86_64-unknown-linux-gnu.tar.gz"
         sha256 "PLACEHOLDER"
       end
     end
 
     def install
-      bin.install "scaffl"
+      bin.install "keel"
     end
 
     test do
-      assert_match "scaffl", shell_output("#{bin}/scaffl --version")
+      assert_match "keel", shell_output("#{bin}/keel --version")
     end
   end
   ```
 
 - [ ] Create a fine-grained PAT with `Contents: Read and write` on the
-      tap repo (only). Add it as a repo secret on the scaffl repo named
+      tap repo (only). Add it as a repo secret on the keel repo named
       `HOMEBREW_TAP_TOKEN`.
 
 ### Repo hygiene
 
-- [ ] Fix the pre-existing format diff in `crates/scaffl-tui/`
-      (`cargo fmt -p scaffl-tui`) so `cargo fmt --all --check` in CI
+- [ ] Fix the pre-existing format diff in `crates/keel-tui/`
+      (`cargo fmt -p keel-tui`) so `cargo fmt --all --check` in CI
       stays green when the release workflow shells out to `cargo` on
       the runner.
 
@@ -168,10 +168,10 @@ After a stable release, verify:
 
 - GitHub release: contains four tarballs + `SHA256SUMS`, not marked pre-release.
 - crates.io: all eight crates show the new version.
-- Homebrew tap: a new commit on `main` titled `scaffl vX.Y.Z`.
+- Homebrew tap: a new commit on `main` titled `keel vX.Y.Z`.
 - Floating tags: `git ls-remote --tags origin` shows `vX` and `vX.Y`
   pointing at the same commit as `vX.Y.Z`.
-- `scaffl update` (without `--prerelease`) on a binary from the previous
+- `keel update` (without `--prerelease`) on a binary from the previous
   release upgrades cleanly.
 
 ---

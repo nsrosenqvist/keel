@@ -3,5 +3,5 @@
 state/
 .env
 
-# scaffl itself manages everything below in .scaffl/.gitignore
-# (created by `scaffl install`).
+# keel itself manages everything below in .keel/.gitignore
+# (created by `keel install`).

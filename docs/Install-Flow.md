@@ -1,18 +1,18 @@
 # Install Flow
 
-`scaffl install` is the project-bootstrap surface: a teammate clones
+`keel install` is the project-bootstrap surface: a teammate clones
 the repo, runs one command, and gets a working dev environment.
 
 ## Step plan
 
 The plan is resolved from two sources, in this precedence:
 
-1. **`[install].steps = [...]` in `scaffl.toml`.** Each entry is
+1. **`[install].steps = [...]` in `keel.toml`.** Each entry is
    either a name (resolves to a `[command.*]` recipe or to a
    discovered step file) or an inline `{ name, run, in, env, cwd,
    optional, interactive }` table.
-2. **Files discovered under `.scaffl/install/`.** Same `# @key:`
-   frontmatter parser as `.scaffl/commands/`, plus install-only keys
+2. **Files discovered under `.keel/install/`.** Same `# @key:`
+   frontmatter parser as `.keel/commands/`, plus install-only keys
    `cwd`, `optional`, `interactive`. When `[install].steps` is
    empty, discovered files **are** the plan (file-name sorted).
 
@@ -24,10 +24,10 @@ Two synthetic steps are appended automatically:
 - **`install-hooks`** — runs last, when `[install].install_git_hooks
   = true` (default). Installs git hook shims and prefetches any
   external `.pre-commit-config.yaml` repos into
-  `.scaffl/cache/hooks/<rev>/`. See [Hooks](./Hooks.md).
+  `.keel/cache/hooks/<rev>/`. See [Hooks](./Hooks.md).
 
-Install steps are deliberately separate from `scaffl list` /
-`.scaffl/commands/` — they don't surface in the TUI sidebar or the
+Install steps are deliberately separate from `keel list` /
+`.keel/commands/` — they don't surface in the TUI sidebar or the
 command resolver.
 
 ## Step frontmatter
@@ -52,7 +52,7 @@ composer install
 | `@env` | Comma-separated `K=V` pairs added to the step env. |
 | `@cwd` | Working directory for the step. Relative to project root. |
 | `@optional` | `true` means a non-zero exit is recorded as `skipped`, not `failed`. |
-| `@interactive` | `true` hands the terminal to the step (so `scaffl lib *` prompts work). |
+| `@interactive` | `true` hands the terminal to the step (so `keel lib *` prompts work). |
 
 Numeric prefixes order discovered files alphabetically: `01-copy-env`,
 `02-composer-install`, `03-migrate`. Hidden files (`.foo`) and files
@@ -61,7 +61,7 @@ starting with `_` are skipped.
 ## State and resume
 
 Every successful or failed step is recorded in
-`.scaffl/install.state.json`. On a subsequent `scaffl install`:
+`.keel/install.state.json`. On a subsequent `keel install`:
 
 - If every step is `ok` or `skipped`, the plan re-runs from step 1.
 - Otherwise the user is prompted **"Resume from `<step>`?"**.
@@ -69,16 +69,16 @@ Every successful or failed step is recorded in
   fresh. In non-tty contexts (CI, piped invocations), the answer
   defaults to "yes" so resume is the no-input behaviour.
 
-`scaffl install <step>` runs one step in isolation and updates only
+`keel install <step>` runs one step in isolation and updates only
 that step's record. Useful when a maintainer adds a new step that
-every teammate needs to apply ("everyone please run `scaffl install
+every teammate needs to apply ("everyone please run `keel install
 rebuild-search-index` once").
 
 ## Interactive steps
 
 Marking a step `# @interactive: yes` pauses the renderer and
 inherits the parent's stdio for the step's duration. That's how
-`scaffl lib ask | confirm | password | select | filter` work inside
+`keel lib ask | confirm | password | select | filter` work inside
 install steps without an IPC sentinel protocol — the step really
 does have the terminal.
 
@@ -86,7 +86,7 @@ does have the terminal.
 #!/usr/bin/env bash
 # @desc: Configure first-run secrets
 # @interactive: yes
-EMAIL=$(scaffl lib ask "Admin email")
+EMAIL=$(keel lib ask "Admin email")
 echo "ADMIN_EMAIL=$EMAIL" >> .env
 ```
 
@@ -108,7 +108,7 @@ make pull-fixtures
 
 ## Renderer
 
-A small line-redraw printer (`crates/scaffl-cli/src/commands/install/renderer.rs`)
+A small line-redraw printer (`crates/keel-cli/src/commands/install/renderer.rs`)
 — **not** a TUI. Each step gets a row that updates in place
 (◐ running with spinner → ✓ ok / ✗ failed / → skipped, plus
 duration). The active step's tail output (last 3 lines) shows below
@@ -132,20 +132,20 @@ its row.
 | `--list` | Plan + last-known status per step. |
 | `--update-hooks` | Force-refresh the external hook cache. |
 
-## `.scaffl/.gitignore`
+## `.keel/.gitignore`
 
-`scaffl install` writes a marker-delimited managed block in
-`.scaffl/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
+`keel install` writes a marker-delimited managed block in
+`.keel/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
 `install.state.json`, and `agents.state.json`. Idempotent —
 re-running install when the file is already correct leaves the mtime
 alone. Path is configurable via `[install] gitignore = "..."`. The
-shared `crates/scaffl-config/src/managed_block.rs` helper is the
+shared `crates/keel-config/src/managed_block.rs` helper is the
 single implementation of the marker pattern (also used by the
 worktree dotenv writer).
 
 ## See also
 
-- [`examples/install-flow/`](https://github.com/nsrosenqvist/scaffl/tree/main/examples/install-flow)
+- [`examples/install-flow/`](https://github.com/nsrosenqvist/keel/tree/main/examples/install-flow)
   — runnable demo with ordered + optional + interactive steps.
 - [Hooks](./Hooks.md) and [Agents](./Agents.md) for the synthetic
   steps that bookend the user-defined plan.

@@ -13,7 +13,7 @@ that `git diff HEAD` shows.
 
 In order, first match wins:
 
-1. `[diff].base = "..."` in `scaffl.toml` if set.
+1. `[diff].base = "..."` in `keel.toml` if set.
 2. `git symbolic-ref refs/remotes/origin/HEAD` — the remote default
    branch when a remote is configured.
 3. Local fallback: `main`, `master`, `develop`, `trunk`, in order.

@@ -1,35 +1,35 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/scaffl-cli",
-    "crates/scaffl-config",
-    "crates/scaffl-container",
-    "crates/scaffl-runtime",
-    "crates/scaffl-tui",
-    "crates/scaffl-cache",
-    "crates/scaffl-agents",
-    "crates/scaffl-hooks",
+    "crates/keel-cli",
+    "crates/keel-config",
+    "crates/keel-container",
+    "crates/keel-runtime",
+    "crates/keel-tui",
+    "crates/keel-cache",
+    "crates/keel-agents",
+    "crates/keel-hooks",
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Niklas Rosenqvist"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/niklasrosenqvist/scaffl"
-homepage = "https://github.com/niklasrosenqvist/scaffl"
+repository = "https://github.com/nsrosenqvist/keel"
+homepage = "https://github.com/nsrosenqvist/keel"
 readme = "README.md"
 
 [workspace.dependencies]
 # Internal crates
-scaffl-config = { path = "crates/scaffl-config", version = "0.0.1" }
-scaffl-container = { path = "crates/scaffl-container", version = "0.0.1" }
-scaffl-runtime = { path = "crates/scaffl-runtime", version = "0.0.1" }
-scaffl-cache = { path = "crates/scaffl-cache", version = "0.0.1" }
-scaffl-agents = { path = "crates/scaffl-agents", version = "0.0.1" }
-scaffl-hooks = { path = "crates/scaffl-hooks", version = "0.0.1" }
-scaffl-tui = { path = "crates/scaffl-tui", version = "0.0.1" }
+keel-config = { path = "crates/keel-config", version = "0.1.0" }
+keel-container = { path = "crates/keel-container", version = "0.1.0" }
+keel-runtime = { path = "crates/keel-runtime", version = "0.1.0" }
+keel-cache = { path = "crates/keel-cache", version = "0.1.0" }
+keel-agents = { path = "crates/keel-agents", version = "0.1.0" }
+keel-hooks = { path = "crates/keel-hooks", version = "0.1.0" }
+keel-tui = { path = "crates/keel-tui", version = "0.1.0" }
 
 # Errors / utilities
 thiserror = "2"

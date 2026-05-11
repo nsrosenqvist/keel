@@ -64,18 +64,18 @@ jobs:
       - name: Build
         # `[profile.release] strip = "symbols"` in the workspace Cargo.toml
         # handles stripping for us, so no separate strip step is needed.
-        run: cargo build --release --target ${{ matrix.target }} --bin scaffl
+        run: cargo build --release --target ${{ matrix.target }} --bin keel
 
       - name: Package
         run: |
-          ARCHIVE="scaffl-${{ matrix.target }}.tar.gz"
-          tar czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" scaffl
+          ARCHIVE="keel-${{ matrix.target }}.tar.gz"
+          tar czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" keel
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: scaffl-${{ matrix.target }}
+          name: keel-${{ matrix.target }}
           path: ${{ env.ARCHIVE }}
 
       - name: Upload patched manifest
@@ -175,17 +175,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: nsrosenqvist/homebrew-scaffl
+          repository: nsrosenqvist/homebrew-keel
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update formula
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
-          FORMULA="Formula/scaffl.rb"
+          FORMULA="Formula/keel.rb"
 
           # Download the checksums file from the release
-          curl -sSfL "https://github.com/niklasrosenqvist/scaffl/releases/download/${TAG}/SHA256SUMS" -o SHA256SUMS
+          curl -sSfL "https://github.com/nsrosenqvist/keel/releases/download/${TAG}/SHA256SUMS" -o SHA256SUMS
 
           # Extract per-target checksums
           SHA_MACOS_ARM=$(grep 'aarch64-apple-darwin' SHA256SUMS | awk '{print $1}')
@@ -220,9 +220,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/scaffl.rb
+          git add Formula/keel.rb
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "scaffl ${GITHUB_REF_NAME}"
+          git commit -m "keel ${GITHUB_REF_NAME}"
           git push
 
   update-floating-tags:

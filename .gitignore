@@ -5,8 +5,8 @@
 **/*.rs.bk
 Cargo.lock.bak
 
-# scaffl per-developer overrides
-.scaffl/local.toml
+# keel per-developer overrides
+.keel/local.toml
 
 # Editor
 .vscode/

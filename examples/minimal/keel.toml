@@ -1,0 +1,15 @@
+# Smallest useful keel config. No backend, just host commands.
+
+[project]
+name = "minimal"
+
+[containers]
+backend = "none"
+
+[command.greet]
+desc = "Say hello"
+run  = "echo hello from keel"
+
+[command.check]
+desc = "Format + lint + test, in that order"
+run  = ["echo formatting...", "echo linting...", "echo testing..."]

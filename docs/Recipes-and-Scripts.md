@@ -1,12 +1,12 @@
 # Recipes and Scripts
 
-scaffl gives you two ways to define a command. Use whichever shape
+keel gives you two ways to define a command. Use whichever shape
 matches the command's complexity — they coexist, neither shadows the
 other, and resolution is deterministic.
 
 ## Recipes (`[command.<name>]`)
 
-Declarative TOML in `scaffl.toml`. Best for one-liners and small
+Declarative TOML in `keel.toml`. Best for one-liners and small
 sequences.
 
 ```toml
@@ -42,7 +42,7 @@ after a status preflight. Absent → host. `tty = true` allocates a
 TTY (required for shells, irrelevant for pure-stdout commands).
 
 `forward_args = true` appends the trailing CLI args to the command:
-`scaffl test --filter Login` → `composer test --filter Login`.
+`keel test --filter Login` → `composer test --filter Login`.
 
 ### Profiles
 
@@ -59,15 +59,15 @@ forward_args = true
 env = { XDEBUG_MODE = "off" }
 ```
 
-`scaffl --profile ci test --testdox` runs `composer test --testdox`
+`keel --profile ci test --testdox` runs `composer test --testdox`
 with `tty = false` and the override env.
 
-## Scripts (`.scaffl/commands/`)
+## Scripts (`.keel/commands/`)
 
 Plain shell files — anything that grows past one or two lines.
 
 ```sh
-# .scaffl/commands/seed
+# .keel/commands/seed
 #!/usr/bin/env bash
 # @desc: Seed the database with development data
 # @in: app
@@ -77,7 +77,7 @@ php artisan migrate:fresh
 php artisan db:seed
 ```
 
-scaffl scans `.scaffl/commands/` at load time. The optional `# @key:
+keel scans `.keel/commands/` at load time. The optional `# @key:
 value` frontmatter (terminated by the first non-`# @` line) sets the
 same fields you'd put in a `[command.*]` recipe:
 
@@ -106,18 +106,18 @@ collision.
 
 ## Resolution order
 
-When you run `scaffl <name> [args...]` (no explicit subcommand), the
+When you run `keel <name> [args...]` (no explicit subcommand), the
 resolver tries:
 
 1. Built-in subcommand (e.g. `list`, `doctor`).
 2. `[command.<name>]` recipe.
-3. `.scaffl/commands/<name>` script.
+3. `.keel/commands/<name>` script.
 4. `<name>` as a docker-compose subcommand (passthrough), if
    `[containers].compose_passthrough = true`.
 5. `<name>` as a compose service name (exec into it), if
    `[containers].service_passthrough = true`.
 
-`scaffl which <name>` prints which slot resolved.
+`keel which <name>` prints which slot resolved.
 
 ## See also
 

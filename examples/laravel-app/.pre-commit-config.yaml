@@ -1,11 +1,11 @@
-# Example pre-commit config. `scaffl install` (and `scaffl hooks
-# install` directly) clone external repos into `.scaffl/cache/hooks/`
+# Example pre-commit config. `keel install` (and `keel hooks
+# install` directly) clone external repos into `.keel/cache/hooks/`
 # the first time a hook runs and re-use the cache thereafter.
-# `scaffl install --update-hooks` forces a re-clone when you bump
+# `keel install --update-hooks` forces a re-clone when you bump
 # revisions.
 #
 # Supported languages: `system` and `script`. Other languages
-# (`python`, `node`, `ruby`, …) are not implemented; scaffl errors
+# (`python`, `node`, `ruby`, …) are not implemented; keel errors
 # at install time rather than silently skipping.
 
 repos:
@@ -15,7 +15,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        exclude: ^\.scaffl/
+        exclude: ^\.keel/
 
   - repo: local
     hooks:

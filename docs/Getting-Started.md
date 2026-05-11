@@ -1,27 +1,27 @@
 # Getting Started
 
-This page takes you from "no scaffl" to "first recipe + first
+This page takes you from "no keel" to "first recipe + first
 hook + open dashboard" in under five minutes. After that, the
 [Quick Tour](./Quick-Tour.md) shows the rest of the surface.
 
 ## 1. Install
 
-scaffl is a single Rust binary. Two install paths:
+keel is a single Rust binary. Two install paths:
 
 ### From a clone
 
 ```sh
-git clone https://github.com/nsrosenqvist/scaffl
-cd scaffl
-cargo install --path crates/scaffl-cli
+git clone https://github.com/nsrosenqvist/keel
+cd keel
+cargo install --path crates/keel-cli
 ```
 
-The binary is named `scaffl` and lands in `~/.cargo/bin/`.
+The binary is named `keel` and lands in `~/.cargo/bin/`.
 
 ### Once published to crates.io
 
 ```sh
-cargo install scaffl-cli
+cargo install keel-cli
 ```
 
 (Pre-alpha; not yet on crates.io. Track the project README for the
@@ -30,28 +30,28 @@ publish announcement.)
 ### Verify
 
 ```sh
-scaffl --version
+keel --version
 ```
 
-## 2. Scaffold a starter `scaffl.toml`
+## 2. Scaffold a starter `keel.toml`
 
 Inside any project directory:
 
 ```sh
-scaffl init
+keel init
 ```
 
-This drops a `scaffl.toml` at the project root with detection hints
+This drops a `keel.toml` at the project root with detection hints
 based on what `init` finds in the directory (compose, `.env`,
 `package.json`, `composer.json`). Open the file — every recipe is
 commented and ready for you to uncomment / rename.
 
 Pass `--template <NAME>` to skip auto-detection
-(`scaffl init --template minimal`).
+(`keel init --template minimal`).
 
 ## 3. Define your first recipe
 
-Edit `scaffl.toml` to add a recipe for a command you actually run:
+Edit `keel.toml` to add a recipe for a command you actually run:
 
 ```toml
 [command.up]
@@ -71,16 +71,16 @@ tty  = true
 Run them:
 
 ```sh
-scaffl up
-scaffl shell
+keel up
+keel shell
 ```
 
-`scaffl list` (or `scaffl ls`) shows every recipe and script, with
+`keel list` (or `keel ls`) shows every recipe and script, with
 their descriptions.
 
 ## 4. Install your first git hook
 
-Add `[hooks]` to `scaffl.toml`:
+Add `[hooks]` to `keel.toml`:
 
 ```toml
 [command.check]
@@ -100,10 +100,10 @@ pre-commit = ["check"]
 Then:
 
 ```sh
-scaffl hooks install
+keel hooks install
 ```
 
-This writes `.git/hooks/pre-commit` as a shim that runs `scaffl
+This writes `.git/hooks/pre-commit` as a shim that runs `keel
 hooks run pre-commit`. Try it: `git commit` triggers `check`
 automatically. See [Hooks](./Hooks.md) for the full model
 (including `.pre-commit-config.yaml` compatibility).
@@ -111,10 +111,10 @@ automatically. See [Hooks](./Hooks.md) for the full model
 ## 5. Open the dashboard
 
 ```sh
-scaffl
+keel
 ```
 
-Bare `scaffl` opens the [TUI](./TUI.md): a sidebar of every recipe,
+Bare `keel` opens the [TUI](./TUI.md): a sidebar of every recipe,
 script, and service; an output pane for whatever's selected; service
 lifecycle keymaps; a built-in [diff view](./Diff-View.md) (`G`); a
 [worktree switcher](./Worktrees.md#tui-worktree-switcher-w) (`W`).
@@ -125,8 +125,8 @@ lifecycle keymaps; a built-in [diff view](./Diff-View.md) (`G`); a
   through every major feature.
 - **Schema reference** →
   [Configuration Reference](./Configuration-Reference.md) for
-  every `scaffl.toml` key.
+  every `keel.toml` key.
 - **Real projects** → [Examples](./Examples.md) — runnable
   configurations under `examples/`.
-- **Stuck?** → [Troubleshooting](./Troubleshooting.md) — `scaffl
+- **Stuck?** → [Troubleshooting](./Troubleshooting.md) — `keel
   doctor` and common pitfalls.

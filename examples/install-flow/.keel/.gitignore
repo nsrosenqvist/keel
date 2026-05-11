@@ -1,0 +1,7 @@
+# >>> keel-managed (auto-generated; do not edit by hand) >>>
+local.toml
+worktrees/
+cache/
+install.state.json
+agents.state.json
+# <<< keel-managed <<<

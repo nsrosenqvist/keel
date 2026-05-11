@@ -1,0 +1,52 @@
+[package]
+name = "keel-cli"
+description = "CLI binary for keel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "keel"
+path = "src/main.rs"
+
+[dependencies]
+keel-config = { workspace = true }
+keel-container = { workspace = true }
+keel-runtime = { workspace = true }
+keel-tui = { workspace = true }
+keel-hooks = { workspace = true }
+keel-agents = { workspace = true }
+
+anyhow = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+comfy-table = { workspace = true }
+crossterm = { workspace = true }
+dialoguer = { workspace = true }
+notify = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+shell-words = { workspace = true }
+tokio = { workspace = true }
+which = { workspace = true }
+toml_edit = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Self-update
+reqwest = { workspace = true }
+semver = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

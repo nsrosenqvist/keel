@@ -1,14 +1,14 @@
 # Watch
 
-`scaffl watch <recipe>` re-runs `<recipe>` whenever watched files
+`keel watch <recipe>` re-runs `<recipe>` whenever watched files
 change.
 
 ## Basic usage
 
 ```sh
-scaffl watch test
-scaffl watch test --filter Login
-scaffl watch lint --path src --path tests --debounce-ms 500
+keel watch test
+keel watch test --filter Login
+keel watch lint --path src --path tests --debounce-ms 500
 ```
 
 The recipe runs once at start, then on each filesystem event after a
@@ -23,7 +23,7 @@ the next event interrupts a running invocation only after it finishes
 | `--path <PATH>` | project root | Path to watch. Repeat for multiple paths. |
 | `--debounce-ms <MS>` | `300` | Coalesce bursts of events into one re-run. |
 
-Trailing args are forwarded to the recipe in the same way `scaffl
+Trailing args are forwarded to the recipe in the same way `keel
 <recipe> args...` would. Add `forward_args = true` to the recipe so
 it picks them up:
 

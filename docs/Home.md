@@ -1,10 +1,10 @@
-# scaffl
+# keel
 
 A dev-loop wrapper that adapts to your project, instead of forcing
 your project to adapt to it.
 
-Write commands declaratively in `scaffl.toml`, as shell scripts
-under `.scaffl/commands/`, or both. Wrap Docker Compose, run host
+Write commands declaratively in `keel.toml`, as shell scripts
+under `.keel/commands/`, or both. Wrap Docker Compose, run host
 tooling, install pre-commit-compatible git hooks, sync agent
 instructions and skills from upstream repos, and supervise the
 whole stack from a built-in TUI.
@@ -12,16 +12,16 @@ whole stack from a built-in TUI.
 > **Status:** pre-alpha. Useable end-to-end on Linux and macOS for
 > the features documented here.
 
-## 60 seconds with scaffl
+## 60 seconds with keel
 
 ```sh
-cargo install --path crates/scaffl-cli   # from a clone
+cargo install --path crates/keel-cli   # from a clone
 cd my-project
-scaffl init                              # scaffold a starter scaffl.toml
-scaffl                                   # open the TUI dashboard
+keel init                              # scaffold a starter keel.toml
+keel                                   # open the TUI dashboard
 ```
 
-A minimal `scaffl.toml`:
+A minimal `keel.toml`:
 
 ```toml
 [project]
@@ -49,21 +49,21 @@ pre-commit = ["check"]
 Then:
 
 ```sh
-scaffl up                   # docker compose up -d
-scaffl test --filter Login  # forwards to composer test
-scaffl hooks install        # writes .git/hooks/pre-commit
-scaffl                      # TUI dashboard with every recipe + service
+keel up                   # docker compose up -d
+keel test --filter Login  # forwards to composer test
+keel hooks install        # writes .git/hooks/pre-commit
+keel                      # TUI dashboard with every recipe + service
 ```
 
 ## Where to go next
 
 - **New here?** → [Getting Started](./Getting-Started.md): install,
-  `scaffl init`, your first recipe and hook.
+  `keel init`, your first recipe and hook.
 - **Want the tour?** → [Quick Tour](./Quick-Tour.md): a guided
   5-minute walk through recipes, hooks, agents, and the TUI.
 - **Need the reference?** →
   [Configuration Reference](./Configuration-Reference.md) for every
-  `scaffl.toml` key, [Commands Reference](./Commands-Reference.md)
+  `keel.toml` key, [Commands Reference](./Commands-Reference.md)
   for every CLI subcommand.
 
 ## All pages
@@ -71,7 +71,7 @@ scaffl                      # TUI dashboard with every recipe + service
 ### Concepts
 
 - [Recipes and Scripts](./Recipes-and-Scripts.md) — declarative
-  TOML vs `.scaffl/commands/` shell scripts.
+  TOML vs `.keel/commands/` shell scripts.
 - [Environments](./Environments.md) — `[env]`, dotenv layering,
   `base + offset` arithmetic.
 - [Container Backends](./Container-Backends.md) — compose / docker
@@ -87,27 +87,27 @@ scaffl                      # TUI dashboard with every recipe + service
   `.pre-commit-config.yaml` runner.
 - [Agents](./Agents.md) — sync agent instructions / skills from
   upstream repos.
-- [Install Flow](./Install-Flow.md) — `.scaffl/install/` ordered
+- [Install Flow](./Install-Flow.md) — `.keel/install/` ordered
   setup steps with state + resume.
 - [TUI](./TUI.md) — the embedded dashboard.
 - [Diff View](./Diff-View.md) — branch-review surface anchored to
   trunk merge-base.
 - [Watch](./Watch.md) — re-run a recipe on filesystem change.
-- [Shell Library](./Shell-Library.md) — `scaffl lib ask|confirm|…`
+- [Shell Library](./Shell-Library.md) — `keel lib ask|confirm|…`
   prompts for shell scripts.
 
 ### Reference
 
 - [Configuration Reference](./Configuration-Reference.md) — every
-  `scaffl.toml` key.
+  `keel.toml` key.
 - [Commands Reference](./Commands-Reference.md) — every CLI
   subcommand.
 
 ### Resources
 
-- [Examples](./Examples.md) — runnable scaffl projects under
+- [Examples](./Examples.md) — runnable keel projects under
   `examples/`.
-- [Troubleshooting](./Troubleshooting.md) — `scaffl doctor`, common
+- [Troubleshooting](./Troubleshooting.md) — `keel doctor`, common
   pitfalls.
 
 ### Project

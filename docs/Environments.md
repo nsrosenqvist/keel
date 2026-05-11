@@ -1,6 +1,6 @@
 # Environments
 
-scaffl resolves the environment a command sees from four sources,
+keel resolves the environment a command sees from four sources,
 deep-merged in a documented order. The same model drives recipe
 execution, compose preflight, and the
 `[worktrees].dotenv` writer.
@@ -9,7 +9,7 @@ execution, compose preflight, and the
 
 In order, later wins:
 
-1. **Inherited process env.** Whatever shell variables scaffl was
+1. **Inherited process env.** Whatever shell variables keel was
    launched with.
 2. **Dotenv files**, in `[env_files].files` order:
 
@@ -30,7 +30,7 @@ Each `[env.<KEY>]` is one of these shapes (spec fields combine):
 ```toml
 [env]
 LOG_LEVEL  = { default = "info" }
-APP_PORT   = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
+APP_PORT   = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
 DB_URL     = { from_command = "scripts/db-url.sh", required = true }
 EDITOR     = { value = "vim" }
 ```
@@ -53,16 +53,16 @@ Three keys are always injected into every recipe and dotenv writer:
 
 | Key | Source |
 |---|---|
-| `SCAFFL_WORKTREE_SLUG` | Detected from git checkout. |
-| `SCAFFL_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed. |
+| `KEEL_WORKTREE_SLUG` | Detected from git checkout. |
+| `KEEL_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed. |
 | `COMPOSE_PROJECT_NAME` | `<project>-<slug>` if `[worktrees].isolate_compose`. |
 
 `base + offset` is the typical consumer:
 
 ```toml
 [env]
-APP_PORT = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
-DB_PORT  = { base = "5432", offset = "SCAFFL_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
 ```
 
 Two checkouts of the same project get different ports automatically.
@@ -71,24 +71,24 @@ full.
 
 ## Inspecting the resolved environment
 
-`scaffl env` prints every resolved key as `KEY=VALUE` lines. Use it
+`keel env` prints every resolved key as `KEY=VALUE` lines. Use it
 to sanity-check the merge:
 
 ```sh
-scaffl env | grep '^APP_'
+keel env | grep '^APP_'
 APP_PORT=8083
 APP_ENV=local
 ```
 
-`scaffl env --write .env` writes the same content into a managed
+`keel env --write .env` writes the same content into a managed
 block in `.env` — the file's user-owned content above and below the
 markers is preserved.
 
 ## Materialising into `.env` automatically
 
-Tools invoked outside scaffl (`docker compose up` directly, IDE
+Tools invoked outside keel (`docker compose up` directly, IDE
 launch configs, `bin/rails s`, `npm run dev`, …) read `.env` and
-won't see scaffl-only values. One config line bridges the gap:
+won't see keel-only values. One config line bridges the gap:
 
 ```toml
 [worktrees]
@@ -97,16 +97,16 @@ dotenv = ".env"
 
 When set:
 
-1. Every `scaffl <anything>` invocation re-writes the managed block
+1. Every `keel <anything>` invocation re-writes the managed block
    in `.env`. Idempotent — when the contents already match, the
    file's mtime stays put, so file watchers and `git status` don't
    churn.
-2. `scaffl hooks install` (without an explicit `--stages` list)
+2. `keel hooks install` (without an explicit `--stages` list)
    auto-includes `post-checkout` and `post-merge` so the file stays
-   fresh after a branch switch even when the developer skips scaffl.
+   fresh after a branch switch even when the developer skips keel.
 
-For a one-shot write outside scaffl's normal lifecycle, use
-`scaffl env --write .env` directly — useful in CI scripts.
+For a one-shot write outside keel's normal lifecycle, use
+`keel env --write .env` directly — useful in CI scripts.
 
 ## See also
 

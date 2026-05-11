@@ -1,0 +1,31 @@
+# Upstream manifest for `keel agents`.
+#
+# A downstream project consumes this repo by adding a
+# [[agents.sources]] entry pointing at it (URL + pinned rev).
+# Each [[file]] / [[dir]] entry below is whole-file owned by
+# keel: the destination file is overwritten byte-for-byte from
+# upstream on every apply, with drift detection from the on-disk
+# state in .keel/agents.state.json.
+#
+# The `mode = "once"` carve-out (used here for AGENTS.md) writes
+# the file only on first apply; the project owns it afterwards
+# and keel never re-touches it.
+
+[[file]]
+src  = "agents/CLAUDE.md"
+dest = "CLAUDE.md"
+
+[[file]]
+src  = "agents/AGENTS.md"
+dest = "AGENTS.md"
+mode = "once"
+
+[[dir]]
+src  = "skills"
+dest = ".claude/skills"
+glob = "**/*.md"
+
+[[dir]]
+src  = "commands"
+dest = ".claude/commands"
+glob = "**/*.md"

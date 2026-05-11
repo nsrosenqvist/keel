@@ -1,50 +1,50 @@
 # Agents
 
-`scaffl agents` manages agent instructions and skills (`CLAUDE.md`,
+`keel agents` manages agent instructions and skills (`CLAUDE.md`,
 `AGENTS.md`, `.claude/skills/`, `.claude/commands/`, …) sourced from
 upstream git repos. Same spirit as the hook subsystem — declarative,
 locally cached, no third-party tool in the loop.
 
 ## The pipeline
 
-1. **Cache.** `scaffl-cache::clone_or_reuse` (the same primitive the
+1. **Cache.** `keel-cache::clone_or_reuse` (the same primitive the
    hooks subsystem uses) caches the upstream at
-   `.scaffl/cache/agents/<slug(url)-rev>/`. Floating refs (anything
+   `.keel/cache/agents/<slug(url)-rev>/`. Floating refs (anything
    that isn't a 7–40 hex SHA or a semver-shaped tag) auto-refetch on
-   every `scaffl agents update`; pinned refs reuse the cache.
-2. **Manifest.** The upstream's `scaffl-agents.toml` declares
+   every `keel agents update`; pinned refs reuse the cache.
+2. **Manifest.** The upstream's `keel-agents.toml` declares
    `[[file]]` and `[[dir]]` mappings (src → dest, optional `mode =
    "once"`).
 3. **Override.** Downstream `[[agents.sources.overrides]]` patches
    mappings by their upstream-declared `dest` (skip / relocate).
 4. **Apply.** The pipeline computes write / update / remove /
-   unchanged actions against `.scaffl/agents.state.json` and writes
+   unchanged actions against `.keel/agents.state.json` and writes
    via temp-file-and-rename. State tracks every file with a SHA-256
    for drift detection and orphan removal.
-5. **Synthetic install step.** `scaffl install` runs an
+5. **Synthetic install step.** `keel install` runs an
    `apply-agents` step before `install-hooks` when
    `[agents].install_with_setup = true` (the default) and at least
    one source is declared.
 
 ## Whole-file ownership
 
-Every file scaffl writes is byte-for-byte from upstream. Local
+Every file keel writes is byte-for-byte from upstream. Local
 overrides go in **sibling** files (e.g. `CLAUDE.local.md` next to a
-scaffl-owned `CLAUDE.md`); scaffl never touches them.
+keel-owned `CLAUDE.md`); keel never touches them.
 
 For directory targets, local files coexist in the same target dir
-with upstream files. Scaffl only manages files it wrote (tracked in
+with upstream files. Keel only manages files it wrote (tracked in
 state); local files are left alone. A non-state file in a `[[dir]]`
 target with the same name as an upstream file is a `LocalShadow`
 error with a rename suggestion — tell the user to rename the local
 file so the conflict is unambiguous.
 
-## Downstream config (`scaffl.toml`)
+## Downstream config (`keel.toml`)
 
 ```toml
 [agents]
 install_with_setup = true                   # default
-manifest_path      = "scaffl-agents.toml"   # default
+manifest_path      = "keel-agents.toml"   # default
 
 [[agents.sources]]
 name    = "baseline"
@@ -69,7 +69,7 @@ rev  = "main"                               # floating; auto-refetched on update
 Override match key is the upstream-declared `dest` (post-`subpath`,
 pre-merge) — that's the path the user actually sees in their tree.
 
-## Upstream manifest (`scaffl-agents.toml`)
+## Upstream manifest (`keel-agents.toml`)
 
 Lives at the upstream repo's root (or a subpath, if `subpath` is
 set):
@@ -100,17 +100,17 @@ skips them but orphan removal still works if the source disappears.
 
 | Command | Notes |
 |---|---|
-| `scaffl agents install` | Apply pinned upstream sources. Idempotent. |
-| `scaffl agents install --force` | Re-clone every source, ignore cache. |
-| `scaffl agents install --dry-run` | Plan without writing. |
-| `scaffl agents install --force-overwrite-drift` | Overwrite hand-edited scaffl-owned files. |
-| `scaffl agents update [--source NAME]...` | Re-resolve revs and re-apply. Floating refs auto-refetch. |
-| `scaffl agents status [--strict]` | Per-source rev + per-file drift. `--strict` exits 1 on drift. |
-| `scaffl agents diff` | Print actions a fresh apply would take. |
+| `keel agents install` | Apply pinned upstream sources. Idempotent. |
+| `keel agents install --force` | Re-clone every source, ignore cache. |
+| `keel agents install --dry-run` | Plan without writing. |
+| `keel agents install --force-overwrite-drift` | Overwrite hand-edited keel-owned files. |
+| `keel agents update [--source NAME]...` | Re-resolve revs and re-apply. Floating refs auto-refetch. |
+| `keel agents status [--strict]` | Per-source rev + per-file drift. `--strict` exits 1 on drift. |
+| `keel agents diff` | Print actions a fresh apply would take. |
 
 ## State + drift
 
-`.scaffl/agents.state.json` is the source of truth for what scaffl
+`.keel/agents.state.json` is the source of truth for what keel
 owns:
 
 ```json
@@ -131,7 +131,7 @@ owns:
       "dest": "CLAUDE.md",
       "source_name": "baseline",
       "src": "agents/CLAUDE.md",
-      "sha256": "<sha of bytes scaffl wrote, or null for mode=once>",
+      "sha256": "<sha of bytes keel wrote, or null for mode=once>",
       "mode": "replace",
       "written_at_ms": 1715000000000
     }
@@ -141,7 +141,7 @@ owns:
 
 The state file is gitignored — it's per-checkout, not shared.
 
-**Drift** is a scaffl-owned file whose disk content hashes to
+**Drift** is a keel-owned file whose disk content hashes to
 something other than what we last wrote. By default, drift is
 left alone (warned in the report); `--force-overwrite-drift`
 overwrites it.
@@ -163,12 +163,12 @@ override to disambiguate explicitly.
 or a semver-shaped tag (`v1.2.3`, `1.2.3-rc.1`, …) as floating.
 Branch names like `main`, `develop`, `HEAD` count as floating, as do
 ambiguous strings like a bare `v1`. Floating refs auto-refetch on
-every `scaffl agents update` (the cache is bypassed for those
+every `keel agents update` (the cache is bypassed for those
 sources).
 
 ## See also
 
-- [`examples/agents-upstream/`](https://github.com/nsrosenqvist/scaffl/tree/main/examples/agents-upstream)
+- [`examples/agents-upstream/`](https://github.com/nsrosenqvist/keel/tree/main/examples/agents-upstream)
   — sample upstream layout an org can fork.
 - [Install Flow](./Install-Flow.md) — how `apply-agents` slots into
   the install plan.

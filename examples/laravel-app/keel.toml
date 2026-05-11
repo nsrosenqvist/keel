@@ -1,0 +1,211 @@
+# keel config that mirrors a typical Laravel + Docker Compose dev loop.
+# Models the same surface as a hand-rolled `dev` shell script: up / down,
+# in-container artisan / composer / php, tests with overrides, local-mode
+# with mprocs, code-quality checks, deploy.
+
+[project]
+name = "laravel-app"
+description = "Example: Laravel + Docker Compose + Kamal"
+
+[containers]
+backend             = "compose"
+default_service     = "app"
+compose_passthrough = true
+service_passthrough = true
+
+[env_files]
+files = [".env", ".env.${APP_ENV}"]
+
+[env]
+# Ports vary per worktree so multiple branches can run side-by-side.
+# Base port + keel's per-worktree integer offset (0 for main, hashed
+# for other branches; pin specific slugs in `[worktrees.assign]`).
+APP_PORT      = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+APP_SERVICE   = { default = "app" }
+WWWUSER       = { from_command = "id -u" }
+WWWGROUP      = { from_command = "id -g" }
+
+[worktrees]
+# Materialise the resolved env (worktree-derived ports, compose
+# project name, etc.) into `.env` on every keel invocation, so
+# tools outside keel (raw `docker compose up`, IDE runners,
+# `bin/sail`) see the right values for the active branch.
+dotenv = ".env"
+
+[worktrees.assign]
+main       = 0      # production-shaped main always at the base port
+production = 0
+
+# ----- Container lifecycle -----
+
+[command.up]
+desc = "Start all services"
+run  = "docker compose up -d"
+
+[command.down]
+desc = "Stop all services"
+run  = "docker compose down"
+
+[command.observability]
+desc = "Start with the LGTM observability stack"
+run  = "docker compose --profile observability up -d"
+
+# ----- Inside the app container -----
+
+[command.shell]
+desc         = "Open a shell in the app container"
+in           = "app"
+run          = "/bin/sh"
+tty          = true
+
+[command.artisan]
+desc         = "Run an artisan command"
+in           = "app"
+run          = "php -d opentelemetry.disabled=1 artisan"
+tty          = true
+forward_args = true
+
+[command.composer]
+desc         = "Run a composer command"
+in           = "app"
+run          = "php -d opentelemetry.disabled=1 -d memory_limit=4G /usr/bin/composer"
+tty          = true
+forward_args = true
+
+[command.tinker]
+desc = "Laravel Tinker"
+in   = "app"
+run  = "php artisan tinker"
+tty  = true
+
+# ----- Database / setup -----
+
+[command.migrate]
+desc         = "Run database migrations"
+needs        = ["up"]
+in           = "app"
+run          = "php artisan migrate"
+forward_args = true
+
+[command.fresh]
+desc  = "Fresh DB with seeds"
+needs = ["up"]
+in    = "app"
+run   = "php artisan migrate:fresh --seed"
+
+# ----- Tests -----
+
+[command.test]
+desc         = "Run the test suite (in container, with overrides)"
+needs        = ["up"]
+in           = "app"
+forward_args = true
+run          = "composer test"
+
+[command.test.env]
+APP_ENV         = "testing"
+DB_CONNECTION   = "sqlite"
+DB_DATABASE     = ":memory:"
+SESSION_DRIVER  = "array"
+CACHE_STORE     = "array"
+QUEUE_CONNECTION = "sync"
+
+# ----- Code quality -----
+
+[command."check:frontend"]
+desc = "Frontend quality checks"
+run  = "npm run check"
+
+[command."check:backend"]
+desc = "Backend quality checks"
+run  = "composer check"
+
+[command.check]
+desc = "All quality checks"
+run  = ["check:frontend", "check:backend"]
+
+# ----- Non-container services -----
+
+# Example: a system Postgres run by systemd that we want to track
+# alongside our compose containers in the TUI. Uncomment if your
+# host has a systemd-managed Postgres (or change `unit` to whatever
+# you actually run).
+#
+# [[services.systemd]]
+# name  = "postgres-host"
+# unit  = "postgresql.service"
+# scope = "user"               # or "system" for system-wide units
+
+# Example: a generic shell-controlled service (e.g. an ngrok tunnel
+# you want to bring up alongside the dev stack).
+#
+# [[services.custom]]
+# name   = "ngrok"
+# desc   = "Public tunnel for webhook testing"
+# status = "pgrep -x ngrok"
+# start  = "ngrok http ${APP_PORT} > /tmp/ngrok.log 2>&1 &"
+# stop   = "pkill -x ngrok"
+# logs   = "tail -F /tmp/ngrok.log"
+
+# ----- Hooks -----
+
+[hooks]
+pre-commit = ["check"]
+# Note: with `[worktrees] dotenv = ".env"` set above, `keel hooks
+# install` (no flags) automatically wires up `post-checkout` and
+# `post-merge` so `.env` stays fresh after branch switches even
+# when you run docker compose directly. No extra recipe needed.
+
+# ----- Install flow -----
+#
+# `keel install` runs the steps under `.keel/install/` in
+# filename order, then installs git-hook shims and pre-fetches any
+# external hook repos referenced by `.pre-commit-config.yaml` into
+# `.keel/cache/hooks/`. Discovered scripts are picked up
+# automatically — listing them under `[install].steps` is only
+# needed to reorder, add `[command.*]` recipes, or interleave
+# inline shell.
+#
+# Three example scripts ship with this project:
+#   01-copy-env          — non-interactive: seed .env from example
+#   02-confirm-seed      — interactive: keel lib confirm, optional
+#   03-pick-php-version  — interactive: keel lib select
+#
+# A few inline-step examples (commented out) to show the shapes:
+#
+# [[install.steps]]
+# name = "composer-install"
+# run  = "composer install --no-interaction"
+# in   = "app"          # runs inside the compose service
+#
+# [[install.steps]]
+# name = "migrate"
+# run  = "php artisan migrate --force"
+# in   = "app"
+# optional = true       # failure logs a warning, doesn't halt install
+#
+# [install]
+# install_git_hooks = true              # default — set false to skip
+# gitignore         = ".keel/.gitignore"
+
+# ----- TUI panes -----
+#
+# `app` and `worker` are auto-discovered from docker-compose.yml; we
+# declare them here only to bind `key = "1"` / `"2"` shortcuts and pin
+# them above any other compose services. Drop these blocks if you
+# don't need the keys.
+
+[[ui.pane]]
+type    = "service"
+service = "app"
+key     = "1"
+
+[[ui.pane]]
+type    = "service"
+service = "worker"
+key     = "2"
+
+[[ui.pane]]
+type    = "command"
+name    = "vite"
+key     = "v"

@@ -2,7 +2,7 @@
 
 Some projects mix compose-managed containers with services
 controlled some other way: a system Postgres, a brew-installed
-Redis, an `ngrok` tunnel, an LSP daemon. scaffl handles them through
+Redis, an `ngrok` tunnel, an LSP daemon. keel handles them through
 two config shapes that compile down to the same internal
 `CustomBackend`.
 
@@ -89,12 +89,12 @@ start  = "brew services start redis"
 stop   = "brew services stop redis"
 ```
 
-scaffl skips compose preflight entirely; `scaffl ui` shows just the
+keel skips compose preflight entirely; `keel ui` shows just the
 declared services.
 
 ## Doctor probe
 
-`scaffl doctor` runs each declared service's `status` command and
+`keel doctor` runs each declared service's `status` command and
 reports running / stopped per entry. Use it to validate the
 declarations before opening the TUI.
 

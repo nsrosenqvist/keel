@@ -4,7 +4,7 @@ Instructions for AI agents (and humans) working on this repository.
 
 ## North Star
 
-**scaffl is the dev-loop wrapper that adapts to your project, instead
+**keel is the dev-loop wrapper that adapts to your project, instead
 of forcing your project to adapt to it.**
 
 Every developer ends up writing a `dev` shell script per project: it
@@ -15,7 +15,7 @@ refactors, and never quite leaves the repo it was born in. Tools like
 DDEV solve this by enforcing a rigid format. Tools like `just` or
 `mprocs` solve a slice and stop.
 
-scaffl is the union: a single binary that defines commands two ways
+keel is the union: a single binary that defines commands two ways
 (declarative TOML *or* plain scripts), knows where they should run
 (host vs service via a Backend abstraction), doubles as a TUI
 dashboard, and handles dev setup + git hooks + agent instructions
@@ -80,37 +80,37 @@ and add `!` after type/scope:
   allow. No runtime reflection — TOML schemas are serde-derived at
   compile time.
 - **One source of truth per concern.** A recipe is defined once. The
-  CLI runs it. The TUI runs it. Both go through `scaffl-runtime`.
-- **No dead config.** Every option in `scaffl.toml` must change
+  CLI runs it. The TUI runs it. Both go through `keel-runtime`.
+- **No dead config.** Every option in `keel.toml` must change
   observable behaviour, or it doesn't ship.
 
 ## Deep-dive docs live in the wiki
 
 End-user documentation, configuration / commands reference, and
 per-subsystem deep-dives live in the
-[**scaffl wiki**](https://github.com/nsrosenqvist/scaffl/wiki),
+[**keel wiki**](https://github.com/nsrosenqvist/keel/wiki),
 auto-synced from [`docs/`](./docs/) on every push to `main`. The
 on-disk `docs/` tree is the source of truth — edit there, the wiki
 updates.
 
 Most relevant for an agent making code changes:
 
-- [Architecture](https://github.com/nsrosenqvist/scaffl/wiki/Architecture)
+- [Architecture](https://github.com/nsrosenqvist/keel/wiki/Architecture)
   — operating principles in full, crate layout, dependency graph,
   cross-context patterns (value objects, the `Backend` trait,
   managed blocks).
-- [Contributing](https://github.com/nsrosenqvist/scaffl/wiki/Contributing)
+- [Contributing](https://github.com/nsrosenqvist/keel/wiki/Contributing)
   — verification ladder, commit conventions, how to add a new
   example, PR conventions.
-- [Configuration Reference](https://github.com/nsrosenqvist/scaffl/wiki/Configuration-Reference)
-  and [Commands Reference](https://github.com/nsrosenqvist/scaffl/wiki/Commands-Reference)
-  — every `scaffl.toml` key and every CLI subcommand.
-- Subsystem pages: [Hooks](https://github.com/nsrosenqvist/scaffl/wiki/Hooks),
-  [Agents](https://github.com/nsrosenqvist/scaffl/wiki/Agents),
-  [Install Flow](https://github.com/nsrosenqvist/scaffl/wiki/Install-Flow),
-  [Worktrees](https://github.com/nsrosenqvist/scaffl/wiki/Worktrees),
-  [TUI](https://github.com/nsrosenqvist/scaffl/wiki/TUI),
-  [Diff View](https://github.com/nsrosenqvist/scaffl/wiki/Diff-View).
+- [Configuration Reference](https://github.com/nsrosenqvist/keel/wiki/Configuration-Reference)
+  and [Commands Reference](https://github.com/nsrosenqvist/keel/wiki/Commands-Reference)
+  — every `keel.toml` key and every CLI subcommand.
+- Subsystem pages: [Hooks](https://github.com/nsrosenqvist/keel/wiki/Hooks),
+  [Agents](https://github.com/nsrosenqvist/keel/wiki/Agents),
+  [Install Flow](https://github.com/nsrosenqvist/keel/wiki/Install-Flow),
+  [Worktrees](https://github.com/nsrosenqvist/keel/wiki/Worktrees),
+  [TUI](https://github.com/nsrosenqvist/keel/wiki/TUI),
+  [Diff View](https://github.com/nsrosenqvist/keel/wiki/Diff-View).
 
 When you change a feature, update the relevant wiki page in the same
 PR. Each page cites the source file(s) it describes.
@@ -120,7 +120,7 @@ PR. Each page cites the source file(s) it describes.
 - Default to fewer features, smaller surface area, sharper traits.
 - A single integration test that runs against a real fixture beats
   five mocked unit tests.
-- If a change makes `scaffl` slower for the common case, it does not
+- If a change makes `keel` slower for the common case, it does not
   ship without a measurement.
-- Read `scaffl.toml` semantics conservatively: silent inference is a
+- Read `keel.toml` semantics conservatively: silent inference is a
   bug.

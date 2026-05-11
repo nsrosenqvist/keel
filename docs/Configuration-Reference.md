@@ -1,23 +1,23 @@
 # Configuration Reference
 
-Every key in `scaffl.toml`, with type, default, and a one-line
+Every key in `keel.toml`, with type, default, and a one-line
 example. The schema lives in
-[`crates/scaffl-config/src/`](https://github.com/nsrosenqvist/scaffl/tree/main/crates/scaffl-config/src);
+[`crates/keel-config/src/`](https://github.com/nsrosenqvist/keel/tree/main/crates/keel-config/src);
 unknown keys are rejected at load time so typos don't silently
 become no-ops.
 
-scaffl loads config in three layers, deep-merged in order (later wins):
+keel loads config in three layers, deep-merged in order (later wins):
 
-1. `scaffl.toml` at the project root.
-2. `.scaffl/local.toml` (per-developer overrides; gitignored).
-3. `.scaffl/worktrees/<slug>.toml` (per-worktree overrides; gitignored).
+1. `keel.toml` at the project root.
+2. `.keel/local.toml` (per-developer overrides; gitignored).
+3. `.keel/worktrees/<slug>.toml` (per-worktree overrides; gitignored).
 
 ## `[project]`
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `name` | string | unset | Used as the worktree-hash seed when `[worktrees].seed` isn't set. |
-| `description` | string | unset | Surfaced by `scaffl doctor` and the TUI title. |
+| `description` | string | unset | Surfaced by `keel doctor` and the TUI title. |
 
 ```toml
 [project]
@@ -45,7 +45,7 @@ Per-key spec. See [Environments](./Environments.md).
 files = [".env", ".env.local"]
 
 [env]
-APP_PORT = { base = "8080", offset = "SCAFFL_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
 DB_URL   = { from_command = "scripts/db-url.sh", required = true }
 LOG      = { default = "info" }
 ```
@@ -68,7 +68,7 @@ Declarative commands. See [Recipes and Scripts](./Recipes-and-Scripts.md).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `desc` | string | unset | One-line description; shown by `scaffl list` and the TUI. |
+| `desc` | string | unset | One-line description; shown by `keel list` and the TUI. |
 | `run` | string \| `[string]` | required | Single command or sequential step list. |
 | `in` | string | unset | Compose service to exec into. Absent = host. |
 | `tty` | bool | `false` | Allocate a pseudo-TTY (`-it`). Required for shells. |
@@ -94,11 +94,11 @@ env = { XDEBUG_MODE = "off" }
 ### `[command.<name>.profile.<profile>]`
 
 Optional override layer. Each field is optional; missing fields
-inherit the recipe's value. Activated with `scaffl --profile <name> <recipe>`.
+inherit the recipe's value. Activated with `keel --profile <name> <recipe>`.
 
 ## `[hooks]`
 
-Native scaffl git hooks. See [Hooks](./Hooks.md).
+Native keel git hooks. See [Hooks](./Hooks.md).
 
 ```toml
 [hooks]
@@ -116,11 +116,11 @@ First-time setup. See [Install Flow](./Install-Flow.md).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `steps` | `[InstallStepRef]` | `[]` | Ordered plan; when empty, `.scaffl/install/*` drives. |
+| `steps` | `[InstallStepRef]` | `[]` | Ordered plan; when empty, `.keel/install/*` drives. |
 | `install_git_hooks` | bool | `true` | Append a synthetic `install-hooks` step. |
-| `gitignore` | string | `.scaffl/.gitignore` | Path of the auto-managed gitignore. |
+| `gitignore` | string | `.keel/.gitignore` | Path of the auto-managed gitignore. |
 
-`InstallStepRef` is either a name (resolves to a `.scaffl/install/`
+`InstallStepRef` is either a name (resolves to a `.keel/install/`
 file or a `[command.*]` recipe) or an inline table:
 
 ```toml
@@ -204,8 +204,8 @@ Upstream-sourced agent instructions. See [Agents](./Agents.md).
 
 | `[agents]` | Type | Default | Notes |
 |---|---|---|---|
-| `install_with_setup` | bool | `true` | Apply during `scaffl install`. |
-| `manifest_path` | string | `scaffl-agents.toml` | Default upstream manifest path. |
+| `install_with_setup` | bool | `true` | Apply during `keel install`. |
+| `manifest_path` | string | `keel-agents.toml` | Default upstream manifest path. |
 
 | `[[agents.sources]]` | Type | Notes |
 |---|---|---|

@@ -1,7 +1,7 @@
 {
-    // Minimal image-only devcontainer. scaffl supports this form
+    // Minimal image-only devcontainer. keel supports this form
     // plus `build: { dockerfile, ... }`; see docs/Devcontainer.md.
-    "name": "scaffl-devcontainer-example",
+    "name": "keel-devcontainer-example",
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
     "workspaceFolder": "/workspaces/devcontainer-example",
     "remoteEnv": {

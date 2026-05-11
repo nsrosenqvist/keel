@@ -1,6 +1,6 @@
 # TUI
 
-Bare `scaffl` (or `scaffl ui` explicitly) opens the embedded
+Bare `keel` (or `keel ui` explicitly) opens the embedded
 dashboard: a browseable view of every recipe and script, plus
 service status panes, output streaming, and a built-in branch-diff
 view.
@@ -20,7 +20,7 @@ view.
 
 ## Auto-discovery
 
-At startup, scaffl asks the active container backend for its service
+At startup, keel asks the active container backend for its service
 list (`docker compose config --services`). Every name shows up as a
 service row in alphabetical order. Most projects need nothing else —
 service rows just appear.
@@ -91,7 +91,7 @@ service list changes.
 
 ## Worktree switcher (`W`)
 
-Modal lists every checkout under the repo and hot-reloads scaffl
+Modal lists every checkout under the repo and hot-reloads keel
 into a different worktree without restarting. The "+ new worktree"
 entry opens a branch-first picker:
 
@@ -117,7 +117,7 @@ Pinned slot for a service row. The lifecycle keymap operates on it.
 
 Pinned slot for a recipe / script. Press `Enter` (or the `key`
 shortcut) to run it. `restart_on = ["src/**", ...]` re-runs on file
-changes — same engine as `scaffl watch`. See [Watch](./Watch.md).
+changes — same engine as `keel watch`. See [Watch](./Watch.md).
 
 ### `watcher`
 
@@ -128,6 +128,6 @@ debounce window (default 300).
 ## See also
 
 - [Diff View](./Diff-View.md) for the `G` view's trunk resolution.
-- [Watch](./Watch.md) for the standalone `scaffl watch` command,
+- [Watch](./Watch.md) for the standalone `keel watch` command,
   which uses the same engine as `restart_on` panes.
 - [Worktrees](./Worktrees.md) for `W` behavior.

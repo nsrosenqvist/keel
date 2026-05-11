@@ -1,7 +1,7 @@
 # Container Backends
 
-scaffl talks to your containers through a Backend abstraction
-(`crates/scaffl-container/`). The backend is selected by
+keel talks to your containers through a Backend abstraction
+(`crates/keel-container/`). The backend is selected by
 `[containers].backend`; everything else is passthrough.
 
 ## Supported backends
@@ -57,15 +57,15 @@ forward_args = true
 
 ## Passthrough resolution
 
-After recipe / script resolution fails for a name, scaffl tries:
+After recipe / script resolution fails for a name, keel tries:
 
-- **`compose_passthrough = true`** (default): `scaffl <name>
-  [args...]` becomes `docker compose <name> [args...]`. So `scaffl
-  ps`, `scaffl logs app`, `scaffl build` all work without writing
+- **`compose_passthrough = true`** (default): `keel <name>
+  [args...]` becomes `docker compose <name> [args...]`. So `keel
+  ps`, `keel logs app`, `keel build` all work without writing
   recipes.
 - **`service_passthrough = true`** (default): if `<name>` matches a
-  compose service, `scaffl <name> [args...]` becomes `docker compose
-  exec <name> [args...]`. So `scaffl app php -v` execs `php -v`
+  compose service, `keel <name> [args...]` becomes `docker compose
+  exec <name> [args...]`. So `keel app php -v` execs `php -v`
   inside the `app` service.
 
 Set either to `false` to opt out — useful when a recipe and a service
@@ -90,13 +90,13 @@ run  = "psql -U postgres"
 tty  = true
 ```
 
-The TUI sidebar (`scaffl ui`) auto-discovers every compose service
+The TUI sidebar (`keel ui`) auto-discovers every compose service
 and shows them with lifecycle keymaps (`r` start, `R` restart,
 `s` stop, `S` stop & remove, `U` up, `D` down). See [TUI](./TUI.md).
 
 ## Doctor
 
-`scaffl doctor` reports the active backend, whether its CLI is on
+`keel doctor` reports the active backend, whether its CLI is on
 PATH, and whether each declared `default_service` exists in the
 compose project. See [Troubleshooting](./Troubleshooting.md).
 

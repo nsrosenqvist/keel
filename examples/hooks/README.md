@@ -1,7 +1,7 @@
 # Example: hooks
 
 Git hook configuration end to end. Native `[hooks]` recipes from
-`scaffl.toml` plus a `.pre-commit-config.yaml` mixing `repo: local`
+`keel.toml` plus a `.pre-commit-config.yaml` mixing `repo: local`
 hooks and an external repo at a pinned tag — all run by the same
 installed shim.
 
@@ -19,7 +19,7 @@ git add -A && git commit -q -m "seed"
 ## Install the shims
 
 ```sh
-scaffl hooks install
+keel hooks install
 ```
 
 Writes `.git/hooks/pre-commit` (and any other stages you declare).
@@ -27,21 +27,21 @@ Each shim is a one-liner:
 
 ```sh
 #!/usr/bin/env sh
-# managed by scaffl
-exec scaffl hooks run pre-commit "$@"
+# managed by keel
+exec keel hooks run pre-commit "$@"
 ```
 
-Existing non-scaffl hooks at the same path are left alone — the
+Existing non-keel hooks at the same path are left alone — the
 installer refuses to overwrite a foreign hook with a clear error.
 Move your old hook aside (e.g. `.git/hooks/pre-commit.bak`) and
-rerun `scaffl hooks install`.
+rerun `keel hooks install`.
 
 ## What runs on `git commit`
 
 For the `pre-commit` stage, the installed shim runs (in order):
 
-1. **Native scaffl hooks** from `[hooks.pre-commit]` in
-   `scaffl.toml`. In this example: `check`, which expands to
+1. **Native keel hooks** from `[hooks.pre-commit]` in
+   `keel.toml`. In this example: `check`, which expands to
    `fmt` then `lint`.
 2. **`.pre-commit-config.yaml` hooks** whose stages include
    `pre-commit`. In this example: `trim-trailing-ws`,
@@ -57,15 +57,15 @@ The first invocation clones
 `https://github.com/pre-commit/pre-commit-hooks` at `v4.5.0` into:
 
 ```
-.scaffl/cache/hooks/<slug(url)-v4.5.0>/clone/
-.scaffl/cache/hooks/<slug(url)-v4.5.0>/meta.json
+.keel/cache/hooks/<slug(url)-v4.5.0>/clone/
+.keel/cache/hooks/<slug(url)-v4.5.0>/meta.json
 ```
 
 Subsequent runs reuse the cache. To force a refresh (e.g. when an
 upstream moves a tag):
 
 ```sh
-scaffl install --update-hooks
+keel install --update-hooks
 ```
 
 ## Try the manual run path
@@ -73,7 +73,7 @@ scaffl install --update-hooks
 You can run hooks without going through git:
 
 ```sh
-scaffl hooks run pre-commit
+keel hooks run pre-commit
 ```
 
 Same execution as the installed shim invokes. Useful for debugging
@@ -82,10 +82,10 @@ which hook fails.
 ## Uninstall
 
 ```sh
-scaffl hooks uninstall
+keel hooks uninstall
 ```
 
-Removes only scaffl-managed shims (identified by the marker
+Removes only keel-managed shims (identified by the marker
 comment). Foreign hooks at the same paths are left alone.
 
 ## Errors you can trip on purpose
@@ -98,9 +98,9 @@ Add an unsupported language to `.pre-commit-config.yaml`:
   entry: flake8
 ```
 
-`scaffl hooks install` errors with:
+`keel hooks install` errors with:
 
-> hook `flake8` uses language `python`; scaffl runs only `system`
+> hook `flake8` uses language `python`; keel runs only `system`
 > / `script` hooks. Use a wrapper script with `language: script`,
 > or a tool already on PATH with `language: system`.
 
@@ -111,6 +111,6 @@ Same shape for `repo: meta` (pre-commit's built-in hooks like
 
 - [Hooks](../../docs/Hooks.md) — the full subsystem doc.
 - [Configuration Reference: `[hooks]`](../../docs/Configuration-Reference.md#hooks).
-- [Install Flow](../../docs/Install-Flow.md) — `scaffl install`
+- [Install Flow](../../docs/Install-Flow.md) — `keel install`
   bundles a synthetic `install-hooks` step that does the same job
-  as the manual `scaffl hooks install` command above.
+  as the manual `keel hooks install` command above.
