@@ -305,9 +305,19 @@ fn render_terminals_sidebar(app: &App, frame: &mut Frame, area: Rect) {
 /// it for the kind of "tab title" feel a real terminal would
 /// show. The cwd is collapsed against $HOME (`~`) to fit narrow
 /// sidebars.
+///
+/// A pending bell (tmux's `#{window_bell_flag}`) swaps the leading
+/// diamond for a yellow filled dot — the indicator we surface for
+/// "this window wants attention" (coding agents emit BEL when
+/// they're waiting on input). The flag clears on attach.
 fn window_row_line(w: &crate::app::TmuxWindow) -> Line<'static> {
+    let (glyph, glyph_style) = if w.has_bell {
+        ("● ", Style::default().fg(Color::Yellow))
+    } else {
+        ("◇ ", Style::default().fg(Color::DarkGray))
+    };
     let mut spans = vec![
-        Span::styled("◇ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(glyph, glyph_style),
         Span::styled(
             format!("{}: ", w.index),
             Style::default().fg(Color::DarkGray),
@@ -2712,6 +2722,50 @@ mod tests {
         assert!(
             text.contains("new shell"),
             "expected '+ new shell' sentinel, got:\n{text}"
+        );
+        // Baseline: no bell → diamond glyph, no filled dot in the
+        // sidebar (the dot only appears for service status, which
+        // lives elsewhere in the layout).
+        assert!(
+            text.contains('◇'),
+            "expected diamond glyph for bell-less window, got:\n{text}"
+        );
+    }
+
+    /// When a window has `has_bell` set, the sidebar swaps the
+    /// diamond glyph for a filled dot — the visual cue that the
+    /// terminal is waiting on the user (e.g. a coding agent rang
+    /// the bell).
+    #[test]
+    fn terminals_view_marks_window_with_pending_bell() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(cfg());
+        app.set_tmux_available(true);
+        app.switch_view(crate::app::View::Terminals);
+        app.terminals_set_windows(vec![crate::app::TmuxWindow {
+            index: 0,
+            name: "claude".into(),
+            cwd: None,
+            has_bell: true,
+        }]);
+        terminal.draw(|f| render(&app, f)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        assert!(
+            text.contains('●'),
+            "expected filled dot for bell-set window, got:\n{text}"
+        );
+        assert!(
+            !text.contains('◇'),
+            "diamond should be replaced by dot when bell is set, got:\n{text}"
         );
     }
 
