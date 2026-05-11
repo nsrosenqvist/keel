@@ -60,9 +60,11 @@ pub use terminal::DriveOutcome;
 /// rather than always returning to the control center.
 ///
 /// `branch` populates the top-bar branch slot (None → header skips
-/// the slot, e.g. when not in a git repo). The diff file list is
-/// preloaded so the dirty count is visible from the first frame
-/// instead of waiting for the user to open the diff view.
+/// the slot, e.g. when not in a git repo). The diff file list, the
+/// auto-discovered service list, and the watcher panes all start
+/// loading on background tasks — the first frame paints before any
+/// of them finish, then [`App::drain_boot_results`] folds the
+/// results in as they arrive.
 pub async fn run(
     config: Arc<Config>,
     executor: Executor,
@@ -76,11 +78,7 @@ pub async fn run(
         .with_backend(backend)
         .with_project_root(project_root)
         .with_branch(branch);
-    // Order matters: discover before watchers so the sidebar sections
-    // populate in one rebuild rather than two flickers.
-    app.discover_services().await;
-    app.spawn_watcher_panes(project_root);
-    terminal::preload_diff_status(&mut app).await;
+    app.spawn_boot_tasks(project_root);
     if initial_view != View::ControlCenter {
         app.switch_view(initial_view);
     }

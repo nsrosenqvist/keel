@@ -97,6 +97,7 @@ async fn drive(
     let mut events = spawn_event_reader();
     loop {
         // Pre-render hooks: drain queued output and advance run state.
+        app.drain_boot_results();
         app.drain_runs();
         app.poll_runs().await;
         app.drain_services();
@@ -886,22 +887,6 @@ async fn handle_key_diff(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     }
 }
 
-/// Preload just the file list (no per-file diff bodies) so the top
-/// bar's dirty count is populated from the first frame. Called once
-/// at startup; the diff view's normal lazy-load path takes over from
-/// there. Also runs the one-shot `lazygit` PATH probe so the `L`
-/// keybind in the diff view knows whether to be a no-op.
-pub(crate) async fn preload_diff_status(app: &mut App) {
-    refresh_diff_anchor(app).await;
-    app.diff_set_lazygit_available(crate::lazygit::is_available());
-    let project_root = app.project_root().to_path_buf();
-    let anchor = app.diff().anchor.clone();
-    match load_diff_files(&project_root, anchor.as_deref()).await {
-        Ok(files) => app.diff_set_files(files),
-        Err(msg) => app.diff_set_error(msg),
-    }
-}
-
 /// Resolve the trunk branch (config override → remote default →
 /// local fallback), its merge-base with HEAD, the current branch
 /// name, and the 7-char short anchor SHA — then store all four on
@@ -926,7 +911,7 @@ async fn refresh_diff_anchor(app: &mut App) {
 /// Resolve the current branch name (`git rev-parse --abbrev-ref HEAD`).
 /// Returns None when detached or the command fails — the banner just
 /// hides the branch slot in that case.
-async fn current_branch(project_root: &std::path::Path) -> Option<String> {
+pub(crate) async fn current_branch(project_root: &std::path::Path) -> Option<String> {
     let out = tokio::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(project_root)
@@ -944,6 +929,11 @@ async fn current_branch(project_root: &std::path::Path) -> Option<String> {
 /// ensure the selected file's diff body is cached. Cheap on
 /// subsequent calls thanks to the per-file cache.
 async fn ensure_diff_loaded(app: &mut App) {
+    // If the boot preload is still in flight, prefer awaiting it over
+    // firing duplicate git commands. On a manual refresh (`r` / post-
+    // lazygit) the boot rx is already drained, so this returns
+    // immediately.
+    app.await_diff_preload().await;
     if !app.diff().loaded {
         // Refresh anchor on every reload so a freshly-pulled trunk
         // shifts the comparison forward instead of staying pinned to
@@ -981,7 +971,7 @@ async fn ensure_diff_for_selected(app: &mut App) {
 /// `git status --porcelain` so we still work in repos where no
 /// trunk could be detected (e.g. fresh `git init` with no commits
 /// past HEAD).
-async fn load_diff_files(
+pub(crate) async fn load_diff_files(
     project_root: &std::path::Path,
     anchor: Option<&str>,
 ) -> Result<Vec<crate::app::DiffFile>, String> {

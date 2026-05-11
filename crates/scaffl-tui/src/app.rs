@@ -5,7 +5,7 @@
 use crate::palette::Palette;
 use crate::runner::RunState;
 use crate::services::ServicePane;
-use crate::watchers::WatcherPane;
+use crate::watchers::{WatcherError, WatcherPane};
 use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
 use scaffl_container::Backend;
 use scaffl_runtime::Executor;
@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
 
 /// Top-level view of the TUI. Orthogonal to [`Mode`]: a view picks
 /// what's *rendered*, a mode picks how *keys* route. The control
@@ -574,6 +575,39 @@ impl WorktreeSwitcher {
     }
 }
 
+/// Resolved diff preload state, computed off the boot path by
+/// [`App::spawn_boot_tasks`] and applied to [`DiffState`] by
+/// [`App::drain_boot_results`] (or [`App::await_diff_preload`] when
+/// the initial view is Diff). The fields mirror the assignments the
+/// old synchronous `preload_diff_status` used to make.
+pub struct DiffPreload {
+    pub trunk: Option<String>,
+    pub anchor: Option<String>,
+    pub anchor_short: Option<String>,
+    pub branch: Option<String>,
+    pub lazygit_available: bool,
+    pub files: Result<Vec<DiffFile>, String>,
+}
+
+/// One pane's worth of watcher-spawn result, delivered from the boot
+/// task. Spawns happen on a `spawn_blocking` thread because
+/// [`WatcherPane::spawn`] is sync; results stream back so a slow
+/// pane (notify init on a deep tree) doesn't hold up the rest.
+pub struct WatcherSpawnResult {
+    pub name: String,
+    pub pane: Result<WatcherPane, WatcherError>,
+}
+
+/// Receivers for the three async boot tasks. Held on [`App`] so the
+/// pre-render hook can drain them every loop iteration without
+/// awaiting anything that isn't already ready.
+#[derive(Default)]
+pub struct BootChannels {
+    pub discover_rx: Option<oneshot::Receiver<Vec<String>>>,
+    pub diff_rx: Option<oneshot::Receiver<DiffPreload>>,
+    pub watcher_rx: Option<mpsc::UnboundedReceiver<WatcherSpawnResult>>,
+}
+
 /// TUI application state.
 pub struct App {
     config: Arc<Config>,
@@ -653,6 +687,11 @@ pub struct App {
     /// user can read them (e.g. tmux session vanishing on detach
     /// gets clobbered by the very keypress that produced it).
     diagnostics: Vec<String>,
+    /// Boot-task result channels. Populated by
+    /// [`App::spawn_boot_tasks`] right after `App::new`; drained by
+    /// the event loop's pre-render hook so the first frame can paint
+    /// before service discovery / diff preload / watcher init finish.
+    boot: BootChannels,
 }
 
 impl App {
@@ -687,6 +726,7 @@ impl App {
             pending_lazygit: false,
             diff: DiffState::default(),
             diagnostics: Vec::new(),
+            boot: BootChannels::default(),
         }
     }
 
@@ -1960,6 +2000,210 @@ impl App {
     pub fn drain_services(&mut self) {
         for pane in self.services.values_mut() {
             pane.poll_tail();
+        }
+    }
+
+    /// Kick off the three boot operations on background tasks: service
+    /// discovery (compose `list_services`), diff preload (trunk +
+    /// merge-base + name-status + numstat + ls-files), and watcher
+    /// pane spawning (notify + globset compile per pane). Returns
+    /// immediately; results land via [`Self::drain_boot_results`].
+    ///
+    /// Designed so the first frame can paint before any of these
+    /// finish — boot time is no longer gated on a slow Docker daemon
+    /// or a cold git cache.
+    pub fn spawn_boot_tasks(&mut self, project_root: &Path) {
+        // 1. Service discovery — one-shot.
+        if let Some(backend) = self.backend.as_ref().map(Arc::clone) {
+            let (tx, rx) = oneshot::channel();
+            tokio::spawn(async move {
+                // Empty Vec on failure: caller treats discovery as
+                // best-effort (the auto-discovered group just stays
+                // empty). Matches the pre-refactor `discover_services`
+                // behaviour where a `list_services` Err was a no-op.
+                let names = backend.list_services().await.unwrap_or_default();
+                let _ = tx.send(names);
+            });
+            self.boot.discover_rx = Some(rx);
+        }
+
+        // 2. Diff preload — one-shot.
+        let project_root_owned = project_root.to_path_buf();
+        let configured_base = self.config.diff.base.clone();
+        let (diff_tx, diff_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let trunk = scaffl_runtime::detect_trunk(
+                &project_root_owned,
+                configured_base.as_deref(),
+            )
+            .await;
+            let anchor = match trunk.as_deref() {
+                Some(t) => scaffl_runtime::merge_base(&project_root_owned, t).await,
+                None => None,
+            };
+            let branch = crate::terminal::current_branch(&project_root_owned).await;
+            let anchor_short = anchor
+                .as_deref()
+                .map(|sha| sha.chars().take(7).collect::<String>());
+            let lazygit_available = crate::lazygit::is_available();
+            let files =
+                crate::terminal::load_diff_files(&project_root_owned, anchor.as_deref()).await;
+            let _ = diff_tx.send(DiffPreload {
+                trunk,
+                anchor,
+                anchor_short,
+                branch,
+                lazygit_available,
+                files,
+            });
+        });
+        self.boot.diff_rx = Some(diff_rx);
+
+        // 3. Watcher panes — mpsc, one item per pane. Spawning is sync
+        // (globset compile + notify init) so we hop to `spawn_blocking`;
+        // each pane streams back independently so a slow pane (notify
+        // init on a deep tree) doesn't hold up the others.
+        let watcher_specs: Vec<(usize, String, Vec<String>, u64)> = self
+            .config
+            .ui
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, pane)| match pane {
+                UiPane::Watcher {
+                    glob,
+                    on_change,
+                    debounce_ms,
+                    ..
+                } => Some((idx, on_change.clone(), glob.clone(), *debounce_ms)),
+                _ => None,
+            })
+            .collect();
+        if !watcher_specs.is_empty() {
+            let (w_tx, w_rx) = mpsc::unbounded_channel();
+            let project_root_for_watchers = project_root.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                // Replicate `unique_watcher_name` locally — we don't
+                // hold a reference to App from this thread, so we
+                // dedupe against names we've already emitted.
+                let mut emitted: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                for (idx, on_change, glob, debounce_ms) in watcher_specs {
+                    let primary = format!("watch:{on_change}");
+                    let name = if emitted.insert(primary.clone()) {
+                        primary
+                    } else {
+                        let fallback = format!("watch:{on_change}:{idx}");
+                        emitted.insert(fallback.clone());
+                        fallback
+                    };
+                    let pane = WatcherPane::spawn(
+                        name.clone(),
+                        on_change,
+                        glob,
+                        Duration::from_millis(debounce_ms),
+                        &project_root_for_watchers,
+                    );
+                    if w_tx.send(WatcherSpawnResult { name, pane }).is_err() {
+                        // Receiver dropped — TUI exited mid-spawn.
+                        return;
+                    }
+                }
+            });
+            self.boot.watcher_rx = Some(w_rx);
+        }
+    }
+
+    /// Non-blocking drain of any boot-task results that have landed
+    /// since the last call. Called once per loop iteration in the
+    /// pre-render hooks so the sidebar / header fill in as soon as
+    /// each task completes — no extra wake needed.
+    pub fn drain_boot_results(&mut self) {
+        // Service discovery.
+        if let Some(rx) = self.boot.discover_rx.as_mut()
+            && let Ok(names) = rx.try_recv()
+        {
+            self.boot.discover_rx = None;
+            let mut added = false;
+            for name in names {
+                if !self.services.contains_key(&name) {
+                    self.services
+                        .insert(name.clone(), ServicePane::new(name.clone()));
+                    added = true;
+                }
+            }
+            if added {
+                self.items = build_items_from(&self.config, &self.services, &self.watchers);
+            }
+        }
+
+        // Diff preload.
+        if let Some(rx) = self.boot.diff_rx.as_mut()
+            && let Ok(preload) = rx.try_recv()
+        {
+            self.boot.diff_rx = None;
+            self.apply_diff_preload(preload);
+        }
+
+        // Watcher panes — drain everything that arrived this tick.
+        if let Some(rx) = self.boot.watcher_rx.as_mut() {
+            let mut added = false;
+            let mut disconnected = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(result) => match result.pane {
+                        Ok(pane) => {
+                            self.watchers.insert(result.name, pane);
+                            added = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "watcher pane `{}` failed to start: {e}",
+                                result.name
+                            );
+                        }
+                    },
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+            if disconnected {
+                self.boot.watcher_rx = None;
+            }
+            if added {
+                self.items = build_items_from(&self.config, &self.services, &self.watchers);
+            }
+        }
+    }
+
+    /// Block until the diff preload finishes (or fails). Used by
+    /// [`crate::terminal::ensure_diff_loaded`] so a manual diff
+    /// refresh / `g` keybind / `--view diff` startup doesn't fire
+    /// duplicate git commands when the boot preload is in flight.
+    /// No-op once drained.
+    pub async fn await_diff_preload(&mut self) {
+        let Some(rx) = self.boot.diff_rx.take() else {
+            return;
+        };
+        if let Ok(preload) = rx.await {
+            self.apply_diff_preload(preload);
+        }
+    }
+
+    fn apply_diff_preload(&mut self, preload: DiffPreload) {
+        self.diff_set_anchor(
+            preload.trunk,
+            preload.anchor,
+            preload.branch,
+            preload.anchor_short,
+        );
+        self.diff_set_lazygit_available(preload.lazygit_available);
+        match preload.files {
+            Ok(files) => self.diff_set_files(files),
+            Err(msg) => self.diff_set_error(msg),
         }
     }
 
