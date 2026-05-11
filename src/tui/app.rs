@@ -15,8 +15,9 @@ use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
 use crate::tui::services::ServicePane;
 use crate::tui::views::control_center::state::{Item, ItemKind};
+use crate::tui::views::diff::line_width::{diff_line_rendered_width, read_line_rendered_width};
 use crate::tui::views::diff::state::{
-    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, ReadLine, ReadLineKind,
+    BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, ReadLine,
 };
 use crate::tui::views::terminals::state::{TerminalsRow, TerminalsView, TmuxWindow};
 use crate::tui::watchers::{WatcherError, WatcherPane};
@@ -2471,56 +2472,6 @@ fn runtime_row_label(config: &Config) -> Option<&'static str> {
 /// stable: runtime (when configured), services (declared first in
 /// keel.toml order, then any auto-discovered ones), watchers,
 /// recipes, scripts.
-/// Rendered width of one diff body line, in columns. Mirrors the
-/// formatting `render_diff_body_line` produces in `ui.rs` — kept in
-/// sync by hand so the h-scroll clamp doesn't accidentally cut off
-/// the last column. Headers and hunks render without gutter / sigil,
-/// just their raw text. Content rows are:
-/// `<old_lineno:gutter> <new_lineno:gutter> <sigil><space><content>`
-/// = `2 * gutter_w + 4 + content_chars`.
-fn diff_line_rendered_width(line: &DiffLine, gutter_w: usize) -> usize {
-    match line.kind {
-        DiffLineKind::Header | DiffLineKind::Hunk => line.text.chars().count(),
-        DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context => {
-            let content_chars = if line.spans.is_empty() {
-                // Renderer falls back to `line.text.get(1..)` (strips
-                // the leading sigil from the raw line) when no spans
-                // are present.
-                line.text.chars().count().saturating_sub(1)
-            } else {
-                line.spans.iter().map(|s| s.text.chars().count()).sum()
-            };
-            2 * gutter_w + 4 + content_chars
-        }
-    }
-}
-
-/// Rendered width of one read-mode body line, in columns. Mirrors
-/// `render_read_body_line` in `ui.rs`. Regular rows are
-/// `<lineno:gutter><space><content>` = `gutter_w + 1 + content_chars`.
-/// Separator rows render the "− N lines removed" label after a blank
-/// gutter — same gutter_w + 1 prefix.
-fn read_line_rendered_width(line: &ReadLine, gutter_w: usize) -> usize {
-    match line.kind {
-        ReadLineKind::Separator { removed } => {
-            let label_chars = if removed == 1 {
-                "− 1 line removed".chars().count()
-            } else {
-                format!("− {removed} lines removed").chars().count()
-            };
-            gutter_w + 1 + label_chars
-        }
-        _ => {
-            let content_chars = if line.spans.is_empty() {
-                line.text.chars().count()
-            } else {
-                line.spans.iter().map(|s| s.text.chars().count()).sum()
-            };
-            gutter_w + 1 + content_chars
-        }
-    }
-}
-
 fn build_items_from(
     config: &Config,
     services: &BTreeMap<String, ServicePane>,
@@ -2593,7 +2544,7 @@ fn collect_service_panes(config: &Config) -> BTreeMap<String, ServicePane> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::views::diff::state::DiffStatus;
+    use crate::tui::views::diff::state::{DiffStatus, ReadLineKind};
     use pretty_assertions::assert_eq;
 
     /// Test cfg with no container backend, so the synthetic container

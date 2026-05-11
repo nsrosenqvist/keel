@@ -30,6 +30,7 @@ use crate::tui::palette::Palette;
 use crate::tui::runner::{CapturedLine, RunState};
 use crate::tui::services::ServicePane;
 use crate::tui::views::control_center::state::{Item, ItemKind};
+use crate::tui::views::diff::line_width::{diff_line_rendered_width, read_line_rendered_width};
 use crate::tui::views::diff::state::{
     BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
 };
@@ -545,7 +546,7 @@ fn render_body_diff(
         let pane = area.width.saturating_sub(4) as usize;
         let longest = lines
             .iter()
-            .map(|l| diff_line_visual_width(l, gutter_w))
+            .map(|l| diff_line_rendered_width(l, gutter_w))
             .max()
             .unwrap_or(0);
         Some(pane.max(longest))
@@ -617,7 +618,7 @@ fn render_body_read(
         let pane = area.width.saturating_sub(4) as usize;
         let longest = lines
             .iter()
-            .map(|l| read_line_visual_width(l, gutter_w))
+            .map(|l| read_line_rendered_width(l, gutter_w))
             .max()
             .unwrap_or(0);
         Some(pane.max(longest))
@@ -650,50 +651,6 @@ fn render_body_read(
     }
 }
 
-/// Visual width of a rendered diff-body row, used by the caller to
-/// derive `pad_to`. Matches the column layout produced by
-/// `render_diff_body_line`: `<old:gutter_w> <new:gutter_w> <sigil> <code>`.
-/// Header / Hunk rows render the raw text without a gutter, so their
-/// width is just the text width.
-fn diff_line_visual_width(line: &DiffLine, gutter_w: usize) -> usize {
-    use DiffLineKind;
-    if line.kind == DiffLineKind::Header || line.kind == DiffLineKind::Hunk {
-        return line.text.chars().count();
-    }
-    // `<old> <new> <sigil> ` → 2*gutter_w + 4 cells.
-    let prefix = 2 * gutter_w + 4;
-    let content = if line.spans.is_empty() {
-        line.text.get(1..).unwrap_or("").chars().count()
-    } else {
-        line.spans.iter().map(|s| s.text.chars().count()).sum()
-    };
-    prefix + content
-}
-
-/// Visual width of a rendered read-body row. Matches
-/// `render_read_body_line`'s `<lineno:gutter_w> <code>` layout (and
-/// `<gutter_w> − N lines removed` for separators).
-fn read_line_visual_width(line: &ReadLine, gutter_w: usize) -> usize {
-    use ReadLineKind;
-    let prefix = gutter_w + 1;
-    let content = match line.kind {
-        ReadLineKind::Separator { removed } => {
-            if removed == 1 {
-                "− 1 line removed".chars().count()
-            } else {
-                format!("− {removed} lines removed").chars().count()
-            }
-        }
-        _ => {
-            if line.spans.is_empty() {
-                line.text.chars().count()
-            } else {
-                line.spans.iter().map(|s| s.text.chars().count()).sum()
-            }
-        }
-    };
-    prefix + content
-}
 
 /// Right-pad the spans with bg-tinted whitespace so the row's
 /// background extends to `pad_to` cells. No-op when `pad_to` is
