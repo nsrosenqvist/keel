@@ -2032,10 +2032,15 @@ impl App {
         // 0. Spawn the background state worker if we have a backend.
         // Seeded with whatever services the config already declared
         // so the first poll tick has work to do without waiting for
-        // discovery to land.
+        // discovery to land. Also seeds the tmux session name so the
+        // worker can poll #{window_bell_flag} for the Terminals view.
         if let Some(backend) = self.backend.as_ref().map(Arc::clone) {
             let initial = self.services.keys().cloned().collect();
-            self.worker = Some(crate::worker::spawn(backend, initial));
+            let handle = crate::worker::spawn(backend, initial);
+            let _ = handle.cmd_tx.send(crate::worker::WorkerCommand::SetTmuxSession(
+                Some(self.terminals.session_name.clone()),
+            ));
+            self.worker = Some(handle);
         }
 
         // 1. Service discovery — one-shot.
@@ -2238,6 +2243,10 @@ impl App {
     /// `refresh_service_status` await that used to shell out to
     /// compose for each service on every pre-render tick.
     pub fn drain_worker_snapshots(&mut self) {
+        // Coalesce tmux-window snapshots: only the most recent
+        // reflects the current state, and applying older ones first
+        // would briefly flicker stale data on the next render.
+        let mut latest_tmux: Option<Vec<TmuxWindow>> = None;
         let Some(w) = self.worker.as_mut() else {
             return;
         };
@@ -2248,12 +2257,18 @@ impl App {
                         pane.status = Some(status);
                     }
                 }
+                Ok(crate::worker::WorkerSnapshot::TmuxWindows(windows)) => {
+                    latest_tmux = Some(windows);
+                }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     self.worker = None;
                     break;
                 }
             }
+        }
+        if let Some(windows) = latest_tmux {
+            self.terminals_set_windows(windows);
         }
     }
 
@@ -2266,6 +2281,18 @@ impl App {
             let _ = w
                 .cmd_tx
                 .send(crate::worker::WorkerCommand::PokeServiceStatus);
+        }
+    }
+
+    /// Signal the worker to refresh the tmux window list now —
+    /// after an attach return, kill, or view entry, so the row list
+    /// (and bell flags) feel reactive instead of waiting for the
+    /// 1 s tick.
+    pub fn poke_worker_tmux_windows(&self) {
+        if let Some(w) = self.worker.as_ref() {
+            let _ = w
+                .cmd_tx
+                .send(crate::worker::WorkerCommand::PokeTmuxWindows);
         }
     }
 

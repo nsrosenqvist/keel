@@ -414,7 +414,7 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
 /// Outcome of asking tmux for the windows in a session. Lets the
 /// caller distinguish "no such session" from "session has no
 /// windows" — which look identical when collapsed to a Vec.
-enum WindowList {
+pub(crate) enum WindowList {
     Ok(Vec<crate::app::TmuxWindow>),
     NoSession(String),
     SpawnFailed(String),
@@ -423,7 +423,7 @@ enum WindowList {
 /// Query tmux for the current window list of `session`. Format
 /// uses `\t` between fields so window names / paths with spaces
 /// or colons round-trip cleanly.
-async fn list_tmux_windows(session: &str) -> WindowList {
+pub(crate) async fn list_tmux_windows(session: &str) -> WindowList {
     use tokio::process::Command;
     let output = match Command::new("tmux")
         .args([
