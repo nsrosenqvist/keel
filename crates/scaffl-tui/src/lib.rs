@@ -70,6 +70,7 @@ pub async fn run(
     config: Arc<Config>,
     executor: Executor,
     backend: Arc<dyn Backend>,
+    devcontainer: Option<Arc<scaffl_container::devcontainer::DevcontainerBackend>>,
     project_root: &Path,
     initial_view: View,
     branch: Option<String>,
@@ -79,6 +80,9 @@ pub async fn run(
         .with_backend(backend)
         .with_project_root(project_root)
         .with_branch(branch);
+    if let Some(dc) = devcontainer {
+        app = app.with_devcontainer(dc);
+    }
     app.spawn_boot_tasks(project_root);
     if initial_view != View::ControlCenter {
         app.switch_view(initial_view);

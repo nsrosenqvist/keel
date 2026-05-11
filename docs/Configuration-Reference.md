@@ -156,6 +156,20 @@ main       = 0
 production = 0
 ```
 
+## `[devcontainer]`
+
+Opt-in devcontainer integration. See [Devcontainer](./Devcontainer.md).
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `false` | When true, recipes without `in =` and the TUI new-shell sentinel route into the devcontainer. |
+| `path` | string | unset | Override auto-detect. Falls back to `.devcontainer/devcontainer.json`, then `.devcontainer.json`. |
+
+```toml
+[devcontainer]
+enabled = true
+```
+
 ## `[diff]`
 
 Diff-view trunk override. See [Diff View](./Diff-View.md).

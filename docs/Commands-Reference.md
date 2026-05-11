@@ -69,6 +69,17 @@ that step alone.
 Open the [TUI dashboard](./TUI.md) explicitly (same as bare `scaffl`
 with no args).
 
+## `scaffl shell [--service <name>]`
+
+Drop into an interactive shell.
+
+| Flag | Notes |
+|---|---|
+| (none) | Enter the project's devcontainer. Requires `[devcontainer] enabled = true`. Ensures the container is up first. |
+| `--service <name>` | Enter the named compose service (`docker compose exec -it <name>`). Independent of devcontainer config. |
+
+See [Devcontainer](./Devcontainer.md).
+
 ## `scaffl hooks <action>`
 
 | Action | Notes |

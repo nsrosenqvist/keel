@@ -14,6 +14,7 @@ pub mod hooks;
 pub mod init;
 pub mod install;
 pub mod lib;
+pub mod shell;
 pub mod update;
 pub mod watch;
 pub mod worktree;

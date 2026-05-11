@@ -14,6 +14,7 @@ use crate::error::RuntimeError;
 use crate::sink::{InheritSink, OutputSink, OutputStream};
 use crate::worktree::Identity;
 use scaffl_config::{Config, Recipe, Run, ScriptCommand};
+use scaffl_container::devcontainer::DevcontainerBackend;
 use scaffl_container::{Backend, ExecOptions, ServiceStatus};
 use std::collections::HashSet;
 use std::path::Path;
@@ -32,6 +33,21 @@ type BoxFut<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 /// Holds shared, immutable references to its collaborators. Cheap to clone
 /// for spawning concurrent recipe steps; the cached base env is shared via
 /// [`Arc`].
+/// Where "host" execution lands when a recipe / script has no
+/// `in = "<service>"`. `Local` is the historical default (fork on
+/// the user's machine); `Devcontainer` routes through a docker-managed
+/// workspace container described by the project's `devcontainer.json`.
+///
+/// Separate from the container [`Backend`] abstraction (which handles
+/// `in = "<service>"` routing for compose/podman/custom) — the two
+/// dimensions are orthogonal and v1's opt-in devcontainer leaves the
+/// existing service-routing path untouched.
+#[derive(Clone)]
+pub enum WorkspaceTarget {
+    Local,
+    Devcontainer(Arc<DevcontainerBackend>),
+}
+
 #[derive(Clone)]
 pub struct Executor {
     backend: Arc<dyn Backend>,
@@ -45,6 +61,8 @@ pub struct Executor {
     /// auto-detects on first use. CLI / TUI pass a known identity to
     /// avoid duplicate `git rev-parse` invocations.
     identity: Option<Identity>,
+    /// Where no-`in` work lands. Defaults to [`WorkspaceTarget::Local`].
+    workspace: WorkspaceTarget,
 }
 
 impl Executor {
@@ -57,7 +75,23 @@ impl Executor {
             sink: Arc::new(InheritSink),
             profile: None,
             identity: None,
+            workspace: WorkspaceTarget::Local,
         }
+    }
+
+    /// Return a clone that routes no-`in` recipes / scripts into the
+    /// devcontainer. The caller is responsible for having validated
+    /// that `[devcontainer] enabled = true` and the spec was parsed
+    /// successfully — at this point the backend is just plumbed
+    /// through.
+    pub fn with_devcontainer(&self, devcontainer: Arc<DevcontainerBackend>) -> Self {
+        let mut clone = self.clone();
+        clone.workspace = WorkspaceTarget::Devcontainer(devcontainer);
+        clone
+    }
+
+    pub fn workspace_target(&self) -> &WorkspaceTarget {
+        &self.workspace
     }
 
     /// Return a clone with a pre-detected worktree identity. Skips the
@@ -357,6 +391,22 @@ impl Executor {
                 .map_err(RuntimeError::from);
         }
 
+        if let WorkspaceTarget::Devcontainer(dc) = &self.workspace {
+            let opts = ExecOptions {
+                tty: recipe.tty,
+                env: env.into_map(),
+                workdir: None,
+            };
+            let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+            // Pass the container name as `service` — DevcontainerBackend
+            // ignores the arg but `Backend::exec`'s signature requires
+            // a name. ensure_up runs inside the backend itself.
+            return dc
+                .exec(dc.container_name(), &argv_refs, &opts)
+                .await
+                .map_err(RuntimeError::from);
+        }
+
         // Host execution.
         let (program, rest) = argv.split_first().expect("non-empty argv");
         let mut cmd = Command::new(program);
@@ -486,6 +536,30 @@ impl Executor {
             return self
                 .backend
                 .exec_with_stdin(service, &argv, &opts, &body)
+                .await
+                .map_err(RuntimeError::from);
+        }
+
+        if let WorkspaceTarget::Devcontainer(dc) = &self.workspace {
+            // Mirror the in-service script path: pipe the script body
+            // to `<interpreter> -s -- <args>` inside the devcontainer.
+            // The container needs to be up first; the backend handles
+            // ensure_up on `exec_with_stdin`.
+            let body = std::fs::read_to_string(&script.path)
+                .map_err(|e| RuntimeError::Backend(scaffl_container::BackendError::Spawn(e)))?;
+            let interpreter = parse_shebang_interpreter(&body).unwrap_or("sh");
+            let mut argv: Vec<&str> = vec![interpreter, "-s"];
+            if script.forward_args && !args.is_empty() {
+                argv.push("--");
+                argv.extend(args.iter().map(String::as_str));
+            }
+            let opts = ExecOptions {
+                tty: false,
+                env: env.into_map(),
+                workdir: None,
+            };
+            return dc
+                .exec_with_stdin(dc.container_name(), &argv, &opts, &body)
                 .await
                 .map_err(RuntimeError::from);
         }

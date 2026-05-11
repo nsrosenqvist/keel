@@ -134,6 +134,17 @@ async fn drive(
             });
         }
         if let Some(req) = app.take_pending_attach() {
+            // If the attach needs a devcontainer ensure_up, run it
+            // *before* yielding to tmux. A failed ensure_up flashes
+            // an error and drops the attach — better than handing
+            // the user a tmux window that dies the second
+            // `docker exec` realises the container isn't there.
+            if let Some(ensure) = &req.ensure
+                && let Err(e) = ensure.backend.ensure_up().await
+            {
+                app.flash = Some(format!("devcontainer ensure-up failed: {e}"));
+                continue;
+            }
             // Yield the terminal to tmux. Drop the events reader
             // first so its blocking poll thread doesn't fight tmux
             // for input, leave alternate screen / cooked mode, run
@@ -275,18 +286,32 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         // the index back, but the simpler path is "spawn it,
         // immediately attach" — tmux focuses the new window when
         // the client connects.
+        //
+        // When `window_name` is set, pass `-n` so tmux disables
+        // automatic-rename for the new window (otherwise the name
+        // would track the foreground process — "docker" for
+        // devcontainer shells, which is exactly what we want to
+        // avoid).
         if !has_session {
             let mut cmd = Command::new("tmux");
             cmd.args(["new-session", "-d", "-s", &req.session]);
+            if let Some(name) = req.window_name.as_deref() {
+                cmd.args(["-n", name]);
+            }
             if let Some(create) = req.create_with.as_deref() {
                 cmd.arg(create);
             }
             let _ = cmd.status().await;
-        } else if let Some(create) = req.create_with.as_deref() {
-            let _ = Command::new("tmux")
-                .args(["new-window", "-t", &req.session, create])
-                .status()
-                .await;
+        } else {
+            let mut cmd = Command::new("tmux");
+            cmd.args(["new-window", "-t", &req.session]);
+            if let Some(name) = req.window_name.as_deref() {
+                cmd.args(["-n", name]);
+            }
+            if let Some(create) = req.create_with.as_deref() {
+                cmd.arg(create);
+            }
+            let _ = cmd.status().await;
         }
         format!("{}:", req.session) // attach to whatever's active (the new window)
     } else if !has_session {
@@ -319,6 +344,30 @@ async fn attach_tmux(req: &crate::app::AttachRequest) {
         }
         format!("{}:{}", req.session, req.window)
     };
+    // Annotate the just-created window with any caller-supplied
+    // user options. Used by the devcontainer path to tag the window
+    // with its workspaceFolder so the sidebar can render the
+    // in-container path rather than the docker client's host-side
+    // pwd. Best-effort: tmux returns non-zero if the window vanished
+    // between create and set, which is OK to ignore — the missing
+    // tag just falls back to the historical cwd display.
+    if !req.window_options.is_empty() {
+        // The current window of the session is the one we just
+        // created (tmux focuses it on new-window). Resolve `:` to
+        // the active window via `display-message` so we tag the
+        // right one without racing the session-exists branch.
+        let win_target = if req.window == "scaffl-new" {
+            format!("{}:", req.session)
+        } else {
+            format!("{}:{}", req.session, req.window)
+        };
+        for (key, value) in &req.window_options {
+            let _ = Command::new("tmux")
+                .args(["set-option", "-w", "-t", &win_target, key, value])
+                .status()
+                .await;
+        }
+    }
     // Pin options that decide whether ctrl+b d ends up killing
     // the session or its windows. Users with `destroy-unattached
     // on` (or rebound `d` to `kill-session`) in their global
@@ -455,7 +504,7 @@ pub(crate) async fn list_tmux_windows(session: &str) -> WindowList {
             "-t",
             session,
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{window_bell_flag}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{window_bell_flag}\t#{@scaffl_workspace}",
         ])
         .stdin(std::process::Stdio::null())
         .output()
@@ -503,16 +552,18 @@ async fn capture_pane(session: &str, window: u32) -> Vec<String> {
 }
 
 /// Parse the tab-separated `tmux list-windows -F` output we ask
-/// for. Lines look like `0\tzsh\t/home/me/proj\t1` or
-/// `1\tsvc:app\t/\t0`. The path may be empty for windows that haven't
-/// launched a process yet — preserved as `None`. The bell column is
-/// `1` when set, empty or `0` otherwise; missing entirely on older
-/// tmux versions, in which case it's treated as cleared. Public for
-/// tests.
+/// for. Lines look like `0\tzsh\t/home/me/proj\t1\t` or
+/// `1\tdc\t/home/me\t0\t/workspaces/foo`. The path may be empty for
+/// windows that haven't launched a process yet — preserved as `None`.
+/// The bell column is `1` when set, empty or `0` otherwise; missing
+/// entirely on older tmux versions, in which case it's treated as
+/// cleared. The `@scaffl_workspace` column is empty for any window
+/// scaffl didn't tag (host shells, services, pre-existing windows).
+/// Public for tests.
 pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
     let mut out = Vec::new();
     for line in input.lines() {
-        let mut parts = line.splitn(4, '\t');
+        let mut parts = line.splitn(5, '\t');
         let Some(idx_str) = parts.next() else {
             continue;
         };
@@ -524,11 +575,13 @@ pub(crate) fn parse_tmux_windows(input: &str) -> Vec<crate::app::TmuxWindow> {
         };
         let cwd = parts.next().map(str::to_string).filter(|s| !s.is_empty());
         let has_bell = matches!(parts.next(), Some("1"));
+        let workspace = parts.next().map(str::to_string).filter(|s| !s.is_empty());
         out.push(crate::app::TmuxWindow {
             index,
             name: name.to_string(),
             cwd,
             has_bell,
+            workspace,
         });
     }
     out

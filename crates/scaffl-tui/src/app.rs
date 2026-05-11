@@ -9,6 +9,7 @@ use crate::watchers::{WatcherError, WatcherPane};
 use ratatui::layout::Rect;
 use scaffl_config::{Config, Recipe, ScriptCommand, model::UiPane};
 use scaffl_container::Backend;
+use scaffl_container::devcontainer::DevcontainerBackend;
 use scaffl_runtime::Executor;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -200,6 +201,13 @@ pub struct TmuxWindow {
     pub name: String,
     pub cwd: Option<String>,
     pub has_bell: bool,
+    /// Devcontainer workspace folder, read from the `@scaffl_workspace`
+    /// tmux window option scaffl set when it created the window.
+    /// Empty for windows scaffl didn't tag (host shells, service
+    /// attaches, pre-existing windows). Surfaces in the sidebar in
+    /// place of the host-side `cwd` since the latter is just the
+    /// docker client's pwd, not anything useful to the user.
+    pub workspace: Option<String>,
 }
 
 /// One visible row in the Terminals view's sidebar. Services first
@@ -425,6 +433,41 @@ pub struct AttachRequest {
     /// When set, the attach handler runs this shell command first
     /// to create the window. `None` means the window already exists.
     pub create_with: Option<String>,
+    /// When set, the event loop awaits the devcontainer's `ensure_up`
+    /// before handing the terminal over to tmux. The attach is
+    /// aborted (with a flashed error) if ensure-up fails — better to
+    /// flash than to drop the user into a tmux window that immediately
+    /// dies because `docker exec` couldn't find the container.
+    pub ensure: Option<EnsureDevcontainer>,
+    /// Explicit `-n <name>` passed to `tmux new-window` when the
+    /// attach handler creates the window. Locks the name against
+    /// tmux's automatic-rename (which would otherwise rewrite it to
+    /// the foreground process — "docker" for devcontainer shells).
+    /// `None` keeps the historical behaviour (let tmux pick).
+    pub window_name: Option<String>,
+    /// User-defined tmux window options to set after the window is
+    /// created — surfaces as `#{@key}` in tmux formats. scaffl uses
+    /// this to tag devcontainer windows with their workspace folder
+    /// so the terminals sidebar can show the in-container path.
+    pub window_options: Vec<(String, String)>,
+}
+
+/// Tiny carrier struct that lets `queue_new_shell` stay synchronous
+/// while the actual `docker` work happens in the event loop's async
+/// turn. Holding the Arc here is what makes the borrowing line up —
+/// the App can produce the request, drop the immutable borrow, and
+/// the event loop can then await on the backend.
+#[derive(Clone)]
+pub struct EnsureDevcontainer {
+    pub backend: Arc<DevcontainerBackend>,
+}
+
+impl std::fmt::Debug for EnsureDevcontainer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnsureDevcontainer")
+            .field("container", &self.backend.container_name())
+            .finish()
+    }
 }
 
 /// Pending request to kill a tmux window. Drained by the event
@@ -651,6 +694,12 @@ pub struct App {
     quit: bool,
     executor: Option<Executor>,
     backend: Option<Arc<dyn Backend>>,
+    /// Workspace devcontainer when opted-in (config `[devcontainer]
+    /// enabled = true`). `None` keeps host-shell semantics for the
+    /// terminals view; `Some` rewires `queue_new_shell` to drop into
+    /// the devcontainer, and the event loop ensures it's up before
+    /// yielding to tmux.
+    devcontainer: Option<Arc<DevcontainerBackend>>,
     /// Per-row run state for recipe + script launches. Each entry
     /// owns its persistent output buffer; navigating the sidebar
     /// switches which buffer the right pane shows. A run remains in
@@ -745,6 +794,7 @@ impl App {
             quit: false,
             executor: None,
             backend: None,
+            devcontainer: None,
             runs: BTreeMap::new(),
             lifecycle_run: None,
             services,
@@ -816,6 +866,19 @@ impl App {
 
     pub fn backend(&self) -> Option<&Arc<dyn Backend>> {
         self.backend.as_ref()
+    }
+
+    /// Plumb in the opt-in devcontainer backend. When set, the
+    /// Terminals view's new-shell sentinel drops into the devcontainer
+    /// instead of running a host shell, and the event loop awaits
+    /// `ensure_up` before yielding to tmux.
+    pub fn with_devcontainer(mut self, devcontainer: Arc<DevcontainerBackend>) -> Self {
+        self.devcontainer = Some(devcontainer);
+        self
+    }
+
+    pub fn devcontainer(&self) -> Option<&Arc<DevcontainerBackend>> {
+        self.devcontainer.as_ref()
     }
 
     pub fn services(&self) -> &BTreeMap<String, ServicePane> {
@@ -1625,6 +1688,9 @@ impl App {
                     session,
                     window: window.index.to_string(),
                     create_with: None,
+                    ensure: None,
+                    window_name: None,
+                    window_options: Vec::new(),
                 });
             }
             TerminalsRow::NewSentinel => {
@@ -1637,20 +1703,56 @@ impl App {
     /// and queue the attach. Used by both the `+ new shell`
     /// sentinel row and the `n` shortcut so the keybind and the
     /// list entry produce identical behaviour.
+    ///
+    /// When a devcontainer is configured, the shell lands inside the
+    /// devcontainer (via `docker exec`) at the workspaceFolder. The
+    /// event loop ensures the container is up before yielding to
+    /// tmux — this fn stays synchronous to keep the App's event-loop
+    /// borrowing simple.
     pub fn queue_new_shell(&mut self) {
         let session = self.terminals.session_name.clone();
-        let create_with = Some(format!(
-            "cd {} && exec ${{SHELL:-/bin/sh}}",
-            shell_escape(self.project_root.display().to_string())
-        ));
+        let (create_with, ensure, window_name, window_options) =
+            if let Some(dc) = &self.devcontainer {
+                let workspace = dc.workspace_folder().to_string();
+                let cmd = format!(
+                    "docker exec -it {name} sh -c 'cd {cwd} && exec ${{SHELL:-/bin/sh}}'",
+                    name = dc.container_name(),
+                    cwd = shell_escape(workspace.clone()),
+                );
+                // Explicit window name (`dc`) keeps tmux's
+                // automatic-rename from rewriting to "docker" the
+                // moment the foreground process starts. The user
+                // option carries the in-container workspace path so
+                // the sidebar can show it instead of the docker
+                // client's host-side pwd.
+                (
+                    Some(cmd),
+                    Some(EnsureDevcontainer {
+                        backend: Arc::clone(dc),
+                    }),
+                    Some("dc".to_string()),
+                    vec![("@scaffl_workspace".to_string(), workspace)],
+                )
+            } else {
+                let cmd = format!(
+                    "cd {} && exec ${{SHELL:-/bin/sh}}",
+                    shell_escape(self.project_root.display().to_string())
+                );
+                (Some(cmd), None, None, Vec::new())
+            };
         // `scaffl-new` is the sentinel marker — the attach handler
         // unconditionally calls `tmux new-window` for it, so each
         // press creates a distinct window. tmux's automatic-rename
-        // overwrites the placeholder name once `$SHELL` starts.
+        // overwrites the placeholder name once `$SHELL` starts —
+        // unless `window_name` is set, which is the devcontainer
+        // path's defence against everything becoming "docker".
         self.pending_attach = Some(AttachRequest {
             session,
             window: "scaffl-new".to_string(),
             create_with,
+            ensure,
+            window_name,
+            window_options,
         });
     }
 
@@ -1732,6 +1834,9 @@ impl App {
             session,
             window,
             create_with,
+            ensure: None,
+            window_name: None,
+            window_options: Vec::new(),
         });
         self.view = View::Terminals;
         Ok(())
@@ -2914,12 +3019,14 @@ mod tests {
                 name: "zsh".into(),
                 cwd: None,
                 has_bell: false,
+            workspace: None,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "vim".into(),
                 cwd: None,
                 has_bell: false,
+            workspace: None,
             },
         ]);
         let rows = app.terminals_rows();
@@ -2942,12 +3049,14 @@ mod tests {
                 name: "zsh".into(),
                 cwd: None,
                 has_bell: false,
+            workspace: None,
             },
             crate::app::TmuxWindow {
                 index: 1,
                 name: "svc:app".into(),
                 cwd: None,
                 has_bell: false,
+            workspace: None,
             },
         ]);
         let rows = app.terminals_rows();
@@ -2971,6 +3080,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         assert!(!app.take_pending_bell());
         // Bell flips on.
@@ -2979,6 +3089,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         assert!(app.take_pending_bell(), "fresh bell should arm emit");
         // take_pending_bell clears the flag.
@@ -2996,6 +3107,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         assert!(app.take_pending_bell(), "first observation arms");
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
@@ -3003,6 +3115,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         assert!(
             !app.take_pending_bell(),
@@ -3022,6 +3135,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.silence_next_bell();
         // This transition would normally arm — silence drops it.
@@ -3030,6 +3144,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         assert!(
             !app.take_pending_bell(),
@@ -3041,12 +3156,14 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.terminals_set_windows(vec![crate::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         assert!(
             app.take_pending_bell(),
@@ -3072,6 +3189,7 @@ mod tests {
             name: "vim".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_confirm();
@@ -3112,6 +3230,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -3130,6 +3249,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();
@@ -3147,6 +3267,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         app.terminals.selected = 0;
         app.terminals_kill_selected();

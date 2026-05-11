@@ -9,6 +9,7 @@
 - [Recipes and Scripts](./Recipes-and-Scripts.md)
 - [Environments](./Environments.md)
 - [Container Backends](./Container-Backends.md)
+- [Devcontainer](./Devcontainer.md)
 - [Non Container Services](./Non-Container-Services.md)
 - [Worktrees](./Worktrees.md)
 

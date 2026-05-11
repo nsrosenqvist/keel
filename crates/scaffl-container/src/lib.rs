@@ -8,6 +8,7 @@
 
 pub mod compose;
 pub mod custom;
+pub mod devcontainer;
 pub mod error;
 pub mod null;
 pub mod registry;

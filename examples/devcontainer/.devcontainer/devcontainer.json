@@ -1,0 +1,10 @@
+{
+    // Minimal image-only devcontainer. scaffl supports this form
+    // plus `build: { dockerfile, ... }`; see docs/Devcontainer.md.
+    "name": "scaffl-devcontainer-example",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "workspaceFolder": "/workspaces/devcontainer-example",
+    "remoteEnv": {
+        "EDITOR": "vim"
+    }
+}

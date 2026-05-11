@@ -63,6 +63,20 @@ Showcases:
 - The `repo: meta` / unsupported-language error messages and how
   to wrap a non-`system` hook with a `language: script` shim.
 
+## [`devcontainer`](https://github.com/nsrosenqvist/scaffl/tree/main/examples/devcontainer)
+
+Opt-in devcontainer integration: `[devcontainer] enabled = true`
+plus a minimal image-only `.devcontainer/devcontainer.json`. Use as
+a starting template when you want `scaffl shell` and TUI terminals
+to land inside an isolated workspace container instead of the host.
+
+Showcases:
+
+- `[devcontainer]` config block.
+- Auto-detect of `.devcontainer/devcontainer.json`.
+- `remoteEnv` injected into every `docker exec`.
+- `scaffl doctor` reporting the resolved container + image plan.
+
 ## [`agents-upstream`](https://github.com/nsrosenqvist/scaffl/tree/main/examples/agents-upstream)
 
 A self-describing upstream layout an org can fork to ship shared

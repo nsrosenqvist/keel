@@ -4,6 +4,7 @@ use crate::commands;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use scaffl_config::Config;
+use scaffl_container::devcontainer::{DevcontainerBackend, DevcontainerIdentity, DevcontainerSpec};
 use scaffl_container::{Backend, compose::ComposeBackend};
 use scaffl_runtime::{Executor, Resolution, Resolver, ResolverContext};
 use std::path::{Path, PathBuf};
@@ -133,6 +134,16 @@ pub enum Command {
         /// Include pre-releases when looking for the latest version.
         #[arg(long)]
         prerelease: bool,
+    },
+    /// Drop into an interactive shell. Defaults to the project's
+    /// devcontainer when configured; pass `--service <name>` to enter
+    /// a compose service instead.
+    Shell {
+        /// Open a shell inside the named compose service (e.g.
+        /// `scaffl shell --service app`) instead of the devcontainer.
+        /// Works even when `[devcontainer] enabled = false`.
+        #[arg(long, value_name = "NAME")]
+        service: Option<String>,
     },
 }
 
@@ -410,6 +421,16 @@ pub async fn run(cli: Cli) -> Result<()> {
                 }
                 AgentsAction::Diff => commands::agents::diff(&cfg_arc, &project_root).await,
             },
+            Command::Shell { service } => {
+                let code = commands::shell::run(
+                    &cfg_arc,
+                    &project_root,
+                    &identity,
+                    service.as_deref(),
+                )
+                .await?;
+                std::process::exit(code);
+            }
             Command::Install {
                 step,
                 resume,
@@ -593,10 +614,52 @@ async fn build_executor(
     let backend = build_backend(config).await?;
     let mut executor =
         Executor::new(backend, Arc::clone(config), project_root).with_identity(identity.clone());
+    if let Some(dc) = build_devcontainer(config, project_root, identity)? {
+        executor = executor.with_devcontainer(dc);
+    }
     if let Some(p) = profile {
         executor = executor.with_profile(p);
     }
     Ok(executor)
+}
+
+/// Construct an [`Arc<DevcontainerBackend>`] when devcontainer support
+/// is opted in and a `devcontainer.json` is reachable. Returns
+/// `Ok(None)` when disabled. Returns an `Err` when enabled but the
+/// config is missing or malformed — opting in and silently degrading
+/// would be more confusing than failing loudly.
+pub(crate) fn build_devcontainer(
+    config: &Config,
+    project_root: &Path,
+    identity: &scaffl_runtime::Identity,
+) -> Result<Option<Arc<DevcontainerBackend>>> {
+    if !config.devcontainer.enabled {
+        return Ok(None);
+    }
+    let override_path = config.devcontainer.path.as_deref();
+    let spec_path = DevcontainerSpec::discover(project_root, override_path)
+        .context("locate devcontainer.json (devcontainer.enabled = true)")?;
+    let spec = DevcontainerSpec::load(&spec_path)
+        .with_context(|| format!("parse {}", spec_path.display()))?;
+    let project_slug = project_slug_from_root(project_root);
+    let dc_identity = DevcontainerIdentity {
+        project_root: project_root.to_path_buf(),
+        project_slug,
+        worktree_slug: identity.slug.clone(),
+    };
+    Ok(Some(Arc::new(DevcontainerBackend::new(spec, dc_identity))))
+}
+
+/// Slug derived from the project-root basename. Used as the project
+/// component of the devcontainer's deterministic container name when
+/// `[project].name` isn't set (and even when it is, the basename is
+/// the stable per-repo identifier — `[project].name` is descriptive).
+fn project_slug_from_root(project_root: &Path) -> String {
+    let basename = project_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("project");
+    scaffl_runtime::slugify(basename)
 }
 
 fn cmd_list(config: &Config) -> Result<()> {
@@ -727,15 +790,25 @@ async fn run_tui(
                 None,
             )),
         };
-        let executor = scaffl_runtime::Executor::new(
+        // Re-detect identity per loop iteration — worktree switches
+        // change which slug the devcontainer container_name embeds.
+        let identity = scaffl_runtime::Identity::detect(&current_root, &current_config).await;
+        let devcontainer = build_devcontainer(&current_config, &current_root, &identity)
+            .context("build devcontainer backend")?;
+        let mut executor = scaffl_runtime::Executor::new(
             Arc::clone(&backend),
             Arc::clone(&current_config),
             &current_root,
-        );
+        )
+        .with_identity(identity.clone());
+        if let Some(dc) = &devcontainer {
+            executor = executor.with_devcontainer(Arc::clone(dc));
+        }
         let outcome = scaffl_tui::run(
             Arc::clone(&current_config),
             executor,
             backend,
+            devcontainer,
             &current_root,
             next_view,
             current_branch.clone(),

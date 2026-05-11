@@ -59,6 +59,7 @@ pub async fn run(config: &Config, project_root: &Path) -> Result<i32> {
     findings.extend(check_service_hints(config));
     findings.extend(check_custom_services(config).await);
     findings.extend(check_worktree(config, project_root).await);
+    findings.extend(check_devcontainer(config, project_root).await);
 
     let mut had_fail = false;
     for f in &findings {
@@ -282,6 +283,105 @@ async fn check_worktree(config: &Config, project_root: &Path) -> Vec<Finding> {
             "off"
         },
     ))]
+}
+
+/// Devcontainer health check. Only runs when the user has opted in;
+/// silent (skipped from output entirely) when disabled, so a normal
+/// project's doctor output isn't padded with "[OK] devcontainer:
+/// disabled" noise.
+async fn check_devcontainer(config: &Config, project_root: &Path) -> Vec<Finding> {
+    use scaffl_container::devcontainer::{ContainerSource, DevcontainerSpec};
+
+    if !config.devcontainer.enabled {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let path = match DevcontainerSpec::discover(
+        project_root,
+        config.devcontainer.path.as_deref(),
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            out.push(Finding::fail(format!("devcontainer: {e}")));
+            return out;
+        }
+    };
+    out.push(Finding::ok(format!(
+        "devcontainer: config at `{}`",
+        path.display()
+    )));
+
+    let spec = match DevcontainerSpec::load(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            out.push(Finding::fail(format!("devcontainer: {e}")));
+            return out;
+        }
+    };
+
+    // Build source: validate dockerfile reachability so users don't
+    // discover a typo on `ensure_up` (which would fail with a much
+    // less specific error).
+    if let ContainerSource::Build { dockerfile, .. } = &spec.source {
+        if !dockerfile.is_file() {
+            out.push(Finding::fail(format!(
+                "devcontainer: `build.dockerfile` not found at `{}`",
+                dockerfile.display()
+            )));
+        } else {
+            out.push(Finding::ok(format!(
+                "devcontainer: dockerfile `{}` exists",
+                dockerfile.display()
+            )));
+        }
+    }
+
+    // Docker availability — without it the devcontainer is dead in
+    // the water regardless of how good the spec is.
+    if which::which("docker").is_err() {
+        out.push(Finding::fail(
+            "devcontainer: docker not found on PATH (install docker or set `[devcontainer] enabled = false`)",
+        ));
+        return out;
+    }
+
+    // Warn on privilege-escalating runArgs, mirroring the runtime
+    // warning. Users may have opted in deliberately, but a quiet log
+    // line at run time is easy to miss; doctor's job is to surface
+    // the surprising.
+    for arg in &spec.run_args {
+        if arg == "--privileged"
+            || arg == "--cap-add"
+            || arg.starts_with("--cap-add=")
+            || arg == "--network=host"
+            || arg == "--net=host"
+            || arg.starts_with("--network=host")
+            || arg.starts_with("--net=host")
+        {
+            out.push(Finding::warn(format!(
+                "devcontainer: runArgs includes `{arg}` (elevates privileges)"
+            )));
+        }
+    }
+
+    // Container state — informational, not pass/fail. `ensure_up`
+    // will start a stopped one and create a missing one.
+    let identity = scaffl_runtime::Identity::detect(project_root, config).await;
+    let dc = match crate::app::build_devcontainer(config, project_root, &identity) {
+        Ok(Some(b)) => b,
+        // Build returned None only when `enabled` is false, already
+        // handled above; Err is caught by the earlier discover/load
+        // arms. Defensive return.
+        Ok(None) | Err(_) => return out,
+    };
+    let plan = dc.plan();
+    out.push(Finding::ok(format!(
+        "devcontainer: container `{}` → image `{}` → workspace `{}`",
+        plan.container_name, plan.image_ref, plan.workspace_folder
+    )));
+
+    out
 }
 
 #[cfg(test)]

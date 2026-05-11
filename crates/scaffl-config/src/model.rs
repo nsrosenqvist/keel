@@ -80,6 +80,34 @@ pub struct Config {
     /// install/update` and the synthetic install step.
     #[serde(default)]
     pub agents: AgentsConfig,
+
+    /// Opt-in devcontainer integration. When enabled and a
+    /// `.devcontainer/devcontainer.json` (or `.devcontainer.json`) is
+    /// found, TUI new-shell sessions and recipes without `in = ...`
+    /// route into the devcontainer instead of the host.
+    #[serde(default)]
+    pub devcontainer: DevcontainerConfig,
+}
+
+/// Devcontainer integration toggle.
+///
+/// Off by default — turning it on flips the host-execution target for
+/// recipes (no `in`) and TUI terminal sessions over to a docker-managed
+/// workspace container described by `devcontainer.json`. See
+/// `docs/devcontainer.md` for the supported spec subset.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DevcontainerConfig {
+    /// Master switch. When false, scaffl behaves exactly as before
+    /// even if a `devcontainer.json` exists on disk.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Override the auto-detected `devcontainer.json` path
+    /// (project-root-relative or absolute). When unset, scaffl looks
+    /// for `.devcontainer/devcontainer.json` then `.devcontainer.json`.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// Worktree isolation configuration.
@@ -970,6 +998,39 @@ mod tests {
 
         let err = toml::from_str::<Config>(src).unwrap_err();
         assert!(err.to_string().contains("unknown_field"));
+    }
+
+    #[test]
+    fn devcontainer_defaults_when_section_absent() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(!cfg.devcontainer.enabled);
+        assert!(cfg.devcontainer.path.is_none());
+    }
+
+    #[test]
+    fn parses_devcontainer_section() {
+        let src = r#"
+            [devcontainer]
+            enabled = true
+            path = ".devcontainer/devcontainer.json"
+        "#;
+        let cfg: Config = toml::from_str(src).unwrap();
+        assert!(cfg.devcontainer.enabled);
+        assert_eq!(
+            cfg.devcontainer.path.as_deref(),
+            Some(".devcontainer/devcontainer.json")
+        );
+    }
+
+    #[test]
+    fn devcontainer_rejects_unknown_fields() {
+        let src = r#"
+            [devcontainer]
+            enabled = true
+            unexpected = "nope"
+        "#;
+        let err = toml::from_str::<Config>(src).unwrap_err();
+        assert!(err.to_string().contains("unexpected"));
     }
 
     #[test]

@@ -331,7 +331,18 @@ fn window_row_line(w: &crate::app::TmuxWindow) -> Line<'static> {
         ),
         Span::raw(w.name.clone()),
     ];
-    if let Some(cwd) = w.cwd.as_deref() {
+    // Devcontainer windows: replace the host-side `cwd` (which is
+    // just the docker client's pwd) with the in-container
+    // workspace folder tmux recorded via `@scaffl_workspace`. Falls
+    // back to the regular `cwd` for host shells / service windows /
+    // anything else scaffl didn't tag.
+    if let Some(workspace) = w.workspace.as_deref() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            workspace.to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else if let Some(cwd) = w.cwd.as_deref() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             collapse_home(cwd),
@@ -975,6 +986,23 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];
+
+    // Devcontainer indicator. Surfaces *that* the project is opted
+    // in (so users aren't surprised when `n` drops them into a
+    // container) and *which* container — the deterministic name is
+    // a useful breadcrumb when multiple worktrees / projects are
+    // running side by side.
+    if let Some(dc) = app.devcontainer() {
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            "▣ devcontainer ",
+            Style::default().fg(Color::Cyan),
+        ));
+        spans.push(Span::styled(
+            dc.container_name().to_string(),
+            Style::default().fg(Color::Gray),
+        ));
+    }
 
     // Branch + dirty marker — globally relevant across every view.
     // The branch is set by the CLI from the detected Identity at
@@ -2712,6 +2740,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 
@@ -2760,6 +2789,7 @@ mod tests {
             name: "claude".into(),
             cwd: None,
             has_bell: true,
+        workspace: None,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 
@@ -2819,6 +2849,7 @@ mod tests {
             name: "zsh".into(),
             cwd: None,
             has_bell: false,
+        workspace: None,
         }]);
         terminal.draw(|f| render(&app, f)).unwrap();
 
