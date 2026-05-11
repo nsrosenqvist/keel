@@ -8,7 +8,11 @@ use anyhow::Result;
 use clap::Parser;
 
 mod app;
+mod ci;
 mod commands;
+mod constants;
+mod http;
+mod update;
 
 #[tokio::main]
 async fn main() -> Result<()> {

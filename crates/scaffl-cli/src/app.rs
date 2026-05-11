@@ -125,6 +125,15 @@ pub enum Command {
         #[arg(long)]
         debounce_ms: Option<u64>,
     },
+    /// Self-update the scaffl binary from the latest GitHub release.
+    Update {
+        /// Re-download and replace even if already on the latest version.
+        #[arg(long)]
+        force: bool,
+        /// Include pre-releases when looking for the latest version.
+        #[arg(long)]
+        prerelease: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -278,6 +287,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         let code = run_lib_action(action)?;
         std::process::exit(code);
     }
+    // `update` runs without project context: a freshly-installed scaffl
+    // anywhere on $PATH must be able to upgrade itself.
+    if let Some(Command::Update { force, prerelease }) = cli.command {
+        return commands::update::run(force, prerelease).await;
+    }
 
     let project_root = locate_project_root(cli.project.as_deref())?;
 
@@ -320,6 +334,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             Command::Init { .. } => unreachable!("handled above"),
             Command::Completions { .. } => unreachable!("handled above"),
             Command::Lib { .. } => unreachable!("handled above"),
+            Command::Update { .. } => unreachable!("handled above"),
             Command::Ui => run_tui(Arc::clone(&cfg_arc), &project_root, &identity).await,
             Command::Watch {
                 recipe,
