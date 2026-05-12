@@ -150,6 +150,13 @@ async fn drive(
                     run_lazygit(app, &mut events, terminal).await?;
                     continue 'outer;
                 }
+                Command::OpenEditor { target } => {
+                    let suspended =
+                        run_editor(app, &mut events, terminal, &target).await?;
+                    if suspended {
+                        continue 'outer;
+                    }
+                }
             }
         }
         tokio::select! {
@@ -298,6 +305,56 @@ async fn run_lazygit(
     app.request_diff_reload();
     terminal.draw(|f| ui::render(app, f))?;
     Ok(())
+}
+
+/// Handle one queued [`Command::OpenEditor`]: terminal editors take
+/// the lazygit suspend/resume path; GUI editors fire-and-forget.
+/// Returns `true` when the TUI was suspended (so the caller can
+/// `continue 'outer` to restart the event-loop branches), `false`
+/// when the launch was non-blocking.
+async fn run_editor(
+    app: &mut App,
+    events: &mut mpsc::UnboundedReceiver<Event>,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    target: &std::path::Path,
+) -> Result<bool, TuiError> {
+    let editor = app.editor().clone();
+    match editor.mode {
+        crate::tui::editor::LaunchMode::Terminal => {
+            let old_events = std::mem::replace(events, mpsc::unbounded_channel().1);
+            drop(old_events);
+            leave_terminal(terminal)?;
+            if let Err(msg) =
+                crate::tui::editor::run_terminal(app.project_root(), &editor, target).await
+            {
+                app.flash(msg.clone());
+                app.diagnostic(format!("[editor] {msg}"));
+            }
+            *terminal = enter_terminal(&terminal_title(app))?;
+            terminal.clear()?;
+            *events = spawn_event_reader();
+            // The user almost certainly edited the file; the cached
+            // diff is no longer authoritative.
+            app.diff_mut().mark_stale();
+            app.request_diff_reload();
+            terminal.draw(|f| ui::render(app, f))?;
+            Ok(true)
+        }
+        crate::tui::editor::LaunchMode::Gui => {
+            match crate::tui::editor::spawn_gui(app.project_root(), &editor, target) {
+                Ok(()) => {
+                    let name = editor.display_name();
+                    let shown = target.display();
+                    app.flash(format!("opened {shown} in {name}"));
+                }
+                Err(msg) => {
+                    app.flash(msg.clone());
+                    app.diagnostic(format!("[editor] {msg}"));
+                }
+            }
+            Ok(false)
+        }
+    }
 }
 
 pub(crate) async fn handle_event(app: &mut App, event: Event) {
@@ -484,6 +541,13 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Char('W') => {
             let entries = build_worktree_rows(app).await;
             app.open_worktree_switcher(entries);
+            return;
+        }
+        // Open the worktree root in the configured editor. Global so
+        // an IDE-using devloop can jump from any view back into the
+        // editor without first hopping through `G`.
+        KeyCode::Char('E') => {
+            app.request_open_worktree_in_editor();
             return;
         }
         _ => {}

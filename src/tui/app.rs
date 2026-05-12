@@ -16,6 +16,7 @@ use crate::container::Backend;
 use crate::container::devcontainer::DevcontainerBackend;
 use crate::runtime::Executor;
 use crate::tui::dialogs::Modal;
+use crate::tui::editor::ResolvedEditor;
 use crate::tui::dialogs::args_prompt::ArgsPrompt;
 use crate::tui::dialogs::confirm::{ConfirmAction, ConfirmDialog};
 use crate::tui::dialogs::switcher::{
@@ -205,6 +206,12 @@ pub enum Command {
     /// Suspend the TUI, run `lazygit` foreground, and resume when
     /// the user q's out.
     OpenLazygit,
+    /// Open `target` in the user's preferred editor. Terminal editors
+    /// (vim, nano, …) suspend the TUI like [`Command::OpenLazygit`];
+    /// GUI editors (code, cursor, …) spawn detached without
+    /// suspending. `target` is the file path for `e` (diff view) and
+    /// the worktree root for the global `E` keybind.
+    OpenEditor { target: PathBuf },
     /// Write `\x07` to stdout so the outer terminal emulator
     /// triggers its configured bell action (audible beep, OS
     /// notification, dock badge). Edge-armed by
@@ -378,6 +385,12 @@ pub struct App {
     /// double-click and activates the row. Reset on activation so
     /// triple-click can't re-fire.
     pub last_click: Option<(std::time::Instant, ClickTarget)>,
+    /// Editor resolved once at TUI startup: `[editor]` config →
+    /// `$VISUAL` → `$EDITOR` → `vim`. Drives the `e` / `E` keybinds.
+    /// Set on the builder via [`App::with_editor`]; defaults to `vim`
+    /// in terminal mode when the builder isn't called (tests / boot
+    /// races).
+    editor: ResolvedEditor,
 }
 
 /// How long after a click we still treat a same-target click as a
@@ -420,6 +433,10 @@ impl App {
             confirm_yes_rect: std::cell::Cell::new(None),
             confirm_no_rect: std::cell::Cell::new(None),
             last_click: None,
+            editor: ResolvedEditor {
+                argv: vec!["vim".to_owned()],
+                mode: crate::tui::editor::LaunchMode::Terminal,
+            },
         }
     }
 
@@ -1452,6 +1469,33 @@ impl App {
 
     pub fn request_lazygit(&mut self) {
         self.queue(Command::OpenLazygit);
+    }
+
+    /// Queue an editor launch for `target`. The event loop reads
+    /// `self.editor.mode` to decide between suspending the TUI
+    /// (terminal editors) and spawning detached (GUI editors).
+    pub fn request_open_in_editor(&mut self, target: PathBuf) {
+        self.queue(Command::OpenEditor { target });
+    }
+
+    /// Convenience for the global `E` keybind: open the worktree
+    /// root in the configured editor.
+    pub fn request_open_worktree_in_editor(&mut self) {
+        let root = self.project_root.clone();
+        self.request_open_in_editor(root);
+    }
+
+    /// Replace the resolved editor — called once at boot by the TUI
+    /// entry point after `editor::resolve` runs against the project
+    /// config.
+    pub fn with_editor(mut self, editor: ResolvedEditor) -> Self {
+        self.editor = editor;
+        self
+    }
+
+    /// Read-only accessor for the event loop's command dispatch.
+    pub fn editor(&self) -> &ResolvedEditor {
+        &self.editor
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {

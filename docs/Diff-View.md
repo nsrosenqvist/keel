@@ -61,10 +61,19 @@ of staying pinned to a stale base.
 | `↑` / `↓` | Files | Move file selection. |
 | `↑` / `↓` | Body | Scroll diff. |
 | `]` / `[` | Body | Next / previous hunk. |
+| `e` | Files | Open selected file in `$EDITOR` (see [TUI § Editor](TUI#editor-integration)). |
+| `L` | Always | Hand off to `lazygit` (when installed). |
 | `r` | Always | Refresh trunk + recompute merge-base. |
 | `q` / `Esc` | Always | Back to dashboard. |
 
+After an `e`-launched edit or an `L` lazygit session, keel marks the
+diff stale and reloads automatically — changes show up without a
+manual refresh.
+
 ## See also
 
-- [TUI](TUI) for the dashboard the diff view is part of.
+- [TUI](TUI) for the dashboard the diff view is part of, including
+  the editor + lazygit handoff details.
 - [Configuration Reference: `[diff]`](Configuration-Reference#diff).
+- [Configuration Reference: `[editor]`](Configuration-Reference#editor)
+  for pinning a project editor.

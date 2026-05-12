@@ -35,6 +35,7 @@ pub mod views;
 pub mod watchers;
 pub mod worker;
 
+pub mod editor;
 mod lazygit;
 mod terminal;
 #[cfg(test)]
@@ -81,11 +82,13 @@ pub async fn run(
     initial_view: View,
     branch: Option<String>,
 ) -> Result<DriveOutcome, TuiError> {
+    let editor_cfg = editor::resolve(&config.editor);
     let mut app = App::new(config)
         .with_executor(executor)
         .with_backend(backend)
         .with_project_root(project_root)
-        .with_branch(branch);
+        .with_branch(branch)
+        .with_editor(editor_cfg);
     if let Some(dc) = devcontainer {
         app = app.with_devcontainer(dc);
     }

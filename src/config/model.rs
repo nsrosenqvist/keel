@@ -89,6 +89,33 @@ pub struct Config {
     /// route into the devcontainer instead of the host.
     #[serde(default)]
     pub devcontainer: DevcontainerConfig,
+
+    /// Preferred editor for the `e` / `E` keybinds in the TUI. When
+    /// unset, the editor is resolved from `$VISUAL`, then `$EDITOR`,
+    /// then a `vim` fallback.
+    #[serde(default)]
+    pub editor: EditorConfig,
+}
+
+/// Editor preferences for opening files / the worktree from the TUI.
+///
+/// Resolution order at TUI startup: this config's `command`, then
+/// `$VISUAL`, then `$EDITOR`, then `vim`. The resolved command is
+/// classified as terminal-vs-GUI via a built-in registry of common
+/// editors; set `terminal` to override the classification.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EditorConfig {
+    /// Shell-style command line. First token is the binary; remaining
+    /// tokens are arguments inserted before the target path (e.g.
+    /// `"code --wait"`).
+    #[serde(default)]
+    pub command: Option<String>,
+
+    /// Force terminal (true) or GUI (false) launch mode, overriding
+    /// the built-in registry. Useful for editors keel doesn't know.
+    #[serde(default)]
+    pub terminal: Option<bool>,
 }
 
 /// Devcontainer integration toggle.
@@ -783,6 +810,36 @@ mod tests {
             UiPane::Watcher { debounce_ms, .. } => assert_eq!(*debounce_ms, 500),
             _ => panic!("expected Watcher pane"),
         }
+    }
+
+    #[test]
+    fn editor_defaults_when_section_absent() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.editor.command.is_none());
+        assert!(cfg.editor.terminal.is_none());
+    }
+
+    #[test]
+    fn parses_editor_section() {
+        let src = r#"
+            [editor]
+            command = "code --wait"
+            terminal = false
+        "#;
+        let cfg: Config = toml::from_str(src).unwrap();
+        assert_eq!(cfg.editor.command.as_deref(), Some("code --wait"));
+        assert_eq!(cfg.editor.terminal, Some(false));
+    }
+
+    #[test]
+    fn editor_rejects_unknown_field() {
+        let src = r#"
+            [editor]
+            command = "vim"
+            mystery = true
+        "#;
+        let err = toml::from_str::<Config>(src).expect_err("should reject");
+        assert!(err.to_string().contains("mystery"), "{err}");
     }
 
     #[test]

@@ -88,6 +88,7 @@ service list changes.
 |---|---|
 | `G` | Open the [Diff View](Diff-View). |
 | `W` | Open the worktree switcher modal. |
+| `E` | Open the worktree root in your preferred editor (see [Editor integration](#editor-integration)). |
 
 ## Worktree switcher (`W`)
 
@@ -125,9 +126,62 @@ A long-running watcher pane. `glob = [...]` selects watched files,
 `on_change = "<recipe>"` is the recipe to run, `debounce_ms` is the
 debounce window (default 300).
 
+## Editor integration
+
+Two keybinds open the user's preferred editor without leaving keel:
+
+- **`E`** (global) — open the worktree root in the editor. Designed
+  for IDEs that take a directory (VS Code, Cursor, JetBrains).
+- **`e`** in the diff view (files focus) — open the selected file.
+
+### Resolution
+
+The editor is resolved once at TUI startup, in this order:
+
+1. `[editor] command = "..."` in `keel.toml` (project-pinned).
+2. `$VISUAL`.
+3. `$EDITOR`.
+4. `vim` as a final fallback.
+
+The command string is whitespace-tokenised: `"code --wait"` becomes
+`code` with `--wait` prepended on every launch.
+
+### Terminal vs GUI
+
+Terminal editors (vim, nvim, nano, helix, …) suspend the TUI like
+the lazygit handoff and resume on exit. GUI editors (code, cursor,
+gvim, IntelliJ, …) spawn detached — the TUI stays painted.
+
+Classification uses a built-in registry. For editors keel doesn't
+know, set the launch mode explicitly:
+
+```toml
+[editor]
+command  = "my-custom-editor --gui"
+terminal = false   # force GUI mode; omit to use the registry
+```
+
+Unknown editors with no override default to **terminal mode** (POSIX
+convention for `$EDITOR`).
+
+After a terminal-editor session returns, keel marks the diff stale
+and reloads — file changes you made show up immediately.
+
+## Lazygit handoff
+
+Press **`L`** in the [Diff View](Diff-View) (or set up a different
+trigger) to hand the terminal to `lazygit`. keel leaves the alternate
+screen, runs lazygit foreground, and re-enters when you `q` out.
+Commits / stages / resets done inside lazygit invalidate the cached
+diff — keel reloads automatically.
+
+The `L` keybind is a no-op (with a hint flashed in the status bar)
+when `lazygit` isn't on `PATH`.
+
 ## See also
 
 - [Diff View](Diff-View) for the `G` view's trunk resolution.
 - [Watch](Watch) for the standalone `keel watch` command,
   which uses the same engine as `restart_on` panes.
 - [Worktrees](Worktrees) for `W` behavior.
+- [Configuration Reference: `[editor]`](Configuration-Reference#editor).

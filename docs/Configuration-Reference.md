@@ -178,6 +178,23 @@ Diff-view trunk override. See [Diff View](Diff-View).
 |---|---|---|---|
 | `base` | string | auto-detect | Branch name used as the diff base. |
 
+## `[editor]`
+
+Preferred editor for the TUI's `e` (open selected file) and `E`
+(open worktree root) keybinds. See
+[TUI § Editor integration](TUI#editor-integration).
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `command` | string | `$VISUAL` → `$EDITOR` → `vim` | Shell-style command line; first token is the binary, rest are arguments prepended to the target path. |
+| `terminal` | bool | registry-classified | Force terminal (`true`) or GUI (`false`) launch mode. Override for editors keel doesn't know. |
+
+```toml
+[editor]
+command  = "code --wait"
+terminal = false
+```
+
 ## `[[services.custom]]` / `[[services.systemd]]`
 
 Non-container services. See [Non Container Services](Non-Container-Services).

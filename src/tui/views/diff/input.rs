@@ -145,6 +145,12 @@ pub async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                 app.diff_mut().set_focus(DiffFocus::Body);
             }
+            KeyCode::Char('e') => {
+                if let Some(file) = app.diff().selected_file() {
+                    let path = std::path::PathBuf::from(&file.path);
+                    app.request_open_in_editor(path);
+                }
+            }
             _ => {}
         },
         DiffFocus::Body => match code {
