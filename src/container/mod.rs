@@ -67,7 +67,7 @@ pub trait Backend: Send + Sync {
 
     /// Like [`Self::exec`], but feeds `stdin` to the child's standard
     /// input before waiting for it. Used for in-container script
-    /// execution: keel pipes the script body into `<interpreter> -s
+    /// execution: ampelos pipes the script body into `<interpreter> -s
     /// -- <args>` rather than copying the file in.
     ///
     /// `tty` is forced off internally because compose `exec` rejects
@@ -86,7 +86,7 @@ pub trait Backend: Send + Sync {
 
     /// Spawn an exec and return the [`Child`] with stdout/stderr
     /// piped. The caller streams its output (typically through an
-    /// `OutputSink` in `keel-runtime`) and awaits exit. Used by the
+    /// `OutputSink` in `ampelos-runtime`) and awaits exit. Used by the
     /// TUI so per-recipe output lands in the recipe's pane rather
     /// than bleeding onto the raw terminal under the TUI frame.
     ///
@@ -133,7 +133,7 @@ pub trait Backend: Send + Sync {
     /// notion (NullBackend, hypothetical future backends without log
     /// support) inherit this default.
     ///
-    /// [`OutputSink`]: keel-runtime::OutputSink
+    /// [`OutputSink`]: ampelos-runtime::OutputSink
     async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
             "no container backend configured (set runtime.backend = \"compose\" in keel.toml)"

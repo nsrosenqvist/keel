@@ -37,7 +37,7 @@ pub enum DevcontainerConfigError {
     },
 
     #[error(
-        "{path}: `dockerComposeFile` devcontainers are not supported in keel v1. \
+        "{path}: `dockerComposeFile` devcontainers are not supported in ampelos v1. \
          Use `runtime.backend = \"compose\"` in keel.toml and route recipes \
          to the dev service with `in = \"<service>\"` instead."
     )]
@@ -47,7 +47,7 @@ pub enum DevcontainerConfigError {
     NoBuildSource { path: PathBuf },
 }
 
-/// The parsed devcontainer descriptor, normalised into keel's
+/// The parsed devcontainer descriptor, normalised into ampelos's
 /// internal shape. Field names track the spec; types are tightened
 /// where ambiguity would force later code into a stringly-typed mess.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,7 @@ pub struct DevcontainerSpec {
     /// (`build.dockerfile`, `build.context`).
     pub source_path: PathBuf,
 
-    /// Optional human-readable name. Not used by keel for
+    /// Optional human-readable name. Not used by ampelos for
     /// identity (that's container-name derivation in `backend.rs`).
     pub name: Option<String>,
 
@@ -82,7 +82,7 @@ pub struct DevcontainerSpec {
     pub container_env: BTreeMap<String, String>,
 
     /// Environment injected on every `docker exec`. Merged on top of
-    /// keel's recipe env (recipe env wins on conflict).
+    /// ampelos's recipe env (recipe env wins on conflict).
     pub remote_env: BTreeMap<String, String>,
 
     /// User to exec as inside the container. `None` means "let the
@@ -113,7 +113,7 @@ pub enum ContainerSource {
 }
 
 /// Raw deserialisation target. Mirrors the spec field names so the
-/// json5 layer doesn't need to know about keel conventions.
+/// json5 layer doesn't need to know about ampelos conventions.
 /// Unknown fields are tolerated (the spec is large and we only
 /// support a slice of it).
 #[derive(Debug, Default, Deserialize)]

@@ -1,6 +1,6 @@
-//! Content-addressed git cache for keel.
+//! Content-addressed git cache for ampelos.
 //!
-//! keel owns the cache — it never delegates to a third-party tool.
+//! ampelos owns the cache — it never delegates to a third-party tool.
 //! Every cache lives at `<project>/.keel/cache/<kind>/<key>/`, one
 //! directory per (url, rev) pair, where `<kind>` is selected by the
 //! caller (hooks, agents, …). Cache contents survive across runs;
@@ -43,7 +43,7 @@ impl CacheKind {
 }
 
 /// Minimal input for a cache lookup. Callers translate their own
-/// repo/source types into this on the way in so `keel-cache` does
+/// repo/source types into this on the way in so `ampelos-cache` does
 /// not depend on any of them.
 #[derive(Debug, Clone)]
 pub struct RepoRef {

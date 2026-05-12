@@ -1,4 +1,4 @@
-//! `keel lib <verb>` — small interactive shell utilities exposed as
+//! `ampelos lib <verb>` — small interactive shell utilities exposed as
 //! subcommands so install scripts (and any other shell consumer) can
 //! ask the user a question without depending on a separate prompting
 //! tool.
@@ -6,7 +6,7 @@
 //! Conventions shared by every subcommand:
 //!
 //! - The prompt UI is written to **stderr**, the answer is written to
-//!   **stdout**. This makes `$(keel lib ask …)` capture cleanly in
+//!   **stdout**. This makes `$(ampelos lib ask …)` capture cleanly in
 //!   POSIX shells.
 //! - When stdin is not a terminal, the commands try to be useful
 //!   anyway: `ask` / `password` consume a single piped line if one is
@@ -22,7 +22,7 @@ use dialoguer::theme::ColorfulTheme;
 use std::io::{BufRead, IsTerminal, Read};
 use std::path::Path;
 
-/// `keel lib ask <prompt> [--default V]`
+/// `ampelos lib ask <prompt> [--default V]`
 pub fn ask(prompt: &str, default: Option<&str>) -> Result<i32> {
     let answer = if std::io::stdin().is_terminal() {
         let theme = ColorfulTheme::default();
@@ -43,7 +43,7 @@ pub fn ask(prompt: &str, default: Option<&str>) -> Result<i32> {
     Ok(0)
 }
 
-/// `keel lib confirm <prompt> [--default yes|no]`. Exit 0 = yes, 1 = no.
+/// `ampelos lib confirm <prompt> [--default yes|no]`. Exit 0 = yes, 1 = no.
 pub fn confirm(prompt: &str, default: Option<bool>) -> Result<i32> {
     let yes = if std::io::stdin().is_terminal() {
         let theme = ColorfulTheme::default();
@@ -61,7 +61,7 @@ pub fn confirm(prompt: &str, default: Option<bool>) -> Result<i32> {
     Ok(if yes { 0 } else { 1 })
 }
 
-/// `keel lib password <prompt>` — no-echo input. Answer to stdout.
+/// `ampelos lib password <prompt>` — no-echo input. Answer to stdout.
 pub fn password(prompt: &str) -> Result<i32> {
     let answer = if std::io::stdin().is_terminal() {
         let theme = ColorfulTheme::default();
@@ -79,7 +79,7 @@ pub fn password(prompt: &str) -> Result<i32> {
     Ok(0)
 }
 
-/// `keel lib select <prompt> <choice>... [--multi] [--default N] [--from <path|->]`
+/// `ampelos lib select <prompt> <choice>... [--multi] [--default N] [--from <path|->]`
 /// Single-select prints one line (the chosen option) to stdout.
 /// Multi-select prints one line per chosen option.
 pub fn select(
@@ -134,7 +134,7 @@ pub fn select(
     }
 }
 
-/// `keel lib filter <prompt> [--from <path|->]` — fuzzy-filter
+/// `ampelos lib filter <prompt> [--from <path|->]` — fuzzy-filter
 /// picker. Same I/O contract as single-select.
 pub fn filter(prompt: &str, choices: Vec<String>, from: Option<&Path>) -> Result<i32> {
     let items = collect_items(choices, from)?;
@@ -234,7 +234,7 @@ fn map_dialog_error(e: dialoguer::Error) -> i32 {
         // `Interrupted` is dialoguer's name for "user cancelled".
         DErr::IO(io) if io.kind() == std::io::ErrorKind::Interrupted => 130,
         other => {
-            eprintln!("keel lib: {other}");
+            eprintln!("ampelos lib: {other}");
             1
         }
     }

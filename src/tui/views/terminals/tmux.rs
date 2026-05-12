@@ -1,6 +1,6 @@
 //! Tmux shell-out + parsing for the Terminals view.
 //!
-//! Everything keel knows about tmux at the process level lives here:
+//! Everything ampelos knows about tmux at the process level lives here:
 //! the attach handshake, the `list-windows` query + parser, the
 //! `capture-pane` preview grab, the version probe used to decide
 //! whether the view is even reachable, and the per-app refresh that
@@ -13,7 +13,7 @@ use crate::tui::views::terminals::state::TmuxWindow;
 /// Drop into a tmux session/window. Idempotent re: session/window
 /// creation: missing pieces are spawned before the attach so the
 /// caller can fire-and-forget. Also pins a small set of
-/// keel-specific options (status bar, detach binding, bell
+/// ampelos-specific options (status bar, detach binding, bell
 /// monitoring) so the user always sees consistent UX no matter how
 /// global tmux config differs.
 pub(crate) async fn attach_tmux(req: &AttachRequest) {
@@ -25,7 +25,7 @@ pub(crate) async fn attach_tmux(req: &AttachRequest) {
         .map(|s| s.success())
         .unwrap_or(false);
 
-    let target = if req.window == "keel-new" {
+    let target = if req.window == "ampelos-new" {
         // Fresh shell: ensure session, then unconditionally
         // new-window. `-P -F #{window_index}` would let us read
         // the index back, but the simpler path is "spawn it,
@@ -101,7 +101,7 @@ pub(crate) async fn attach_tmux(req: &AttachRequest) {
         // created (tmux focuses it on new-window). Resolve `:` to
         // the active window via `display-message` so we tag the
         // right one without racing the session-exists branch.
-        let win_target = if req.window == "keel-new" {
+        let win_target = if req.window == "ampelos-new" {
             format!("{}:", req.session)
         } else {
             format!("{}:{}", req.session, req.window)
@@ -117,7 +117,7 @@ pub(crate) async fn attach_tmux(req: &AttachRequest) {
     // the session or its windows. Users with `destroy-unattached
     // on` (or rebound `d` to `kill-session`) in their global
     // tmux config would otherwise see every shell vanish the
-    // moment keel detached — definitely not what "detach"
+    // moment ampelos detached — definitely not what "detach"
     // should do. Belt and braces:
     //
     //   - per-session destroy-unattached off (always survives detach)
@@ -158,7 +158,7 @@ pub(crate) async fn attach_tmux(req: &AttachRequest) {
     // Scope is per-session: each existing window gets the option
     // set explicitly, and an `after-new-window` hook keeps future
     // windows (including those the user creates via ctrl+b c
-    // outside keel) in sync. Nothing global on the server.
+    // outside ampelos) in sync. Nothing global on the server.
     if let WindowList::Ok(windows) = list_tmux_windows(&req.session).await {
         for w in &windows {
             let target = format!("{}:{}", req.session, w.index);
@@ -179,7 +179,7 @@ pub(crate) async fn attach_tmux(req: &AttachRequest) {
         .status()
         .await;
 
-    // Inject the keel-flavoured status bar so users always see
+    // Inject the ampelos-flavoured status bar so users always see
     // the detach hint. Mirrors AOE's layout: session name styled
     // on the left, then a separator and the detach instruction;
     // tmux's window list rides on the right of `status-left` as
@@ -249,7 +249,7 @@ pub async fn list_tmux_windows(session: &str) -> WindowList {
             "-t",
             session,
             "-F",
-            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{window_bell_flag}\t#{@keel_workspace}",
+            "#{window_index}\t#{window_name}\t#{pane_current_path}\t#{window_bell_flag}\t#{@ampelos_workspace}",
         ])
         .stdin(std::process::Stdio::null())
         .output()
@@ -302,8 +302,8 @@ pub(crate) async fn capture_pane(session: &str, window: u32) -> Vec<String> {
 /// windows that haven't launched a process yet — preserved as `None`.
 /// The bell column is `1` when set, empty or `0` otherwise; missing
 /// entirely on older tmux versions, in which case it's treated as
-/// cleared. The `@keel_workspace` column is empty for any window
-/// keel didn't tag (host shells, services, pre-existing windows).
+/// cleared. The `@ampelos_workspace` column is empty for any window
+/// ampelos didn't tag (host shells, services, pre-existing windows).
 /// Public for tests.
 pub fn parse_tmux_windows(input: &str) -> Vec<TmuxWindow> {
     let mut out = Vec::new();

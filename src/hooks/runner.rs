@@ -6,17 +6,17 @@
 //!    everything. The entry is parsed via `shell_words`, args are
 //!    appended, and — unless `pass_filenames = false` — the matching
 //!    staged files come last.
-//! 2. **Cached upstream repo** (`repo: <url>` with a `rev`): keel
+//! 2. **Cached upstream repo** (`repo: <url>` with a `rev`): ampelos
 //!    clones the repo into `.keel/cache/hooks/<key>/` and reads its
 //!    `.pre-commit-hooks.yaml` to fill in any fields the user didn't
 //!    override. Same execution path after merging.
 //!
-//! The hook's `language` tag is **advisory**: keel runs the entry
+//! The hook's `language` tag is **advisory**: ampelos runs the entry
 //! verbatim regardless of `python` / `node` / `ruby` / … and trusts
-//! the runtime to be on `PATH` (typically installed by `keel install`).
+//! the runtime to be on `PATH` (typically installed by `ampelos install`).
 //! The only shape we still reject at run-time is `repo: meta`, which
 //! references pre-commit's built-in hooks that we deliberately don't
-//! implement. keel does not bridge to the `pre-commit` binary;
+//! implement. ampelos does not bridge to the `pre-commit` binary;
 //! replication is the only mode.
 //!
 //! Execution dispatch (per hook, after the spec is resolved):
@@ -392,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_python_hook_runs_verbatim_when_entry_on_path() {
-        // The language tag is advisory now — keel doesn't gate on it.
+        // The language tag is advisory now — ampelos doesn't gate on it.
         // Use a host binary that always exists so the spawn succeeds.
         let temp = tempfile::TempDir::new().unwrap();
         tokio::process::Command::new("git")

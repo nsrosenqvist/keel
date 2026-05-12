@@ -131,7 +131,7 @@ async fn activate_selection(app: &mut App) {
             let branches = crate::runtime::list_branches(&project_root).await;
             // Anchor new worktrees against the git toplevel's
             // parent so they land next to the repo no matter
-            // where keel was invoked from (e.g. running in
+            // where ampelos was invoked from (e.g. running in
             // `<repo>/tmp/test` shouldn't push them into tmp/).
             let parent = crate::runtime::git_toplevel(&project_root)
                 .await

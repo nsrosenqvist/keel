@@ -26,7 +26,7 @@ pub struct ResolvedEntry {
 
 /// Expand a single source's manifest into resolved entries with
 /// overrides applied. The `clone_root` is the directory returned by
-/// `keel-cache`; `subpath` (if any) is joined to it before any src
+/// `ampelos-cache`; `subpath` (if any) is joined to it before any src
 /// is resolved.
 pub fn expand_source(
     source: &SourceSpec,

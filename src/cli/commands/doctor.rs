@@ -1,4 +1,4 @@
-//! `keel doctor` — validate config and report.
+//! `ampelos doctor` — validate config and report.
 
 use crate::config::Config;
 use crate::container::{Backend, compose::ComposeBackend};

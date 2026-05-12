@@ -193,7 +193,7 @@ async fn drift_is_detected_and_left_alone_by_default() {
         .await
         .unwrap();
 
-    // Hand-edit the keel-owned file.
+    // Hand-edit the ampelos-owned file.
     write(&project.path().join("CLAUDE.md"), "hand-edited");
 
     let report = apply(project.path(), &cfg, &ApplyOptions::default())

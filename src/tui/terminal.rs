@@ -83,8 +83,8 @@ fn terminal_title(app: &App) -> String {
         .project
         .name
         .clone()
-        .unwrap_or_else(|| "keel".into());
-    format!("keel — {project}")
+        .unwrap_or_else(|| "ampelos".into());
+    format!("ampelos — {project}")
 }
 
 async fn drive(
@@ -217,10 +217,10 @@ async fn run_attach(
     // fingers are still recovering from the chord); the
     // terminal's response bytes do.
     //
-    // Set `KEEL_DEBUG_INPUT=1` to log every drained
+    // Set `AMPELOS_DEBUG_INPUT=1` to log every drained
     // event — useful when porting to a new terminal that
     // misbehaves in some other way.
-    let verbose = std::env::var("KEEL_DEBUG_INPUT")
+    let verbose = std::env::var("AMPELOS_DEBUG_INPUT")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
     let drain_deadline = std::time::Instant::now() + Duration::from_millis(150);
@@ -245,7 +245,7 @@ async fn run_attach(
     // Bells that rang during the attach already played
     // through tmux's `bell-action any` to the outer
     // terminal — silence the next refresh so coming back to
-    // keel doesn't double-fire the BEL for windows whose
+    // ampelos doesn't double-fire the BEL for windows whose
     // flag is still set. Also discard any tmux snapshots the
     // worker queued mid-attach: applying them after the
     // synchronous refresh below would risk a stale
@@ -522,7 +522,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             app.switch_view(View::Terminals);
             app.request_tmux_probe();
             // Don't expect a session yet — the user may not have
-            // attached to anything during this keel session.
+            // attached to anything during this ampelos session.
             refresh_tmux_windows(app, false).await;
             return;
         }
@@ -1340,14 +1340,11 @@ index abc..def 100644
 
     #[test]
     fn name_status_captures_rename_old_path() {
-        let input = "R100\t.scaffl/commands/seed\t.keel/commands/seed\nM\tREADME.md\n";
+        let input = "R100\t.keel/commands/seed\t.ampelos/commands/seed\nM\tREADME.md\n";
         let entries = parse_diff_name_status(input);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].path, ".keel/commands/seed");
-        assert_eq!(
-            entries[0].old_path.as_deref(),
-            Some(".scaffl/commands/seed")
-        );
+        assert_eq!(entries[0].path, ".ampelos/commands/seed");
+        assert_eq!(entries[0].old_path.as_deref(), Some(".keel/commands/seed"));
         assert_eq!(entries[1].path, "README.md");
         assert!(entries[1].old_path.is_none());
     }
@@ -1363,10 +1360,10 @@ index abc..def 100644
 
     #[test]
     fn numstat_resolves_brace_rename_with_common_suffix() {
-        // The bug case from the field: `.{scaffl => keel}/commands/seed`.
+        // The bug case from the field: `.{keel => ampelos}/commands/seed`.
         assert_eq!(
-            resolve_numstat_destination(".{scaffl => keel}/commands/seed"),
-            ".keel/commands/seed".to_string()
+            resolve_numstat_destination(".{keel => ampelos}/commands/seed"),
+            ".ampelos/commands/seed".to_string()
         );
         assert_eq!(
             resolve_numstat_destination("src/{old => new}/lib.rs"),
@@ -1410,10 +1407,10 @@ index abc..def 100644
 
     #[test]
     fn parse_numstat_picks_destination_for_renamed_file() {
-        let input = "5\t0\t.{scaffl => keel}/commands/seed\n9\t9\tREADME.md\n";
+        let input = "5\t0\t.{keel => ampelos}/commands/seed\n9\t9\tREADME.md\n";
         let entries = parse_numstat(input);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].path, ".keel/commands/seed");
+        assert_eq!(entries[0].path, ".ampelos/commands/seed");
         assert_eq!(entries[0].additions, 5);
         assert_eq!(entries[0].deletions, 0);
         assert_eq!(entries[1].path, "README.md");

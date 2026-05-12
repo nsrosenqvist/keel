@@ -16,7 +16,7 @@
 //!     POV, so tests don't need `#[tokio::test]`.
 //!
 //! All three are `pub(crate)` because they cross module boundaries
-//! (input.rs tests in `views/*/`) but aren't part of the keel
+//! (input.rs tests in `views/*/`) but aren't part of the ampelos
 //! library's external surface.
 
 use crate::tui::app::App;

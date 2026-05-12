@@ -26,9 +26,9 @@ pub struct TmuxWindow {
     pub name: String,
     pub cwd: Option<String>,
     pub has_bell: bool,
-    /// Devcontainer workspace folder, read from the `@keel_workspace`
-    /// tmux window option keel set when it created the window.
-    /// Empty for windows keel didn't tag (host shells, service
+    /// Devcontainer workspace folder, read from the `@ampelos_workspace`
+    /// tmux window option ampelos set when it created the window.
+    /// Empty for windows ampelos didn't tag (host shells, service
     /// attaches, pre-existing windows). Surfaces in the sidebar in
     /// place of the host-side `cwd` since the latter is just the
     /// docker client's pwd, not anything useful to the user.
@@ -54,7 +54,7 @@ pub enum TerminalsRow {
 pub struct TerminalsView {
     /// `None` until probed; `Some(false)` when tmux is missing.
     pub tmux_available: Option<bool>,
-    /// `keel-<project>-<slug>` — stable per worktree.
+    /// `ampelos-<project>-<slug>` — stable per worktree.
     pub session_name: String,
     /// Live window list from `tmux list-windows`. Refreshed on view
     /// entry, after each attach return, and after a delete. Empty
@@ -88,7 +88,7 @@ pub struct TerminalsView {
     /// resync `previous_bell` without emitting. Used right after
     /// attach return: bells that fired during the attach already
     /// played through tmux's `bell-action any`, so we don't want
-    /// keel to beep again on its way back to the TUI.
+    /// ampelos to beep again on its way back to the TUI.
     pub suppress_next_bell_emit: bool,
     /// Per-row rects for the sidebar (services + windows + sentinel),
     /// in the same global-index order the keymap uses. Populated by
@@ -104,10 +104,10 @@ impl TerminalsView {
     /// aware naming would require the runtime identity, which the
     /// caller can layer in via `App::with_project_root`.
     pub fn default_for(config: &Config) -> Self {
-        let project = config.project.name.as_deref().unwrap_or("keel");
+        let project = config.project.name.as_deref().unwrap_or("ampelos");
         Self {
             tmux_available: None,
-            session_name: format!("keel-{project}"),
+            session_name: format!("ampelos-{project}"),
             windows: Vec::new(),
             previews: HashMap::new(),
             selected: 0,

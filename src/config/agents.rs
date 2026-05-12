@@ -21,7 +21,7 @@ const fn true_default() -> bool {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
-    /// When true (default), `keel install` runs `keel agents
+    /// When true (default), `ampelos install` runs `ampelos agents
     /// install` as a synthetic step before the git-hook step. Mirrors
     /// the `[install].install_git_hooks` flag.
     #[serde(default = "true_default")]

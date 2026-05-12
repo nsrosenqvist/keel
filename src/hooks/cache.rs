@@ -1,9 +1,9 @@
-//! Pre-commit-flavoured wrapper around the `keel-cache` crate.
+//! Pre-commit-flavoured wrapper around the `ampelos-cache` crate.
 //!
-//! `keel-cache` does the actual cloning and on-disk caching. This
+//! `ampelos-cache` does the actual cloning and on-disk caching. This
 //! shim translates the hooks-side `Repo` value object into a plain
-//! `RepoRef` and forwards through, so callers in `keel-hooks` and
-//! `keel-cli` don't need to know about the cache crate's API.
+//! `RepoRef` and forwards through, so callers in `ampelos-hooks` and
+//! `ampelos-cli` don't need to know about the cache crate's API.
 
 use crate::cache::{CacheError, CacheKind, RepoRef};
 use crate::hooks::config::Repo;

@@ -5,7 +5,7 @@
 //! Output looks like:
 //!
 //! ```text
-//! Installing keel steps for myapp
+//! Installing ampelos steps for myapp
 //!
 //!   ✓ copy-env                          0.1s
 //!   ✓ composer install                 12.3s
@@ -233,7 +233,7 @@ impl Renderer {
 
     fn print_header(&mut self, project_name: &str) -> io::Result<()> {
         let mut out = io::stdout();
-        writeln!(out, "Installing keel steps for {}", project_name.bold())?;
+        writeln!(out, "Installing ampelos steps for {}", project_name.bold())?;
         writeln!(out)?;
         out.flush()
     }

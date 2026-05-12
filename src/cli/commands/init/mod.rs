@@ -1,4 +1,4 @@
-//! `keel init` — scaffold a starter `keel.toml`.
+//! `ampelos init` — scaffold a starter `keel.toml`.
 //!
 //! Non-interactive, idempotent (refuses to overwrite).
 //!

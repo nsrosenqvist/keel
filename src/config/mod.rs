@@ -1,4 +1,4 @@
-//! keel configuration domain.
+//! ampelos configuration domain.
 //!
 //! Bounded context: parsing and validating user-authored configuration into
 //! immutable value objects consumed by the runtime. No I/O orchestration,

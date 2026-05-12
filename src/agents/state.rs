@@ -1,9 +1,9 @@
-//! `.keel/agents.state.json` — what keel owns, what it pinned to,
+//! `.keel/agents.state.json` — what ampelos owns, what it pinned to,
 //! what bytes it last wrote. Drives drift detection and orphan
 //! removal across `agents install` / `agents update` runs.
 //!
 //! Atomic write via temp-file-and-rename, mirroring the install
-//! state in `keel-cli`.
+//! state in `ampelos-cli`.
 
 use crate::agents::error::AgentsError;
 use crate::agents::manifest::FileMode;
@@ -38,7 +38,7 @@ pub struct AppliedFile {
     pub dest: PathBuf,
     pub source_name: String,
     pub src: String,
-    /// SHA-256 of the bytes keel last wrote. `None` for `mode =
+    /// SHA-256 of the bytes ampelos last wrote. `None` for `mode =
     /// once` (we explicitly let go after first write, so the drift
     /// scan must skip the dest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,7 +78,7 @@ impl AgentsState {
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "agents.state.json has version {}, expected {}. Remove the file and re-run `keel agents install`.",
+                        "agents.state.json has version {}, expected {}. Remove the file and re-run `ampelos agents install`.",
                         parsed.version, SCHEMA_VERSION
                     ),
                 ),

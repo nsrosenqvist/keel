@@ -29,7 +29,7 @@ use tokio::process::Command;
 ///     for host-side execution where the child should inherit everything
 ///     a normal shell would (PATH, HOME, …) plus project overrides.
 ///   * `project_keys` — the subset of keys *declared* by project config
-///     (dotenv files, KEEL_* injection, `[env]`, recipe / script
+///     (dotenv files, AMPELOS_* injection, `[env]`, recipe / script
 ///     overrides). Used for container exec, where leaking host PATH
 ///     etc. via `-e KEY=VAL` would overwrite the image's defaults and
 ///     break command resolution.
@@ -99,7 +99,7 @@ impl Env {
         }
 
         // Inject worktree-derived env *before* [env] resolution so user
-        // entries can reference KEEL_WORKTREE_OFFSET via `offset`.
+        // entries can reference AMPELOS_WORKTREE_OFFSET via `offset`.
         inject_worktree_env(&mut vars, &mut project_keys, config, identity);
 
         for (name, spec) in &config.env {
@@ -114,7 +114,7 @@ impl Env {
 
     /// Apply per-recipe overrides on top of the base env. Overrides are
     /// always project-declared (they came from `[command.X.env]`, a
-    /// script's `env = {...}`, or KEEL_*-prefixed executor injection) —
+    /// script's `env = {...}`, or AMPELOS_*-prefixed executor injection) —
     /// mark them so they survive the project-only filter used for
     /// container exec.
     pub fn with_overrides<I, K, V>(mut self, overrides: I) -> Self
@@ -146,7 +146,7 @@ impl Env {
     /// Snapshot of the project-declared subset only. Use this for
     /// container exec, where inherited host vars (PATH, HOME, …)
     /// would otherwise overwrite the image's defaults and break
-    /// command resolution. Keys come from dotenv files, KEEL_*
+    /// command resolution. Keys come from dotenv files, AMPELOS_*
     /// injection, `[env]`, and recipe / script overrides.
     pub fn project_only_map(&self) -> BTreeMap<String, String> {
         self.project_keys
@@ -157,7 +157,7 @@ impl Env {
 
     /// Apply this env to `cmd`, replacing the inherited process
     /// environment with exactly the resolved set. Single source of
-    /// truth for the rule "keel-spawned host processes see exactly
+    /// truth for the rule "ampelos-spawned host processes see exactly
     /// the resolved env, never the parent shell's leakage" — every
     /// host-side spawn in `Executor` goes through here.
     pub fn apply_to(&self, cmd: &mut Command) {
@@ -177,11 +177,11 @@ impl Env {
     }
 }
 
-/// Inject `KEEL_WORKTREE_*` and (when isolation is on)
+/// Inject `AMPELOS_WORKTREE_*` and (when isolation is on)
 /// `COMPOSE_PROJECT_NAME` into `vars`. Won't clobber values the user
 /// has already set in `.env` or process env — those take priority.
 /// Keys are always recorded as project-declared (even when the value
-/// was kept from existing env) because keel owns the semantics of
+/// was kept from existing env) because ampelos owns the semantics of
 /// these names.
 fn inject_worktree_env(
     vars: &mut BTreeMap<String, String>,
@@ -192,18 +192,18 @@ fn inject_worktree_env(
     // Always inject the slug + offset so the user can reference them
     // unconditionally in `[env]` specs. Empty slug → empty string and
     // offset 0.
-    vars.entry("KEEL_WORKTREE_SLUG".into())
+    vars.entry("AMPELOS_WORKTREE_SLUG".into())
         .or_insert_with(|| identity.slug.clone());
-    project_keys.insert("KEEL_WORKTREE_SLUG".into());
-    vars.entry("KEEL_WORKTREE_OFFSET".into())
+    project_keys.insert("AMPELOS_WORKTREE_SLUG".into());
+    vars.entry("AMPELOS_WORKTREE_OFFSET".into())
         .or_insert_with(|| identity.offset.to_string());
-    project_keys.insert("KEEL_WORKTREE_OFFSET".into());
+    project_keys.insert("AMPELOS_WORKTREE_OFFSET".into());
 
     // Compose project name: only when isolation is on, slug is
     // non-empty, and the user hasn't already set it.
     if config.worktrees.isolate_compose && identity.is_isolated() {
         if !vars.contains_key("COMPOSE_PROJECT_NAME") {
-            let project = config.project.name.as_deref().unwrap_or("keel");
+            let project = config.project.name.as_deref().unwrap_or("ampelos");
             vars.insert(
                 "COMPOSE_PROJECT_NAME".into(),
                 format!("{project}-{slug}", slug = identity.slug),
@@ -448,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn required_missing_errors() {
         let cfg = cfg_with_env(&[(
-            "KEEL_TEST_REQ_MISSING",
+            "AMPELOS_TEST_REQ_MISSING",
             EnvSpec {
                 value: None,
                 default: None,
@@ -458,14 +458,14 @@ mod tests {
             },
         )]);
         unsafe {
-            std::env::remove_var("KEEL_TEST_REQ_MISSING");
+            std::env::remove_var("AMPELOS_TEST_REQ_MISSING");
         }
         let err = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
             .await
             .unwrap_err();
         match err {
             RuntimeError::RequiredEnvMissing(name) => {
-                assert_eq!(name, "KEEL_TEST_REQ_MISSING")
+                assert_eq!(name, "AMPELOS_TEST_REQ_MISSING")
             }
             other => panic!("unexpected: {other:?}"),
         }
@@ -474,10 +474,10 @@ mod tests {
     #[tokio::test]
     async fn explicit_value_wins_over_existing() {
         unsafe {
-            std::env::set_var("KEEL_TEST_VAR", "from-process");
+            std::env::set_var("AMPELOS_TEST_VAR", "from-process");
         }
         let cfg = cfg_with_env(&[(
-            "KEEL_TEST_VAR",
+            "AMPELOS_TEST_VAR",
             EnvSpec {
                 value: Some("from-config".into()),
                 default: None,
@@ -489,9 +489,9 @@ mod tests {
         let env = Env::resolve(&cfg, std::env::current_dir().unwrap().as_path())
             .await
             .unwrap();
-        assert_eq!(env.get("KEEL_TEST_VAR"), Some("from-config"));
+        assert_eq!(env.get("AMPELOS_TEST_VAR"), Some("from-config"));
         unsafe {
-            std::env::remove_var("KEEL_TEST_VAR");
+            std::env::remove_var("AMPELOS_TEST_VAR");
         }
     }
 
@@ -501,20 +501,21 @@ mod tests {
         // SAFETY: env mutation is fine here — these tests run in-process
         // sequentially via tokio's single-thread test runtime.
         unsafe {
-            std::env::set_var("KEEL_APPLY_TO_MARKER", "leaked");
+            std::env::set_var("AMPELOS_APPLY_TO_MARKER", "leaked");
         }
         let env = Env::new().with_overrides([("FOO", "bar"), ("BAZ", "qux")]);
 
         let mut cmd = Command::new("sh");
         // -i prints empty for unset; we look for the literal "<unset>".
-        cmd.arg("-c")
-            .arg(r#"echo FOO=$FOO; echo BAZ=$BAZ; echo MARKER=${KEEL_APPLY_TO_MARKER:-<unset>}"#);
+        cmd.arg("-c").arg(
+            r#"echo FOO=$FOO; echo BAZ=$BAZ; echo MARKER=${AMPELOS_APPLY_TO_MARKER:-<unset>}"#,
+        );
         env.apply_to(&mut cmd);
 
         let out = cmd.output().await.unwrap();
         let text = String::from_utf8(out.stdout).unwrap();
         unsafe {
-            std::env::remove_var("KEEL_APPLY_TO_MARKER");
+            std::env::remove_var("AMPELOS_APPLY_TO_MARKER");
         }
 
         assert!(text.contains("FOO=bar"), "FOO injected: {text}");
@@ -529,10 +530,10 @@ mod tests {
     async fn project_only_map_excludes_inherited_host_env() {
         // SAFETY: tests in this module run sequentially.
         unsafe {
-            std::env::set_var("KEEL_HOST_LEAK", "from-shell");
+            std::env::set_var("AMPELOS_HOST_LEAK", "from-shell");
         }
         let cfg = cfg_with_env(&[(
-            "KEEL_PROJECT_VAR",
+            "AMPELOS_PROJECT_VAR",
             EnvSpec {
                 value: Some("from-config".into()),
                 ..Default::default()
@@ -542,15 +543,15 @@ mod tests {
             .await
             .unwrap();
         unsafe {
-            std::env::remove_var("KEEL_HOST_LEAK");
+            std::env::remove_var("AMPELOS_HOST_LEAK");
         }
         let project = env.project_only_map();
         assert_eq!(
-            project.get("KEEL_PROJECT_VAR").map(String::as_str),
+            project.get("AMPELOS_PROJECT_VAR").map(String::as_str),
             Some("from-config")
         );
         assert!(
-            !project.contains_key("KEEL_HOST_LEAK"),
+            !project.contains_key("AMPELOS_HOST_LEAK"),
             "host-only var must not leak into container env"
         );
         // PATH is the canonical host-only leak — confirm it's filtered.
@@ -558,10 +559,10 @@ mod tests {
             !project.contains_key("PATH"),
             "PATH must not be passed to container exec; it would override the image's default and break command lookup"
         );
-        // KEEL_WORKTREE_* are project-declared even though their value
+        // AMPELOS_WORKTREE_* are project-declared even though their value
         // came from the executor's identity injection.
-        assert!(project.contains_key("KEEL_WORKTREE_SLUG"));
-        assert!(project.contains_key("KEEL_WORKTREE_OFFSET"));
+        assert!(project.contains_key("AMPELOS_WORKTREE_SLUG"));
+        assert!(project.contains_key("AMPELOS_WORKTREE_OFFSET"));
     }
 
     #[tokio::test]
@@ -644,19 +645,19 @@ mod tests {
         let mut keys = BTreeSet::new();
         inject_worktree_env(&mut vars, &mut keys, &cfg, &identity);
         assert_eq!(
-            vars.get("KEEL_WORKTREE_SLUG").map(String::as_str),
+            vars.get("AMPELOS_WORKTREE_SLUG").map(String::as_str),
             Some("feature-x")
         );
         assert_eq!(
-            vars.get("KEEL_WORKTREE_OFFSET").map(String::as_str),
+            vars.get("AMPELOS_WORKTREE_OFFSET").map(String::as_str),
             Some("42")
         );
         assert_eq!(
             vars.get("COMPOSE_PROJECT_NAME").map(String::as_str),
             Some("myapp-feature-x")
         );
-        assert!(keys.contains("KEEL_WORKTREE_SLUG"));
-        assert!(keys.contains("KEEL_WORKTREE_OFFSET"));
+        assert!(keys.contains("AMPELOS_WORKTREE_SLUG"));
+        assert!(keys.contains("AMPELOS_WORKTREE_OFFSET"));
         assert!(keys.contains("COMPOSE_PROJECT_NAME"));
     }
 
@@ -680,7 +681,7 @@ mod tests {
             Some("user-chose-this")
         );
         // Still flagged project-declared even when value pre-existed —
-        // keel owns the semantics of the name, so it must survive the
+        // ampelos owns the semantics of the name, so it must survive the
         // container-exec filter.
         assert!(keys.contains("COMPOSE_PROJECT_NAME"));
     }
@@ -694,9 +695,12 @@ mod tests {
         let mut vars = BTreeMap::new();
         let mut keys = BTreeSet::new();
         inject_worktree_env(&mut vars, &mut keys, &cfg, &Identity::none());
-        assert_eq!(vars.get("KEEL_WORKTREE_SLUG").map(String::as_str), Some(""));
         assert_eq!(
-            vars.get("KEEL_WORKTREE_OFFSET").map(String::as_str),
+            vars.get("AMPELOS_WORKTREE_SLUG").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            vars.get("AMPELOS_WORKTREE_OFFSET").map(String::as_str),
             Some("0")
         );
         assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
@@ -721,7 +725,7 @@ mod tests {
         assert!(!vars.contains_key("COMPOSE_PROJECT_NAME"));
         // slug + offset still injected.
         assert_eq!(
-            vars.get("KEEL_WORKTREE_SLUG").map(String::as_str),
+            vars.get("AMPELOS_WORKTREE_SLUG").map(String::as_str),
             Some("feature-x")
         );
     }
@@ -733,7 +737,7 @@ mod tests {
         let cfg: crate::config::Config = crate::config::parse_str(
             r#"
             [env]
-            APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+            APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
         "#,
         )
         .unwrap();

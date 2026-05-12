@@ -1,4 +1,4 @@
-//! `keel shell` — drop into an interactive shell.
+//! `ampelos shell` — drop into an interactive shell.
 //!
 //! Two flavours:
 //!
@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 
-/// Entry point for `keel shell` and `keel shell --service <name>`.
+/// Entry point for `ampelos shell` and `ampelos shell --service <name>`.
 pub async fn run(
     config: &Config,
     project_root: &Path,

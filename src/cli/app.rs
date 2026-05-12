@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "keel",
+    name = "ampelos",
     version,
     about = "Dev-loop wrapper that adapts to your project"
 )]
@@ -47,7 +47,7 @@ pub enum Command {
     Which { name: String },
     /// Print the resolved project environment (process + .env + [env]).
     Env {
-        /// Write the result to a dotenv file using a keel-managed
+        /// Write the result to a dotenv file using a ampelos-managed
         /// block, instead of printing to stdout. Existing user content
         /// outside the block is preserved. Hook this up from
         /// post-checkout / post-merge so worktree-derived values land
@@ -101,7 +101,7 @@ pub enum Command {
     /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
     Completions { shell: clap_complete::Shell },
     /// Interactive prompt helpers usable from any shell script
-    /// (`keel lib ask`, `confirm`, `password`, `select`, `filter`).
+    /// (`ampelos lib ask`, `confirm`, `password`, `select`, `filter`).
     Lib {
         #[command(subcommand)]
         action: LibAction,
@@ -126,7 +126,7 @@ pub enum Command {
         #[arg(long)]
         debounce_ms: Option<u64>,
     },
-    /// Self-update the keel binary from the latest GitHub release.
+    /// Self-update the ampelos binary from the latest GitHub release.
     Update {
         /// Re-download and replace even if already on the latest version.
         #[arg(long)]
@@ -140,7 +140,7 @@ pub enum Command {
     /// a compose service instead.
     Shell {
         /// Open a shell inside the named compose service (e.g.
-        /// `keel shell --service app`) instead of the devcontainer.
+        /// `ampelos shell --service app`) instead of the devcontainer.
         /// Works even when `[devcontainer] enabled = false`.
         #[arg(long, value_name = "NAME")]
         service: Option<String>,
@@ -149,13 +149,13 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum HooksAction {
-    /// Install keel-managed git hook shims.
+    /// Install ampelos-managed git hook shims.
     Install {
         /// Stages to install (default: pre-commit).
         #[arg(long, value_delimiter = ',')]
         stages: Vec<String>,
     },
-    /// Remove keel-managed git hook shims.
+    /// Remove ampelos-managed git hook shims.
     Uninstall {
         /// Stages to remove (default: all known stages).
         #[arg(long, value_delimiter = ',')]
@@ -176,7 +176,7 @@ pub enum AgentsAction {
         /// Plan but don't write files or save state.
         #[arg(long)]
         dry_run: bool,
-        /// Overwrite keel-owned files that have been hand-edited
+        /// Overwrite ampelos-owned files that have been hand-edited
         /// since the last apply.
         #[arg(long)]
         force_overwrite_drift: bool,
@@ -193,7 +193,7 @@ pub enum AgentsAction {
         /// Plan but don't write files or save state.
         #[arg(long)]
         dry_run: bool,
-        /// Overwrite keel-owned files that have been hand-edited
+        /// Overwrite ampelos-owned files that have been hand-edited
         /// since the last apply.
         #[arg(long)]
         force_overwrite_drift: bool,
@@ -298,7 +298,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         let code = run_lib_action(action)?;
         std::process::exit(code);
     }
-    // `update` runs without project context: a freshly-installed keel
+    // `update` runs without project context: a freshly-installed ampelos
     // anywhere on $PATH must be able to upgrade itself.
     if let Some(Command::Update { force, prerelease }) = cli.command {
         return commands::update::run(force, prerelease).await;
@@ -510,7 +510,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// Dispatch a `keel lib <verb>` subcommand. Pure CLI — never touches
+/// Dispatch a `ampelos lib <verb>` subcommand. Pure CLI — never touches
 /// the project config; that's the whole point.
 fn run_lib_action(action: LibAction) -> Result<i32> {
     match action {
@@ -543,7 +543,7 @@ async fn dispatch_install(
     let plan = commands::install::plan::resolve(&config, &project_root)?;
 
     // Refresh the gitignore on every invocation. Idempotent; cheap.
-    ensure_keel_gitignore(&config, &project_root).context("update .keel/.gitignore")?;
+    ensure_ampelos_gitignore(&config, &project_root).context("update .keel/.gitignore")?;
 
     let bypass_prompt =
         args.resume || args.restart || args.dry_run || args.list || args.step.is_some();
@@ -581,7 +581,7 @@ async fn dispatch_install(
 
 /// Write the project-managed `.keel/.gitignore` block. Path is
 /// configurable via `[install].gitignore` (default `.keel/.gitignore`).
-fn ensure_keel_gitignore(config: &Config, project_root: &Path) -> Result<()> {
+fn ensure_ampelos_gitignore(config: &Config, project_root: &Path) -> Result<()> {
     let rel = &config.install.gitignore;
     let p = Path::new(rel);
     let path = if p.is_absolute() {
@@ -741,7 +741,7 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     };
 
     // Custom slot (services.custom + services.systemd, translated into
-    // CustomEntry values by keel-runtime).
+    // CustomEntry values by ampelos-runtime).
     let mut entries: Vec<crate::container::custom::CustomEntry> =
         Vec::with_capacity(config.services.custom.len() + config.services.systemd.len());
     for svc in &config.services.custom {

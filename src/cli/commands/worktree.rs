@@ -1,4 +1,4 @@
-//! `keel worktree <action>` — inspect and pin worktree offsets.
+//! `ampelos worktree <action>` — inspect and pin worktree offsets.
 //!
 //! Three subcommands:
 //!
@@ -54,7 +54,7 @@ pub async fn status(config: &Config, identity: &Identity) -> Result<()> {
         },
     );
     if config.worktrees.isolate_compose && identity.is_isolated() {
-        let project = config.project.name.as_deref().unwrap_or("keel");
+        let project = config.project.name.as_deref().unwrap_or("ampelos");
         println!("                  → {project}-{}", identity.slug);
     }
 
@@ -127,14 +127,14 @@ pub async fn list(config: &Config, project_root: &Path) -> Result<()> {
             collisions.len(),
             collisions,
         );
-        eprintln!("         pin a slug with `keel worktree assign <name> <offset>` to dodge.");
+        eprintln!("         pin a slug with `ampelos worktree assign <name> <offset>` to dodge.");
     }
     Ok(())
 }
 
 pub fn assign(name: &str, offset: u32, local: bool, project_root: &Path) -> Result<()> {
     // Identity lookups always use the slugified form, so we slugify here
-    // too — that way `keel worktree assign feature/x 5` produces a
+    // too — that way `ampelos worktree assign feature/x 5` produces a
     // `feature-x` entry that the runtime can match.
     let slug = crate::runtime::worktree::slugify(name);
     if slug.is_empty() {
@@ -207,7 +207,7 @@ fn derive_slug(entry: &WorktreeListEntry) -> String {
 mod tests {
     use super::*;
 
-    // Porcelain-parsing tests live in keel-runtime now (single
+    // Porcelain-parsing tests live in ampelos-runtime now (single
     // owner of the parser); only the assign / list-rendering paths
     // are tested from this crate.
 

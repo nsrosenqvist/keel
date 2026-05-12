@@ -1,4 +1,4 @@
-//! `keel install` — first-time project setup, idempotent on re-run.
+//! `ampelos install` — first-time project setup, idempotent on re-run.
 //!
 //! Submodules:
 //!

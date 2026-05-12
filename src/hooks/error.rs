@@ -32,10 +32,12 @@ pub enum HookError {
     #[error("git invocation failed: {0}")]
     GitFailed(String),
 
-    #[error("{0} is not a git repository (run `git init` or `keel hooks install` from inside one)")]
+    #[error(
+        "{0} is not a git repository (run `git init` or `ampelos hooks install` from inside one)"
+    )]
     NotARepo(PathBuf),
 
-    #[error("refusing to overwrite non-keel hook at {path}")]
+    #[error("refusing to overwrite non-ampelos hook at {path}")]
     HookExists { path: PathBuf },
 
     #[error("hook `{hook}` references entry that could not be parsed: {message}")]
@@ -46,7 +48,7 @@ pub enum HookError {
 
     #[error(
         "`repo: meta` references pre-commit's built-in hooks (check-hooks-apply, identity, …) \
-         which keel does not implement. Remove the entry or replace it with an equivalent \
+         which ampelos does not implement. Remove the entry or replace it with an equivalent \
          `repo: local` hook."
     )]
     MetaRepoNotSupported,

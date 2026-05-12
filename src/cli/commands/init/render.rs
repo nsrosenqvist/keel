@@ -19,7 +19,7 @@ use std::fmt::Write;
 /// Build the full TOML body from the project name and the detector findings.
 pub fn render(project_name: &str, findings: &[Finding]) -> String {
     let mut out = String::new();
-    out.push_str("# keel configuration. See AGENTS.md / README.md for guidance.\n");
+    out.push_str("# ampelos configuration. See AGENTS.md / README.md for guidance.\n");
     out.push_str("# Auto-detected suggestions below are commented — uncomment what you want.\n\n");
 
     let _ = writeln!(out, "[project]\nname = \"{}\"\n", escape(project_name));

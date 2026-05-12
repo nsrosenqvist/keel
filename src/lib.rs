@@ -1,4 +1,4 @@
-//! keel — a dev-loop wrapper that adapts to your project.
+//! ampelos — a dev-loop wrapper that adapts to your project.
 //!
 //! Each top-level module is a bounded context. Concrete responsibilities:
 //!

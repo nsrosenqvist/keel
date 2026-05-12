@@ -1,4 +1,4 @@
-//! Self-update logic for the keel binary.
+//! Self-update logic for the ampelos binary.
 //!
 //! # Bounded Context: Self-Update
 //!
@@ -93,7 +93,7 @@ pub async fn run_update(force: bool, prerelease: bool) -> Result<(), UpdateError
 
     check_write_permission(&current_exe)?;
 
-    let asset_name = format!("keel-{TARGET}.tar.gz");
+    let asset_name = format!("ampelos-{TARGET}.tar.gz");
     let asset_url = constants::release_asset_url(&release.tag, TARGET);
     eprintln!("▸ Downloading {asset_name}");
     let archive_bytes = download_bytes(&asset_url).await?;
@@ -259,9 +259,9 @@ fn verify_checksum(data: &[u8], asset_name: &str, checksums_text: &str) -> Resul
     Ok(())
 }
 
-/// Extract the `keel` binary from a `.tar.gz` archive in memory.
+/// Extract the `ampelos` binary from a `.tar.gz` archive in memory.
 ///
-/// Looks for an entry named `keel` (or ending with `/keel`) in the
+/// Looks for an entry named `ampelos` (or ending with `/ampelos`) in the
 /// archive and returns its contents as bytes.
 fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
     let decoder = GzDecoder::new(archive_bytes);
@@ -278,7 +278,7 @@ fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
             .path()
             .map_err(|e| UpdateError::ExtractError(format!("invalid path in archive: {e}")))?;
 
-        let is_binary = path.file_name().is_some_and(|name| name == "keel");
+        let is_binary = path.file_name().is_some_and(|name| name == "ampelos");
         if !is_binary {
             continue;
         }
@@ -298,7 +298,7 @@ fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
     }
 
     Err(UpdateError::ExtractError(
-        "archive does not contain a 'keel' binary".to_string(),
+        "archive does not contain a 'ampelos' binary".to_string(),
     ))
 }
 
@@ -461,15 +461,17 @@ mod tests {
     fn verify_checksum_success() {
         let data = b"hello world";
         let hash = hex::encode(Sha256::digest(data));
-        let checksums = format!("{hash}  keel-x86_64-unknown-linux-gnu.tar.gz\n");
-        assert!(verify_checksum(data, "keel-x86_64-unknown-linux-gnu.tar.gz", &checksums).is_ok());
+        let checksums = format!("{hash}  ampelos-x86_64-unknown-linux-gnu.tar.gz\n");
+        assert!(
+            verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", &checksums).is_ok()
+        );
     }
 
     #[test]
     fn verify_checksum_mismatch() {
         let data = b"hello world";
-        let checksums = "0000000000000000000000000000000000000000000000000000000000000000  keel-x86_64-unknown-linux-gnu.tar.gz\n";
-        let result = verify_checksum(data, "keel-x86_64-unknown-linux-gnu.tar.gz", checksums);
+        let checksums = "0000000000000000000000000000000000000000000000000000000000000000  ampelos-x86_64-unknown-linux-gnu.tar.gz\n";
+        let result = verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", checksums);
         assert!(matches!(result, Err(UpdateError::ChecksumMismatch { .. })));
     }
 
@@ -477,7 +479,7 @@ mod tests {
     fn verify_checksum_not_found() {
         let data = b"hello world";
         let checksums = "abc123  some-other-file.tar.gz\n";
-        let result = verify_checksum(data, "keel-x86_64-unknown-linux-gnu.tar.gz", checksums);
+        let result = verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", checksums);
         assert!(matches!(result, Err(UpdateError::ChecksumNotFound(_))));
     }
 
@@ -497,7 +499,7 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "keel", &content[..])
+            .append_data(&mut header, "ampelos", &content[..])
             .unwrap();
         let tar_bytes = builder.into_inner().unwrap();
 
@@ -575,7 +577,7 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "keel-v1.0.0/keel", &content[..])
+            .append_data(&mut header, "ampelos-v1.0.0/ampelos", &content[..])
             .unwrap();
         let tar_bytes = builder.into_inner().unwrap();
 

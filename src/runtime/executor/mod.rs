@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_script_gets_keel_project_and_script_dirs() {
+    async fn host_script_gets_ampelos_project_and_script_dirs() {
         let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
         let project_dir = tempfile::TempDir::new().unwrap();
         let scripts_subdir = project_dir.path().join(".keel/commands");
@@ -490,7 +490,7 @@ mod tests {
         let script_path = scripts_subdir.join("probe");
         std::fs::write(
             &script_path,
-            "#!/bin/sh\necho KEEL_PROJECT_DIR=$KEEL_PROJECT_DIR\necho KEEL_SCRIPT_DIR=$KEEL_SCRIPT_DIR\n",
+            "#!/bin/sh\necho AMPELOS_PROJECT_DIR=$AMPELOS_PROJECT_DIR\necho AMPELOS_SCRIPT_DIR=$AMPELOS_SCRIPT_DIR\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -537,23 +537,23 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|l| l == &format!("KEEL_PROJECT_DIR={project_str}")),
+                .any(|l| l == &format!("AMPELOS_PROJECT_DIR={project_str}")),
             "lines: {lines:?}"
         );
         assert!(
             lines
                 .iter()
-                .any(|l| l == &format!("KEEL_SCRIPT_DIR={script_dir_str}")),
+                .any(|l| l == &format!("AMPELOS_SCRIPT_DIR={script_dir_str}")),
             "lines: {lines:?}"
         );
     }
 
     #[tokio::test]
-    async fn script_env_overrides_keel_project_dir() {
+    async fn script_env_overrides_ampelos_project_dir() {
         let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
         let project_dir = tempfile::TempDir::new().unwrap();
         let script_path = project_dir.path().join("probe");
-        std::fs::write(&script_path, "#!/bin/sh\necho VAL=$KEEL_PROJECT_DIR\n").unwrap();
+        std::fs::write(&script_path, "#!/bin/sh\necho VAL=$AMPELOS_PROJECT_DIR\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -564,7 +564,7 @@ mod tests {
 
         let mut cfg_inner = crate::config::Config::default();
         let mut env_overrides = std::collections::BTreeMap::new();
-        env_overrides.insert("KEEL_PROJECT_DIR".into(), "OVERRIDDEN".into());
+        env_overrides.insert("AMPELOS_PROJECT_DIR".into(), "OVERRIDDEN".into());
         cfg_inner.scripts.insert(
             "probe".into(),
             crate::config::ScriptCommand {

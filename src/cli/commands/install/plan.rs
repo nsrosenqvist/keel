@@ -139,7 +139,7 @@ fn resolve_entry(config: &Config, entry: &InstallStepRef) -> Result<Step> {
             }
             // We deliberately do *not* fall back to `.keel/commands/`
             // scripts — those are user-facing recipes that show up in
-            // `keel list`, and we want install authors to be
+            // `ampelos list`, and we want install authors to be
             // explicit about wiring one into the install flow.
             bail!(
                 "install step `{}` does not match a discovered .keel/install/ file \

@@ -1,4 +1,4 @@
-//! `keel agents` subcommand: manage upstream-sourced agent
+//! `ampelos agents` subcommand: manage upstream-sourced agent
 //! instructions and skills.
 //!
 //! Thin CLI wrapper around `crate::agents::apply` / `detect_drift`.
@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL};
 use std::path::Path;
 
-/// Run `keel agents install`. Mirrors `keel agents update` when
+/// Run `ampelos agents install`. Mirrors `ampelos agents update` when
 /// state already exists; the difference is just intent.
 pub async fn install(
     config: &Config,
@@ -33,7 +33,7 @@ pub async fn install(
     Ok(())
 }
 
-/// Run `keel agents update`. Same pipeline as install, plus an
+/// Run `ampelos agents update`. Same pipeline as install, plus an
 /// optional source filter and an implicit re-fetch for floating refs
 /// (handled inside `crate::agents::apply`).
 pub async fn update(
@@ -61,7 +61,7 @@ pub async fn update(
     Ok(())
 }
 
-/// Run `keel agents diff` — equivalent to apply with `dry_run = true`.
+/// Run `ampelos agents diff` — equivalent to apply with `dry_run = true`.
 pub async fn diff(config: &Config, project_root: &Path) -> Result<()> {
     let opts = ApplyOptions {
         dry_run: true,
@@ -94,7 +94,7 @@ pub async fn diff(config: &Config, project_root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run `keel agents status`. Read-only — never touches the cache or
+/// Run `ampelos agents status`. Read-only — never touches the cache or
 /// upstream. Reports per-source pinned rev + per-file drift state
 /// from the on-disk `agents.state.json` and current file contents.
 pub async fn status(config: &Config, project_root: &Path, strict: bool) -> Result<i32> {

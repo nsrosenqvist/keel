@@ -3,14 +3,14 @@
 //! Given a name typed at the CLI, decide which dispatch path it follows.
 //! Resolution is a pure function of the loaded [`Config`] plus a list of
 //! known compose services and on-disk script names. Side-effect-free, so
-//! it's the same in `keel which`, `keel --explain`, and the TUI palette.
+//! it's the same in `ampelos which`, `ampelos --explain`, and the TUI palette.
 
 use crate::config::Config;
 
 /// The dispatch decision for a typed command name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution<'a> {
-    /// Built-in keel subcommand (handled by the CLI before reaching here).
+    /// Built-in ampelos subcommand (handled by the CLI before reaching here).
     Builtin(&'static str),
     /// User-defined recipe in `keel.toml`.
     Recipe(&'a str),

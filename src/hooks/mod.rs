@@ -6,21 +6,21 @@
 //! - [`config`] parses `.pre-commit-config.yaml` plus the upstream
 //!   `.pre-commit-hooks.yaml` shipped inside external hook repos.
 //! - [`cache`] clones external hook repos into `.keel/cache/hooks/`
-//!   and remembers the resolved revision sha. keel owns this cache
+//!   and remembers the resolved revision sha. ampelos owns this cache
 //!   end-to-end; it never delegates to the `pre-commit` binary.
 //! - [`runner`] runs the hooks for a given stage. Each hook's `entry`
-//!   is exec'd verbatim regardless of the declared `language` — keel
+//!   is exec'd verbatim regardless of the declared `language` — ampelos
 //!   trusts the user to have the runtime on `PATH` (typically via
-//!   `keel install`) rather than reimplementing pre-commit's
+//!   `ampelos install`) rather than reimplementing pre-commit's
 //!   virtualenv / toolchain manager. `repo: meta` is the one shape
 //!   that's still rejected at run time, since there's no `entry` to
 //!   dispatch. Per-hook `in = "<service>"` and the executor's
 //!   workspace target (devcontainer when enabled, host otherwise)
 //!   pick where the spawn lands.
 //! - [`installer`] writes `.git/hooks/<stage>` shims that delegate to
-//!   `keel hooks run <stage> "$@"`.
+//!   `ampelos hooks run <stage> "$@"`.
 //!
-//! Native keel hooks (declared in `keel.toml` `[hooks]`) are run by
+//! Native ampelos hooks (declared in `keel.toml` `[hooks]`) are run by
 //! the CLI through [`crate::runtime::Executor`], not by this crate — they
 //! reuse the recipe runner. This crate handles the pre-commit ecosystem
 //! and the git-hooks plumbing.
@@ -36,5 +36,5 @@ pub use crate::cache::CacheError;
 pub use cache::{CacheMeta, CachedRepo, cache_root, clone_or_reuse};
 pub use config::{HookLanguage, HookSpec, PreCommitConfig, Repo, UpstreamHook};
 pub use error::HookError;
-pub use installer::{KEEL_HOOK_MARKER, install, install_one, uninstall};
+pub use installer::{AMPELOS_HOOK_MARKER, install, install_one, uninstall};
 pub use runner::{HookOutcome, run_pre_commit};

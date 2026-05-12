@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! ┌─ top status bar ───────────────────────────────────────────────┐
-//! │ keel · <project> · worktree:<slug> · offset:<n>              │
+//! │ ampelos · <project> · worktree:<slug> · offset:<n>              │
 //! ├─ services ──────────────┬─ <selected item details / output> ────┤
 //! │ ● app    ●              │                                       │
 //! │ ● worker ●              │                                       │
@@ -149,15 +149,15 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         .project
         .name
         .clone()
-        .unwrap_or_else(|| "keel".into());
+        .unwrap_or_else(|| "ampelos".into());
 
-    // Top bar's "keel" wordmark stays bold white regardless of
+    // Top bar's "ampelos" wordmark stays bold white regardless of
     // view — pinning it to the active accent made it visually
     // collide with the first sidebar group's accent-colored title
     // immediately below. The view accent already has plenty of
     // representation (panel titles, status-bar tag, group headers).
     let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("  keel ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("  ampelos ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];

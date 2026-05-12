@@ -101,7 +101,7 @@ impl InstallState {
             serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
         if parsed.version != SCHEMA_VERSION {
             anyhow::bail!(
-                "{} has version {}, expected {}. Remove the file or run `keel install --restart`.",
+                "{} has version {}, expected {}. Remove the file or run `ampelos install --restart`.",
                 path.display(),
                 parsed.version,
                 SCHEMA_VERSION,
@@ -142,7 +142,7 @@ impl InstallState {
         self.steps.iter().position(|s| !s.status.is_resolved())
     }
 
-    /// Locate a record by name. Used by single-step mode (`keel
+    /// Locate a record by name. Used by single-step mode (`ampelos
     /// install <name>`) to update just one entry.
     pub fn find_mut(&mut self, name: &str) -> Option<&mut StepRecord> {
         self.steps.iter_mut().find(|s| s.name == name)

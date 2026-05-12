@@ -1,7 +1,7 @@
 //! End-to-end apply pipeline.
 //!
-//! `apply()` is the single entry point used by both `keel agents
-//! install` / `update` and the synthetic step inside `keel install`.
+//! `apply()` is the single entry point used by both `ampelos agents
+//! install` / `update` and the synthetic step inside `ampelos install`.
 //! It orchestrates the cache, manifest loading, override merge,
 //! drift / collision / shadow checks, and the actual file writes
 //! plus state-file maintenance.
@@ -23,7 +23,7 @@ pub struct ApplyOptions {
     pub force: bool,
     /// Plan but don't write files or save state.
     pub dry_run: bool,
-    /// Overwrite keel-owned files that have been hand-edited since
+    /// Overwrite ampelos-owned files that have been hand-edited since
     /// the last apply. Off by default — drifted files are left alone
     /// and listed in the report.
     pub force_overwrite_drift: bool,
@@ -44,7 +44,7 @@ pub struct SourceResult {
     pub manifest_sha256: String,
 }
 
-/// One destination edited by hand since keel last wrote it.
+/// One destination edited by hand since ampelos last wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriftEntry {
     pub dest: PathBuf,
@@ -439,7 +439,7 @@ pub async fn apply(
     Ok(report)
 }
 
-/// Drift = keel-owned file whose disk content hashes to something
+/// Drift = ampelos-owned file whose disk content hashes to something
 /// other than what we last wrote. Once-mode entries are excluded
 /// (sha256 is `None`), and missing files are not drift either (the
 /// apply pass will silently re-create them).

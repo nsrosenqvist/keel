@@ -1,4 +1,4 @@
-//! `keel watch <recipe>` — re-run a recipe when watched files change.
+//! `ampelos watch <recipe>` — re-run a recipe when watched files change.
 //!
 //! Uses [`notify`] for filesystem events. A blocking watcher thread funnels
 //! events into a tokio mpsc channel; the main loop debounces them and runs

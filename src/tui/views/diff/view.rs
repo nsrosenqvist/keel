@@ -226,7 +226,7 @@ fn render_files(app: &App, frame: &mut Frame, area: Rect) {
             };
             // Path elision: keep the tail (filename) over the head
             // when truncating — `…/tui/src/ui.rs` is more useful
-            // than `crates/keel-tui/src/u…`.
+            // than `crates/ampelos-tui/src/u…`.
             let path = elide_left(&f.path, path_w);
             let path_pad = path_w.saturating_sub(path.chars().count());
             let churn = if f.binary {

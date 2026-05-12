@@ -49,7 +49,7 @@ pub struct InstallArgs {
 }
 
 /// Top-level entrypoint. Returns the process exit code; the caller
-/// (`keel-cli/src/app.rs`) propagates it via `std::process::exit`.
+/// (`ampelos-cli/src/app.rs`) propagates it via `std::process::exit`.
 pub async fn run(
     config: Arc<Config>,
     project_root: PathBuf,
@@ -84,7 +84,7 @@ pub async fn run(
         .project
         .name
         .clone()
-        .unwrap_or_else(|| "keel".to_string());
+        .unwrap_or_else(|| "ampelos".to_string());
     let mut renderer = Renderer::new(&project_label, &plan)?;
     // Reflect already-completed rows on screen even when starting in
     // the middle of the plan (resume case).
@@ -138,7 +138,7 @@ fn decide_start_index(plan: &[Step], state: &InstallState, args: &InstallArgs) -
     if args.assume_fresh {
         return Ok(0);
     }
-    // Bare `keel install`: if there's any unresolved step from a
+    // Bare `ampelos install`: if there's any unresolved step from a
     // prior run, surface the choice. We don't prompt here (the runner
     // shouldn't own user I/O); the caller handles the prompt and sets
     // either `resume` or `restart`, or `assume_fresh` for "user opted
@@ -159,13 +159,13 @@ async fn run_single(
         .enumerate()
         .find(|(_, s)| s.name == name)
         .with_context(|| {
-            format!("no install step named `{name}`. Run `keel install --list` to see the plan.")
+            format!("no install step named `{name}`. Run `ampelos install --list` to see the plan.")
         })?;
     let project_label = config
         .project
         .name
         .clone()
-        .unwrap_or_else(|| "keel".to_string());
+        .unwrap_or_else(|| "ampelos".to_string());
     let mut renderer = Renderer::new(&project_label, std::slice::from_ref(step))?;
     let executor = base_executor(Arc::new(config.clone()), backend, project_root);
     let outcome = execute_step(
@@ -179,7 +179,7 @@ async fn run_single(
     )
     .await?;
     // Update the matching record in the global state file so the next
-    // bare `keel install` sees this step as resolved.
+    // bare `ampelos install` sees this step as resolved.
     if let Some(rec) = state.find_mut(name) {
         rec.status = outcome.status;
         rec.exit_code = outcome.exit_code;
@@ -283,7 +283,7 @@ fn classify(optional: bool, exit: i32, duration: Duration, started_ms: u64) -> O
 }
 
 /// Execute a step with passthrough stdio. The child inherits the
-/// terminal so `keel lib ask` & friends Just Work. No output is
+/// terminal so `ampelos lib ask` & friends Just Work. No output is
 /// captured for the failure summary — the user already saw it on
 /// screen.
 async fn run_interactive(config: &Config, project_root: &Path, step: &Step) -> Result<i32> {
@@ -366,9 +366,9 @@ async fn run_script(
     for (k, v) in &script.env {
         cmd.env(k, v);
     }
-    cmd.env("KEEL_PROJECT_DIR", project_root.display().to_string());
+    cmd.env("AMPELOS_PROJECT_DIR", project_root.display().to_string());
     if let Some(parent) = script.path.parent() {
-        cmd.env("KEEL_SCRIPT_DIR", parent.display().to_string());
+        cmd.env("AMPELOS_SCRIPT_DIR", parent.display().to_string());
     }
     drive_captured(cmd, renderer).await
 }
@@ -388,7 +388,7 @@ async fn run_inline(
     for (k, v) in &inline.env {
         cmd.env(k, v);
     }
-    cmd.env("KEEL_PROJECT_DIR", project_root.display().to_string());
+    cmd.env("AMPELOS_PROJECT_DIR", project_root.display().to_string());
     drive_captured(cmd, renderer).await
 }
 
@@ -413,7 +413,7 @@ async fn build_command(step: &Step, project_root: &Path, _env: &Env) -> Result<(
                 cmd.env(k, v);
             }
             if let Some(parent) = script.path.parent() {
-                cmd.env("KEEL_SCRIPT_DIR", parent.display().to_string());
+                cmd.env("AMPELOS_SCRIPT_DIR", parent.display().to_string());
             }
             Ok((cmd, cwd))
         }
@@ -488,7 +488,7 @@ async fn run_install_hooks(
                     }
                     if repo.is_meta() {
                         renderer.append_tail(&format!(
-                            "skipping `repo: meta` ({} hooks) — not supported by keel",
+                            "skipping `repo: meta` ({} hooks) — not supported by ampelos",
                             repo.hooks.len()
                         ));
                         continue;
@@ -567,7 +567,7 @@ async fn run_apply_agents(
 
 /// Default hook stages installed when no explicit list is given.
 /// Mirrors the existing `commands::hooks::default_install_stages`
-/// rules so the install flow and the explicit `keel hooks install`
+/// rules so the install flow and the explicit `ampelos hooks install`
 /// flow agree.
 fn default_install_stages(config: &Config) -> Vec<&'static str> {
     let mut stages = vec!["pre-commit"];

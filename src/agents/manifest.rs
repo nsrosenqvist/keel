@@ -2,7 +2,7 @@
 //!
 //! Each upstream repo declares which of its files map to which paths
 //! in the downstream project, plus an optional `mode` toggle that
-//! relaxes keel's normal whole-file ownership for seed files.
+//! relaxes ampelos's normal whole-file ownership for seed files.
 
 use crate::agents::error::AgentsError;
 use serde::{Deserialize, Serialize};

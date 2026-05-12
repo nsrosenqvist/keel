@@ -1,4 +1,4 @@
-//! keel CLI surface.
+//! ampelos CLI surface.
 //!
 //! Bounded context: flag parsing, project discovery, and dispatch into the
 //! runtime. Anything reused by the TUI lives in [`crate::runtime`] — this

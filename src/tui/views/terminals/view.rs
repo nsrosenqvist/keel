@@ -48,7 +48,7 @@ fn render_tmux_missing(accent: Color, frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(Span::styled(
-            "  then press T again, or restart keel.",
+            "  then press T again, or restart ampelos.",
             Style::default().fg(Color::DarkGray),
         )),
     ])
@@ -161,9 +161,9 @@ pub(crate) fn window_row_line(w: &TmuxWindow) -> Line<'static> {
     ];
     // Devcontainer windows: replace the host-side `cwd` (which is
     // just the docker client's pwd) with the in-container
-    // workspace folder tmux recorded via `@keel_workspace`. Falls
+    // workspace folder tmux recorded via `@ampelos_workspace`. Falls
     // back to the regular `cwd` for host shells / service windows /
-    // anything else keel didn't tag.
+    // anything else ampelos didn't tag.
     if let Some(workspace) = w.workspace.as_deref() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -245,7 +245,7 @@ fn info_title(app: &App, selected_row: Option<&TerminalsRow>) -> Line<'static> {
 }
 
 fn build_info_body(app: &App, selected_row: Option<&TerminalsRow>) -> Vec<Line<'static>> {
-    let detach_hint = "ctrl+b d returns to keel";
+    let detach_hint = "ctrl+b d returns to ampelos";
     let mut lines: Vec<Line<'static>> = Vec::new();
     match selected_row {
         Some(TerminalsRow::Service(name)) => {

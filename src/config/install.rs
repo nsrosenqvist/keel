@@ -12,7 +12,7 @@
 //!
 //! Install steps are deliberately kept **out** of [`crate::config::Config::commands`]
 //! and [`crate::config::Config::scripts`]: they should not surface in
-//! `keel list` or the TUI sidebar. The author can still reference a
+//! `ampelos list` or the TUI sidebar. The author can still reference a
 //! regular recipe from `[install].steps` if they want a step to also be
 //! runnable interactively — that's an explicit opt-in.
 
@@ -34,13 +34,13 @@ pub struct InstallConfig {
     /// When true (default), an "install-hooks" pseudo-step runs after
     /// the user-defined steps to install git-hook shims and prefetch
     /// any external hook repos referenced by `.pre-commit-config.yaml`.
-    /// Set `false` if the project doesn't want hooks managed by keel.
+    /// Set `false` if the project doesn't want hooks managed by ampelos.
     #[serde(default = "true_default")]
     pub install_git_hooks: bool,
 
     /// Path of the auto-managed `.gitignore`. Relative paths resolve
     /// against the project root. The default value is intentionally
-    /// inside `.keel/` so it only governs keel-owned files and
+    /// inside `.keel/` so it only governs ampelos-owned files and
     /// can't accidentally shadow the project's own root `.gitignore`.
     #[serde(default = "default_gitignore")]
     pub gitignore: String,
@@ -103,7 +103,7 @@ pub enum InstallStepRef {
 #[serde(deny_unknown_fields)]
 pub struct InlineStep {
     /// Display name used in the renderer row and the state file.
-    /// Required so a failed step can be referenced by `keel install
+    /// Required so a failed step can be referenced by `ampelos install
     /// <name>` on retry.
     pub name: String,
 
@@ -139,7 +139,7 @@ pub struct InlineStep {
     /// When true, the renderer hands the terminal directly to the
     /// step (inherited stdio) for the duration of its run, then
     /// resumes drawing afterwards. Set for steps that prompt via
-    /// `keel lib ask | confirm | password | select | filter`.
+    /// `ampelos lib ask | confirm | password | select | filter`.
     #[serde(default)]
     pub interactive: bool,
 }

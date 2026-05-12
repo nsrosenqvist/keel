@@ -15,7 +15,7 @@
 //! - `forward-args` / `forward_args` — boolean, append CLI args to the script
 //!
 //! Anything beyond the frontmatter block is the script body and is not
-//! parsed by keel. The file is executed verbatim — by the host shell
+//! parsed by ampelos. The file is executed verbatim — by the host shell
 //! when no `in =` is set, or piped into `<interpreter> -s` inside the
 //! configured service when `in = "<service>"` is set. The interpreter
 //! is determined from the script's shebang (`bash` / `zsh` / `sh`),

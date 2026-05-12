@@ -1,4 +1,4 @@
-//! `keel update` — replace the running binary with the latest release.
+//! `ampelos update` — replace the running binary with the latest release.
 
 use anyhow::{Context, Result};
 

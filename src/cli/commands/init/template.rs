@@ -26,7 +26,7 @@ pub fn render(project_name: &str, template: Template) -> String {
 
 fn laravel_template(name: &str) -> String {
     format!(
-        r#"# keel: Laravel + Docker Compose dev loop
+        r#"# ampelos: Laravel + Docker Compose dev loop
 
 [project]
 name = "{name}"
@@ -106,7 +106,7 @@ pre-commit = ["test"]
 
 fn rails_template(name: &str) -> String {
     format!(
-        r#"# keel: Rails + Docker Compose dev loop
+        r#"# ampelos: Rails + Docker Compose dev loop
 
 [project]
 name = "{name}"
@@ -165,7 +165,7 @@ forward_args = true
 
 fn node_template(name: &str) -> String {
     format!(
-        r#"# keel: Node.js host-based dev loop
+        r#"# ampelos: Node.js host-based dev loop
 
 [project]
 name = "{name}"
@@ -205,7 +205,7 @@ pre-commit = ["lint"]
 
 fn rust_template(name: &str) -> String {
     format!(
-        r#"# keel: Rust workspace dev loop
+        r#"# ampelos: Rust workspace dev loop
 
 [project]
 name = "{name}"

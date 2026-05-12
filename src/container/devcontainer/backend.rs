@@ -33,7 +33,7 @@ use tracing::{debug, warn};
 #[derive(Debug, Clone)]
 pub struct DevcontainerIdentity {
     /// Absolute path to the project (or worktree) root. Becomes the
-    /// bind-mount source and the `keel.devcontainer.root` label
+    /// bind-mount source and the `ampelos.devcontainer.root` label
     /// value.
     pub project_root: PathBuf,
     /// Slug derived from the project name (typically root basename
@@ -70,7 +70,7 @@ pub enum DevcontainerError {
     },
 }
 
-/// What [`ensure_up`] will do. Exposed for diagnostics (`keel
+/// What [`ensure_up`] will do. Exposed for diagnostics (`ampelos
 /// doctor`, dry-run output) — the actual work happens in
 /// [`ensure_up`] which calls into the same plan internally.
 ///
@@ -127,7 +127,7 @@ impl DevcontainerBackend {
     }
 
     /// What [`ensure_up`] would do without doing it. Cheap (no docker
-    /// calls); used by `keel doctor` to summarise state.
+    /// calls); used by `ampelos doctor` to summarise state.
     ///
     /// [`ensure_up`]: Self::ensure_up
     pub fn plan(&self) -> EnsurePlan {
@@ -186,14 +186,17 @@ impl DevcontainerBackend {
         cmd.args([
             "--label",
             &format!(
-                "keel.devcontainer.root={}",
+                "ampelos.devcontainer.root={}",
                 self.identity.project_root.display()
             ),
         ]);
         if !self.identity.worktree_slug.is_empty() {
             cmd.args([
                 "--label",
-                &format!("keel.devcontainer.worktree={}", self.identity.worktree_slug),
+                &format!(
+                    "ampelos.devcontainer.worktree={}",
+                    self.identity.worktree_slug
+                ),
             ]);
         }
 
@@ -303,9 +306,9 @@ impl DevcontainerBackend {
     }
 }
 
-/// Container name pattern: `keel-devcontainer-<project-slug>[-<worktree-slug>]`.
+/// Container name pattern: `ampelos-devcontainer-<project-slug>[-<worktree-slug>]`.
 /// Docker permits `[a-zA-Z0-9][a-zA-Z0-9_.-]*` so the slug rules from
-/// `keel-runtime::worktree::slugify` (lowercase alnum + `-`) compose
+/// `ampelos-runtime::worktree::slugify` (lowercase alnum + `-`) compose
 /// cleanly.
 fn derive_container_name(identity: &DevcontainerIdentity) -> String {
     let project = if identity.project_slug.is_empty() {
@@ -314,9 +317,9 @@ fn derive_container_name(identity: &DevcontainerIdentity) -> String {
         identity.project_slug.clone()
     };
     if identity.worktree_slug.is_empty() {
-        format!("keel-devcontainer-{project}")
+        format!("ampelos-devcontainer-{project}")
     } else {
-        format!("keel-devcontainer-{project}-{}", identity.worktree_slug)
+        format!("ampelos-devcontainer-{project}-{}", identity.worktree_slug)
     }
 }
 
@@ -336,7 +339,7 @@ fn resolve_workspace_folder(spec: &DevcontainerSpec, identity: &DevcontainerIden
 }
 
 /// Image reference: the literal `image` for pulled images, or
-/// `keel-devcontainer-<slug>:<sha256(dockerfile+args)[..12]>` for
+/// `ampelos-devcontainer-<slug>:<sha256(dockerfile+args)[..12]>` for
 /// `build` mode. The hash makes rebuilds happen only when the
 /// dockerfile or build args change (rough approximation — context
 /// changes aren't covered, intentionally; users who edit context
@@ -370,7 +373,7 @@ fn derive_image_ref(spec: &DevcontainerSpec, identity: &DevcontainerIdentity) ->
             } else {
                 identity.project_slug.clone()
             };
-            format!("keel-devcontainer-{project}:{tag}")
+            format!("ampelos-devcontainer-{project}:{tag}")
         }
     }
 }
@@ -648,20 +651,23 @@ mod tests {
 
     #[test]
     fn container_name_includes_worktree_slug_when_isolated() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", "feature-x"));
-        assert_eq!(backend.container_name(), "keel-devcontainer-keel-feature-x");
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", "feature-x"));
+        assert_eq!(
+            backend.container_name(),
+            "ampelos-devcontainer-ampelos-feature-x"
+        );
     }
 
     #[test]
     fn container_name_omits_worktree_when_empty() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
-        assert_eq!(backend.container_name(), "keel-devcontainer-keel");
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
+        assert_eq!(backend.container_name(), "ampelos-devcontainer-ampelos");
     }
 
     #[test]
     fn container_name_falls_back_when_project_slug_empty() {
         let backend = DevcontainerBackend::new(spec_image(), ident("", ""));
-        assert_eq!(backend.container_name(), "keel-devcontainer-project");
+        assert_eq!(backend.container_name(), "ampelos-devcontainer-project");
     }
 
     #[test]
@@ -671,19 +677,19 @@ mod tests {
             r#"{ "image": "alpine", "workspaceFolder": "/code" }"#,
         )
         .unwrap();
-        let backend = DevcontainerBackend::new(spec, ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec, ident("ampelos", ""));
         assert_eq!(backend.workspace_folder(), "/code");
     }
 
     #[test]
     fn workspace_folder_defaults_to_workspaces_basename() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         assert_eq!(backend.workspace_folder(), "/workspaces/proj");
     }
 
     #[test]
     fn image_ref_passes_through_image_field() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         assert_eq!(backend.image_ref(), "alpine:latest");
     }
 
@@ -694,12 +700,12 @@ mod tests {
             r#"{ "build": { "dockerfile": "Dockerfile" } }"#,
         )
         .unwrap();
-        let backend = DevcontainerBackend::new(spec, ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec, ident("ampelos", ""));
         // No filesystem read — hash falls back to path bytes. Just
         // assert the *shape* is right.
         let image_ref = backend.image_ref();
         assert!(
-            image_ref.starts_with("keel-devcontainer-keel:"),
+            image_ref.starts_with("ampelos-devcontainer-ampelos:"),
             "got: {image_ref}"
         );
         let tag = image_ref
@@ -711,7 +717,7 @@ mod tests {
 
     #[test]
     fn exec_argv_uses_tty_flag_when_requested() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         let argv = backend.exec_argv(
             &["sh", "-c", "echo hi"],
             &ExecOptions {
@@ -728,7 +734,7 @@ mod tests {
 
     #[test]
     fn exec_argv_uses_dash_i_when_non_tty() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         let argv = backend.exec_argv(&["true"], &ExecOptions::default());
         assert_eq!(argv[2], "-i");
     }
@@ -740,7 +746,7 @@ mod tests {
             r#"{ "image": "alpine", "remoteEnv": { "EDITOR": "vim" } }"#,
         )
         .unwrap();
-        let backend = DevcontainerBackend::new(spec, ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec, ident("ampelos", ""));
         let mut env = BTreeMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         let argv = backend.exec_argv(
@@ -763,7 +769,7 @@ mod tests {
 
     #[test]
     fn exec_argv_workdir_defaults_to_workspace_folder() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         let argv = backend.exec_argv(&["true"], &ExecOptions::default());
         let w_idx = argv.iter().position(|s| s == "-w").expect("has -w");
         assert_eq!(argv[w_idx + 1], "/workspaces/proj");
@@ -771,7 +777,7 @@ mod tests {
 
     #[test]
     fn exec_argv_workdir_uses_opts_override() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         let argv = backend.exec_argv(
             &["true"],
             &ExecOptions {
@@ -790,7 +796,7 @@ mod tests {
             r#"{ "image": "alpine", "remoteUser": "vscode" }"#,
         )
         .unwrap();
-        let backend = DevcontainerBackend::new(spec, ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec, ident("ampelos", ""));
         let argv = backend.exec_argv(&["true"], &ExecOptions::default());
         let u_idx = argv.iter().position(|s| s == "--user").expect("has --user");
         assert_eq!(argv[u_idx + 1], "vscode");
@@ -813,15 +819,15 @@ mod tests {
             r#"{ "build": { "dockerfile": "Dockerfile" } }"#,
         )
         .unwrap();
-        let backend = DevcontainerBackend::new(spec, ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec, ident("ampelos", ""));
         let plan = backend.plan();
         assert!(plan.needs_build);
-        assert_eq!(plan.container_name, "keel-devcontainer-keel");
+        assert_eq!(plan.container_name, "ampelos-devcontainer-ampelos");
     }
 
     #[test]
     fn plan_reflects_image_source() {
-        let backend = DevcontainerBackend::new(spec_image(), ident("keel", ""));
+        let backend = DevcontainerBackend::new(spec_image(), ident("ampelos", ""));
         let plan = backend.plan();
         assert!(!plan.needs_build);
         assert_eq!(plan.image_ref, "alpine:latest");
