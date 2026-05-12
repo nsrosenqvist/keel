@@ -10,6 +10,7 @@ use super::{BoxFut, Executor};
 use crate::config::{Recipe, Run};
 use crate::container::ServiceStatus;
 use crate::runtime::error::RuntimeError;
+use crate::runtime::ports::{RecipeProvider, ScriptProvider};
 use std::collections::HashSet;
 use tracing::instrument;
 
@@ -41,8 +42,7 @@ impl Executor {
 
             let raw_recipe =
                 self.config
-                    .commands
-                    .get(&name)
+                    .get_recipe(&name)
                     .ok_or_else(|| RuntimeError::UnknownCommand {
                         name: name.clone(),
                         suggestion: None,
@@ -72,8 +72,7 @@ impl Executor {
             }
             let script =
                 self.config
-                    .scripts
-                    .get(&name)
+                    .get_script(&name)
                     .ok_or_else(|| RuntimeError::UnknownCommand {
                         name: name.clone(),
                         suggestion: None,
@@ -96,12 +95,12 @@ impl Executor {
         dep: &str,
         in_progress: HashSet<String>,
     ) -> Result<i32, RuntimeError> {
-        if self.config.commands.contains_key(dep) {
+        if self.config.has_recipe(dep) {
             return self
                 .run_recipe_inner(dep.to_string(), Vec::new(), in_progress)
                 .await;
         }
-        if self.config.scripts.contains_key(dep) {
+        if self.config.has_script(dep) {
             return self
                 .run_script_inner(dep.to_string(), Vec::new(), in_progress)
                 .await;

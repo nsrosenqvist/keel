@@ -10,6 +10,7 @@ use super::{Executor, WorkspaceTarget};
 use crate::config::Recipe;
 use crate::container::{Backend, ExecOptions};
 use crate::runtime::error::RuntimeError;
+use crate::runtime::ports::{RecipeProvider, ScriptProvider};
 use std::collections::HashSet;
 use tokio::process::Command;
 use tracing::debug;
@@ -25,13 +26,13 @@ impl Executor {
         // A step is a recipe / script reference if it contains no whitespace
         // and names a known recipe or script.
         if !step.chars().any(char::is_whitespace) {
-            if self.config.commands.contains_key(step) {
+            if self.config.has_recipe(step) {
                 debug!(recipe_ref = step, "step is recipe reference");
                 return self
                     .run_recipe_inner(step.to_string(), forwarded.to_vec(), in_progress)
                     .await;
             }
-            if self.config.scripts.contains_key(step) {
+            if self.config.has_script(step) {
                 debug!(script_ref = step, "step is script reference");
                 return self
                     .run_script_inner(step.to_string(), forwarded.to_vec(), in_progress)

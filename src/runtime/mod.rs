@@ -8,6 +8,7 @@
 pub mod env;
 pub mod error;
 pub mod executor;
+pub mod ports;
 pub mod resolver;
 pub mod services;
 pub mod sink;
@@ -16,6 +17,7 @@ pub mod worktree;
 pub use env::Env;
 pub use error::RuntimeError;
 pub use executor::{Executor, WorkspaceTarget};
+pub use ports::{RecipeProvider, ScriptProvider};
 pub use resolver::{Resolution, Resolver, ResolverContext};
 pub use sink::{ChannelSink, InheritSink, OutputLine, OutputSink, OutputStream};
 pub use worktree::{
