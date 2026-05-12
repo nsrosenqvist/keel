@@ -94,6 +94,26 @@ Two checkouts of the same project get different ports automatically.
 See [Worktrees](Worktrees) for the slug-and-offset model in
 full.
 
+## Script-only variables
+
+Two extra env vars are set by the script and install-flow runners,
+**outside** the merge pipeline above. They reach `.keel/commands/`
+scripts and `.keel/install/` steps — not `[command.*]` recipes, not
+the dotenv writer, and not `keel env`:
+
+| Key | Source |
+|---|---|
+| `KEEL_PROJECT_DIR` | Host path to the worktree project root. |
+| `KEEL_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+
+Both are host-side paths even when the script runs inside a service
+or devcontainer. Inline install steps get `KEEL_PROJECT_DIR` only —
+there's no script file for `KEEL_SCRIPT_DIR` to point at.
+
+See [Recipes and Scripts](Recipes-and-Scripts#environment-variables-provided-to-scripts)
+and [Install Flow](Install-Flow#environment-variables) for the
+contracts in full.
+
 ## Inspecting the resolved environment
 
 `keel env` prints every resolved key as `KEY=VALUE` lines. Use it
