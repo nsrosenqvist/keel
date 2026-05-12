@@ -187,12 +187,14 @@ Preferred editor for the TUI's `e` (open selected file) and `E`
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `command` | string | `$VISUAL` → `$EDITOR` → `vim` | Shell-style command line; first token is the binary, rest are arguments prepended to the target path. |
-| `terminal` | bool | registry-classified | Force terminal (`true`) or GUI (`false`) launch mode. Override for editors keel doesn't know. |
+| `terminal` | bool | registry-classified | Force terminal (`true`) or GUI (`false`) launch mode. Drives whether the TUI suspends around the launch. |
+| `opens_directory` | bool | registry-classified | Whether the editor handles a directory target — drives the global `E` keybind. Independent of `terminal` (vim opens dirs via netrw; gedit doesn't). |
 
 ```toml
 [editor]
-command  = "code --wait"
-terminal = false
+command         = "code --wait"
+terminal        = false
+opens_directory = true
 ```
 
 ## `[[services.custom]]` / `[[services.systemd]]`

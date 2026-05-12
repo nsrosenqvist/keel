@@ -1011,8 +1011,8 @@ fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
                 ("G", "diff"),
                 ("W", "worktree"),
             ];
-            if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
-                h.push(("E", "open ide"));
+            if app.editor().opens_directory {
+                h.push(("E", "open project"));
             }
             h.push(("q", "quit"));
             h
@@ -1055,8 +1055,8 @@ fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     hints.push(("C", "control"));
     hints.push(("T", "terminals"));
     hints.push(("W", "worktree"));
-    if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
-        hints.push(("E", "open ide"));
+    if app.editor().opens_directory {
+        hints.push(("E", "open project"));
     }
     hints.push(("q", "quit"));
     hints
@@ -1088,8 +1088,8 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         hints.push(("T", "terminals"));
         hints.push(("G", "diff"));
         hints.push(("W", "worktree"));
-        if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
-            hints.push(("E", "open ide"));
+        if app.editor().opens_directory {
+            hints.push(("E", "open project"));
         }
     }
     hints.push(("/", "palette"));

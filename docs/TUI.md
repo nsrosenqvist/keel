@@ -88,7 +88,7 @@ service list changes.
 |---|---|
 | `G` | Open the [Diff View](Diff-View). |
 | `W` | Open the worktree switcher modal. |
-| `E` | Open the worktree root in your preferred editor (GUI editors only — see [Editor integration](#editor-integration)). |
+| `E` | Open the worktree root in your preferred editor (only when the editor handles directories — see [Editor integration](#editor-integration)). |
 
 ## Worktree switcher (`W`)
 
@@ -152,12 +152,28 @@ Terminal editors (vim, nvim, nano, helix, …) suspend the TUI like
 the lazygit handoff and resume on exit. GUI editors (code, cursor,
 gvim, IntelliJ, …) spawn detached — the TUI stays painted.
 
-The global `E` (open worktree root) is only offered when the
-resolved editor is in **GUI mode** — terminal editors either can't
-open a directory (`nano`, `hx`) or surprise the user when they can
-(`vim` drops into netrw). The legend hides the `E` hint in that
-case; pressing it anyway flashes an explanation. `e` (open file) is
-unaffected and works for both modes.
+### Directory support (the global `E`)
+
+Whether `E` (open worktree root) is offered is an independent
+question from terminal-vs-GUI. The registry tags each editor:
+
+- **Opens directories**: vim, nvim, emacs, helix, micro, code,
+  cursor, IntelliJ family, subl, kate, zed, gvim, mvim, … (vim and
+  emacs drop into netrw / dired; IDEs treat the dir as a workspace).
+- **Files only**: nano, kak, mcedit, vi, gedit.
+
+Unknown editors default to files-only. When the gate is closed,
+the legend hides `E` and pressing it anyway flashes an explanation.
+`e` (open file) is unaffected and works for both modes.
+
+Override per project:
+
+```toml
+[editor]
+command          = "my-custom-editor"
+terminal         = true   # suspend TUI on launch
+opens_directory  = true   # enable the global E
+```
 
 Classification uses a built-in registry. For editors keel doesn't
 know, set the launch mode explicitly:

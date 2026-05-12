@@ -544,21 +544,22 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             return;
         }
         // Open the worktree root in the configured editor. Global so
-        // an IDE-using devloop can jump from any view back into the
-        // editor without first hopping through `G`. Gated on a
-        // GUI-mode editor: terminal editors (nano, hx, …) either
-        // can't open a directory or do something surprising when
-        // they can (vim's netrw), so refuse with a flash instead of
+        // a project-aware devloop can jump from any view back into
+        // the editor without first hopping through `G`. Gated on
+        // whether the editor handles a directory target: nano /
+        // kakoune / gedit don't, so refuse with a flash instead of
         // launching a process that'll error and clobber the screen.
-        // The hint legends hide `E` in this case; this guard catches
-        // muscle memory.
+        // Vim and other terminal editors *do* open directories
+        // (netrw / dired), so they're allowed even though they
+        // suspend the TUI. The hint legends hide `E` when this
+        // gate is closed; the guard catches muscle memory.
         KeyCode::Char('E') => {
-            if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
+            if app.editor().opens_directory {
                 app.request_open_worktree_in_editor();
             } else {
                 let name = app.editor().display_name().to_owned();
                 app.flash(format!(
-                    "E (open worktree) needs a GUI editor; {name} is terminal — set [editor] command in keel.toml"
+                    "E (open worktree) needs an editor that handles directories; {name} doesn't — set [editor] in keel.toml"
                 ));
             }
             return;

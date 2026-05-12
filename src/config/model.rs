@@ -116,6 +116,13 @@ pub struct EditorConfig {
     /// the built-in registry. Useful for editors keel doesn't know.
     #[serde(default)]
     pub terminal: Option<bool>,
+
+    /// Whether the editor accepts a directory as its target (drives
+    /// the global `E` keybind's visibility). Overrides the built-in
+    /// registry. Most IDEs and dir-aware editors (code, idea, vim,
+    /// emacs, helix) say true; nano / kakoune / gedit say false.
+    #[serde(default)]
+    pub opens_directory: Option<bool>,
 }
 
 /// Devcontainer integration toggle.
@@ -817,6 +824,7 @@ mod tests {
         let cfg: Config = toml::from_str("").unwrap();
         assert!(cfg.editor.command.is_none());
         assert!(cfg.editor.terminal.is_none());
+        assert!(cfg.editor.opens_directory.is_none());
     }
 
     #[test]
@@ -825,10 +833,12 @@ mod tests {
             [editor]
             command = "code --wait"
             terminal = false
+            opens_directory = true
         "#;
         let cfg: Config = toml::from_str(src).unwrap();
         assert_eq!(cfg.editor.command.as_deref(), Some("code --wait"));
         assert_eq!(cfg.editor.terminal, Some(false));
+        assert_eq!(cfg.editor.opens_directory, Some(true));
     }
 
     #[test]

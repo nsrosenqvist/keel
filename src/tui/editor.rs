@@ -1,19 +1,21 @@
 //! Open files / the worktree in the user's preferred editor.
 //!
-//! Two flavours of editor exist and they want different launch
-//! semantics:
+//! Two independent axes drive launch behaviour:
 //!
-//! - **Terminal editors** (vim, nvim, nano, ...) need the TUI to step
-//!   aside the way it does for lazygit — leave the alternate screen,
-//!   let the child inherit stdio, re-enter and redraw on exit.
-//! - **GUI editors** (code, cursor, idea, ...) want a fire-and-forget
-//!   spawn: the binary returns immediately (the real window is already
-//!   open via IPC) and the TUI should keep painting underneath.
+//! - **Launch mode** ([`LaunchMode`]): terminal editors need the TUI
+//!   to step aside (leave alt screen, run the child with inherited
+//!   stdio, re-enter), the same handoff lazygit uses. GUI editors
+//!   want a fire-and-forget spawn so the TUI stays painted.
+//! - **Directory support** (`opens_directory`): can the binary accept
+//!   a directory as its target? VS Code / IntelliJ / vim's netrw say
+//!   yes; nano / kakoune / gedit say no. Independent of the launch
+//!   mode — vim is a terminal editor that *does* open directories,
+//!   gedit is a GUI editor that *doesn't*.
 //!
-//! Reliable runtime detection of "is this binary a GUI?" doesn't
-//! exist — many editors have both modes (`code` vs `code-tunnel`,
-//! `nvim` vs `nvim-qt`). So we ship a small registry of well-known
-//! editors and let the user override via `[editor] terminal = ...`.
+//! Neither dimension is reliably detectable at runtime, so we ship a
+//! small registry of well-known editors and let the user override
+//! both via `[editor] terminal = ...` and `[editor] opens_directory
+//! = ...`.
 
 use crate::config::EditorConfig;
 use std::path::Path;
@@ -38,6 +40,10 @@ pub struct ResolvedEditor {
     /// are arguments inserted *before* the target path on each launch.
     pub argv: Vec<String>,
     pub mode: LaunchMode,
+    /// True when the binary opens a directory sensibly — drives the
+    /// `E` (open worktree root) keybind's visibility and dispatch
+    /// gate. Independent of [`Self::mode`].
+    pub opens_directory: bool,
 }
 
 impl ResolvedEditor {
@@ -47,49 +53,57 @@ impl ResolvedEditor {
     }
 }
 
-/// Built-in registry. Lowercase binary name → launch mode. Unknown
-/// editors default to [`LaunchMode::Terminal`] — POSIX `$EDITOR` is
-/// conventionally a TTY editor, and suspending the TUI is the safer
-/// default (worst case: the user sees a quick blink; best case: their
-/// editor actually works).
-const REGISTRY: &[(&str, LaunchMode)] = &[
-    // Terminal editors
-    ("vi", LaunchMode::Terminal),
-    ("vim", LaunchMode::Terminal),
-    ("nvim", LaunchMode::Terminal),
-    ("nano", LaunchMode::Terminal),
-    ("hx", LaunchMode::Terminal),
-    ("helix", LaunchMode::Terminal),
-    ("micro", LaunchMode::Terminal),
-    ("kak", LaunchMode::Terminal),
-    ("kakoune", LaunchMode::Terminal),
-    ("mcedit", LaunchMode::Terminal),
-    ("emacs", LaunchMode::Terminal),
-    ("ed", LaunchMode::Terminal),
-    // GUI editors / IDEs
-    ("code", LaunchMode::Gui),
-    ("code-insiders", LaunchMode::Gui),
-    ("codium", LaunchMode::Gui),
-    ("cursor", LaunchMode::Gui),
-    ("subl", LaunchMode::Gui),
-    ("sublime_text", LaunchMode::Gui),
-    ("gedit", LaunchMode::Gui),
-    ("kate", LaunchMode::Gui),
-    ("gvim", LaunchMode::Gui),
-    ("mvim", LaunchMode::Gui),
-    ("nvim-qt", LaunchMode::Gui),
-    ("idea", LaunchMode::Gui),
-    ("pycharm", LaunchMode::Gui),
-    ("webstorm", LaunchMode::Gui),
-    ("goland", LaunchMode::Gui),
-    ("clion", LaunchMode::Gui),
-    ("rustrover", LaunchMode::Gui),
-    ("phpstorm", LaunchMode::Gui),
-    ("rubymine", LaunchMode::Gui),
-    ("zed", LaunchMode::Gui),
+/// Built-in registry entry: `(binary_name, mode, opens_directory)`.
+///
+/// **Launch mode** controls whether the TUI suspends. **opens_directory**
+/// controls whether `E` (open worktree root) is offered.
+///
+/// Unknown editors default to terminal mode + `opens_directory = false`
+/// — POSIX `$EDITOR` is conventionally a TTY editor that opens single
+/// files. The `E` keybind stays hidden in that case until the user
+/// opts in via `[editor] opens_directory = true`.
+const REGISTRY: &[(&str, LaunchMode, bool)] = &[
+    // Terminal editors that open directories (project-aware via
+    // netrw / dired / built-in file browser).
+    ("vim", LaunchMode::Terminal, true),
+    ("nvim", LaunchMode::Terminal, true),
+    ("emacs", LaunchMode::Terminal, true),
+    ("hx", LaunchMode::Terminal, true),
+    ("helix", LaunchMode::Terminal, true),
+    ("micro", LaunchMode::Terminal, true),
+    // Terminal editors that don't open directories.
+    ("vi", LaunchMode::Terminal, false),
+    ("nano", LaunchMode::Terminal, false),
+    ("kak", LaunchMode::Terminal, false),
+    ("kakoune", LaunchMode::Terminal, false),
+    ("mcedit", LaunchMode::Terminal, false),
+    ("ed", LaunchMode::Terminal, false),
+    // GUI editors / IDEs that open directories as projects.
+    ("code", LaunchMode::Gui, true),
+    ("code-insiders", LaunchMode::Gui, true),
+    ("codium", LaunchMode::Gui, true),
+    ("cursor", LaunchMode::Gui, true),
+    ("subl", LaunchMode::Gui, true),
+    ("sublime_text", LaunchMode::Gui, true),
+    ("kate", LaunchMode::Gui, true),
+    ("gvim", LaunchMode::Gui, true),
+    ("mvim", LaunchMode::Gui, true),
+    ("nvim-qt", LaunchMode::Gui, true),
+    ("idea", LaunchMode::Gui, true),
+    ("pycharm", LaunchMode::Gui, true),
+    ("webstorm", LaunchMode::Gui, true),
+    ("goland", LaunchMode::Gui, true),
+    ("clion", LaunchMode::Gui, true),
+    ("rustrover", LaunchMode::Gui, true),
+    ("phpstorm", LaunchMode::Gui, true),
+    ("rubymine", LaunchMode::Gui, true),
+    ("zed", LaunchMode::Gui, true),
+    // GUI editors that don't really open directories — they're
+    // file-pickers wearing a window.
+    ("gedit", LaunchMode::Gui, false),
 ];
 
-fn classify(binary: &str) -> LaunchMode {
+fn lookup(binary: &str) -> Option<(LaunchMode, bool)> {
     let key = std::path::Path::new(binary)
         .file_name()
         .and_then(|s| s.to_str())
@@ -97,9 +111,8 @@ fn classify(binary: &str) -> LaunchMode {
         .to_ascii_lowercase();
     REGISTRY
         .iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, mode)| *mode)
-        .unwrap_or(LaunchMode::Terminal)
+        .find(|(name, _, _)| *name == key)
+        .map(|(_, mode, dir)| (*mode, *dir))
 }
 
 /// Resolve the editor command. Source order:
@@ -109,8 +122,10 @@ fn classify(binary: &str) -> LaunchMode {
 ///   3. `$EDITOR`
 ///   4. literal `"vim"`
 ///
-/// The launch mode comes from `[editor] terminal = ...` if set, else
-/// from the registry lookup on `argv[0]`.
+/// Launch mode comes from `[editor] terminal = ...` if set, else the
+/// registry; directory support comes from `[editor] opens_directory =
+/// ...` if set, else the registry. Unknown editors default to
+/// terminal + no-dir.
 pub fn resolve(config: &EditorConfig) -> ResolvedEditor {
     let raw = config
         .command
@@ -131,13 +146,19 @@ pub fn resolve(config: &EditorConfig) -> ResolvedEditor {
         argv
     };
 
+    let (default_mode, default_dir) = lookup(&argv[0]).unwrap_or((LaunchMode::Terminal, false));
     let mode = match config.terminal {
         Some(true) => LaunchMode::Terminal,
         Some(false) => LaunchMode::Gui,
-        None => classify(&argv[0]),
+        None => default_mode,
     };
+    let opens_directory = config.opens_directory.unwrap_or(default_dir);
 
-    ResolvedEditor { argv, mode }
+    ResolvedEditor {
+        argv,
+        mode,
+        opens_directory,
+    }
 }
 
 /// Run a terminal editor with inherited stdio. Caller is responsible
@@ -202,45 +223,89 @@ mod tests {
         let cfg = EditorConfig {
             command: Some("nano --restricted".into()),
             terminal: None,
+            opens_directory: None,
         };
         let resolved = resolve(&cfg);
         assert_eq!(resolved.argv, vec!["nano", "--restricted"]);
         assert_eq!(resolved.mode, LaunchMode::Terminal);
+        assert!(!resolved.opens_directory, "nano cannot open dirs");
     }
 
     #[test]
-    fn classify_known_terminal_editor() {
-        assert_eq!(classify("vim"), LaunchMode::Terminal);
-        assert_eq!(classify("/usr/bin/nvim"), LaunchMode::Terminal);
-        assert_eq!(classify("HX"), LaunchMode::Terminal);
+    fn lookup_known_terminal_editor_with_dir() {
+        let (mode, dir) = lookup("vim").unwrap();
+        assert_eq!(mode, LaunchMode::Terminal);
+        assert!(dir, "vim opens directories via netrw");
+        let (mode, dir) = lookup("/usr/bin/nvim").unwrap();
+        assert_eq!(mode, LaunchMode::Terminal);
+        assert!(dir);
+        let (mode, dir) = lookup("HX").unwrap();
+        assert_eq!(mode, LaunchMode::Terminal);
+        assert!(dir);
     }
 
     #[test]
-    fn classify_known_gui_editor() {
-        assert_eq!(classify("code"), LaunchMode::Gui);
-        assert_eq!(classify("/snap/bin/cursor"), LaunchMode::Gui);
+    fn lookup_known_terminal_editor_without_dir() {
+        let (mode, dir) = lookup("nano").unwrap();
+        assert_eq!(mode, LaunchMode::Terminal);
+        assert!(!dir);
     }
 
     #[test]
-    fn classify_unknown_defaults_to_terminal() {
-        assert_eq!(classify("my-unknown-editor"), LaunchMode::Terminal);
+    fn lookup_known_gui_editor_with_dir() {
+        let (mode, dir) = lookup("code").unwrap();
+        assert_eq!(mode, LaunchMode::Gui);
+        assert!(dir);
+        let (mode, dir) = lookup("/snap/bin/cursor").unwrap();
+        assert_eq!(mode, LaunchMode::Gui);
+        assert!(dir);
     }
 
     #[test]
-    fn config_terminal_override_wins() {
+    fn lookup_known_gui_editor_without_dir() {
+        let (mode, dir) = lookup("gedit").unwrap();
+        assert_eq!(mode, LaunchMode::Gui);
+        assert!(!dir);
+    }
+
+    #[test]
+    fn lookup_unknown_returns_none() {
+        assert!(lookup("my-unknown-editor").is_none());
+    }
+
+    #[test]
+    fn config_overrides_win() {
+        // Terminal-mode override on a GUI editor:
         let cfg = EditorConfig {
             command: Some("code --wait".into()),
             terminal: Some(true),
+            opens_directory: None,
         };
         let resolved = resolve(&cfg);
         assert_eq!(resolved.mode, LaunchMode::Terminal);
+        assert!(resolved.opens_directory, "registry says code opens dirs");
 
+        // GUI + dir override on an unknown editor:
         let cfg = EditorConfig {
-            command: Some("my-unknown-editor".into()),
+            command: Some("my-custom-editor".into()),
             terminal: Some(false),
+            opens_directory: Some(true),
         };
         let resolved = resolve(&cfg);
         assert_eq!(resolved.mode, LaunchMode::Gui);
+        assert!(resolved.opens_directory);
+    }
+
+    #[test]
+    fn unknown_editor_defaults_to_terminal_no_dir() {
+        let cfg = EditorConfig {
+            command: Some("my-unknown-editor".into()),
+            terminal: None,
+            opens_directory: None,
+        };
+        let resolved = resolve(&cfg);
+        assert_eq!(resolved.mode, LaunchMode::Terminal);
+        assert!(!resolved.opens_directory);
     }
 
     #[test]
@@ -258,5 +323,6 @@ mod tests {
         let resolved = resolve(&empty());
         assert_eq!(resolved.argv, vec!["vim"]);
         assert_eq!(resolved.mode, LaunchMode::Terminal);
+        assert!(resolved.opens_directory);
     }
 }

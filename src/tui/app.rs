@@ -436,6 +436,8 @@ impl App {
             editor: ResolvedEditor {
                 argv: vec!["vim".to_owned()],
                 mode: crate::tui::editor::LaunchMode::Terminal,
+                // vim opens directories via netrw; matches registry.
+                opens_directory: true,
             },
         }
     }
