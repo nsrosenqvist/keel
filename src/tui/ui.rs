@@ -366,14 +366,8 @@ fn service_backend_badge(app: &App, item: &Item) -> Option<&'static str> {
 }
 
 fn item_indicator_style(app: &App, item: &Item) -> Style {
-    match item.kind {
-        ItemKind::Runtime => run_indicator_style(app.lifecycle_run()),
-        ItemKind::Service => service_indicator_style(app, &item.name),
-        ItemKind::Watcher => watcher_indicator_style(app, &item.name),
-        ItemKind::Recipe | ItemKind::Script => {
-            run_indicator_style(app.run_for(item.kind, &item.name))
-        }
-    }
+    crate::tui::views::control_center::dispatch::for_kind(item.kind)
+        .indicator_style(&item.name, app)
 }
 
 /// Standard run-state palette for sidebar glyphs:
@@ -386,7 +380,7 @@ fn item_indicator_style(app: &App, item: &Item) -> Style {
 /// sidebar entry whose state is a `RunState`. Services and watchers
 /// have their own indicator paths because their lifecycle isn't a
 /// `RunState` (services tail logs; watchers debounce).
-fn run_indicator_style(run: Option<&RunState>) -> Style {
+pub(crate) fn run_indicator_style(run: Option<&RunState>) -> Style {
     match run {
         None => Style::default().fg(Color::DarkGray),
         Some(r) if !r.is_done() => Style::default().fg(Color::Yellow),
@@ -481,38 +475,14 @@ fn info_panel_title(item: &Item, accent: Color) -> Line<'static> {
 }
 
 fn render_output_for_item(app: &App, item: &Item, accent: Color, frame: &mut Frame, area: Rect) {
-    match item.kind {
-        ItemKind::Runtime => match app.lifecycle_run() {
-            Some(run) => render_run_buffer(run, accent, frame, area),
-            None => render_idle_output(
-                accent,
-                frame,
-                area,
-                "no lifecycle action has run yet",
-                Some("U up all · D down all · R restart all · S stop all"),
-            ),
-        },
-        ItemKind::Service => {
-            if let Some(service) = app.selected_service() {
-                render_service_logs(service, accent, frame, area);
-            }
-        }
-        ItemKind::Watcher => {
-            if let Some(watcher) = app.selected_watcher() {
-                render_watcher(watcher, accent, frame, area);
-            }
-        }
-        ItemKind::Recipe | ItemKind::Script => match app.selected_run() {
-            Some(run) => render_run_buffer(run, accent, frame, area),
-            None => render_idle_output(accent, frame, area, "press enter to run", None),
-        },
-    }
+    crate::tui::views::control_center::dispatch::for_kind(item.kind)
+        .render_output(&item.name, app, accent, frame, area);
 }
 
 /// Idle output panel — used by recipes / scripts / lifecycle row
 /// when nothing has been run yet this session. Title carries an
 /// "idle" badge instead of an exit code or duration.
-fn render_idle_output(
+pub(crate) fn render_idle_output(
     accent: Color,
     frame: &mut Frame,
     area: Rect,
@@ -535,7 +505,7 @@ fn render_idle_output(
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_run_buffer(run: &RunState, accent: Color, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_run_buffer(run: &RunState, accent: Color, frame: &mut Frame, area: Rect) {
     let title = output_pane_title(OutputStatus::Run(run), accent);
     let block = panel_block_titled(title).padding(Padding::horizontal(2));
     let max_lines = area.height.saturating_sub(2) as usize;
@@ -806,7 +776,7 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
     crate::tui::ansi::ansi_to_line(&line.text, base)
 }
 
-fn render_service_logs(service: &ServicePane, accent: Color, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_service_logs(service: &ServicePane, accent: Color, frame: &mut Frame, area: Rect) {
     let title = output_pane_title(OutputStatus::Service(service), accent);
 
     // Horizontal-only padding — every output pane sits in the same
@@ -889,7 +859,7 @@ fn service_status_spans(service: &ServicePane) -> Vec<Span<'static>> {
     }
 }
 
-fn render_watcher(watcher: &WatcherPane, accent: Color, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_watcher(watcher: &WatcherPane, accent: Color, frame: &mut Frame, area: Rect) {
     // Watcher meta (recipe / globs / debounce) lives in the info
     // panel above. The output pane is purely the buffer from the
     // most recent run, with a placeholder when nothing has run yet —
@@ -968,7 +938,7 @@ fn watcher_status_spans(watcher: &WatcherPane, accent: Color) -> Vec<Span<'stati
     }
 }
 
-fn watcher_indicator_style(app: &App, name: &str) -> Style {
+pub(crate) fn watcher_indicator_style(app: &App, name: &str) -> Style {
     let Some(w) = app.watchers().get(name) else {
         return Style::default().fg(Color::DarkGray);
     };
