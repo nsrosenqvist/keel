@@ -1683,13 +1683,13 @@ impl App {
                 Some(t) => crate::runtime::merge_base(&project_root_owned, t).await,
                 None => None,
             };
-            let branch = crate::tui::terminal::current_branch(&project_root_owned).await;
+            let branch = crate::tui::views::diff::git::current_branch(&project_root_owned).await;
             let anchor_short = anchor
                 .as_deref()
                 .map(|sha| sha.chars().take(7).collect::<String>());
             let lazygit_available = crate::tui::lazygit::is_available();
             let files =
-                crate::tui::terminal::load_diff_files(&project_root_owned, anchor.as_deref()).await;
+                crate::tui::views::diff::git::load_diff_files(&project_root_owned, anchor.as_deref()).await;
             let _ = diff_tx.send(DiffPreload {
                 trunk,
                 anchor,
