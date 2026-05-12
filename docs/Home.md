@@ -56,62 +56,62 @@ keel                      # TUI dashboard with every recipe + service
 
 ## Where to go next
 
-- **New here?** → [Getting Started](./Getting-Started.md): install,
+- **New here?** → [Getting Started](Getting-Started): install,
   `keel init`, your first recipe and hook.
-- **Want the tour?** → [Quick Tour](./Quick-Tour.md): a guided
+- **Want the tour?** → [Quick Tour](Quick-Tour): a guided
   5-minute walk through recipes, hooks, agents, and the TUI.
 - **Need the reference?** →
-  [Configuration Reference](./Configuration-Reference.md) for every
-  `keel.toml` key, [Commands Reference](./Commands-Reference.md)
+  [Configuration Reference](Configuration-Reference) for every
+  `keel.toml` key, [Commands Reference](Commands-Reference)
   for every CLI subcommand.
 
 ## All pages
 
 ### Concepts
 
-- [Recipes and Scripts](./Recipes-and-Scripts.md) — declarative
+- [Recipes and Scripts](Recipes-and-Scripts) — declarative
   TOML vs `.keel/commands/` shell scripts.
-- [Environments](./Environments.md) — `[env]`, dotenv layering,
+- [Environments](Environments) — `[env]`, dotenv layering,
   `base + offset` arithmetic.
-- [Container Backends](./Container-Backends.md) — compose / docker
+- [Container Backends](Container-Backends) — compose / docker
   / podman / none, passthrough resolution.
-- [Non Container Services](./Non-Container-Services.md) — system
+- [Non Container Services](Non-Container-Services) — system
   daemons alongside compose.
-- [Worktrees](./Worktrees.md) — slug + offset, per-worktree
+- [Worktrees](Worktrees) — slug + offset, per-worktree
   isolation, dotenv writer.
 
 ### Subsystems
 
-- [Hooks](./Hooks.md) — git hook installer +
+- [Hooks](Hooks) — git hook installer +
   `.pre-commit-config.yaml` runner.
-- [Agents](./Agents.md) — sync agent instructions / skills from
+- [Agents](Agents) — sync agent instructions / skills from
   upstream repos.
-- [Install Flow](./Install-Flow.md) — `.keel/install/` ordered
+- [Install Flow](Install-Flow) — `.keel/install/` ordered
   setup steps with state + resume.
-- [TUI](./TUI.md) — the embedded dashboard.
-- [Diff View](./Diff-View.md) — branch-review surface pinned to
+- [TUI](TUI) — the embedded dashboard.
+- [Diff View](Diff-View) — branch-review surface pinned to
   the trunk merge-base.
-- [Watch](./Watch.md) — re-run a recipe on filesystem change.
-- [Shell Library](./Shell-Library.md) — `keel lib ask|confirm|…`
+- [Watch](Watch) — re-run a recipe on filesystem change.
+- [Shell Library](Shell-Library) — `keel lib ask|confirm|…`
   prompts for shell scripts.
 
 ### Reference
 
-- [Configuration Reference](./Configuration-Reference.md) — every
+- [Configuration Reference](Configuration-Reference) — every
   `keel.toml` key.
-- [Commands Reference](./Commands-Reference.md) — every CLI
+- [Commands Reference](Commands-Reference) — every CLI
   subcommand.
 
 ### Resources
 
-- [Examples](./Examples.md) — runnable keel projects under
+- [Examples](Examples) — runnable keel projects under
   `examples/`.
-- [Troubleshooting](./Troubleshooting.md) — `keel doctor`, common
+- [Troubleshooting](Troubleshooting) — `keel doctor`, common
   pitfalls.
 
 ### Project
 
-- [Architecture](./Architecture.md) — operating principles, crate
+- [Architecture](Architecture) — operating principles, crate
   layout.
-- [Contributing](./Contributing.md) — verification ladder, commit
+- [Contributing](Contributing) — verification ladder, commit
   conventions, how to send a PR.

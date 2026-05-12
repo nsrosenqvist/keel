@@ -170,6 +170,6 @@ sources).
 
 - [`examples/agents-upstream/`](https://github.com/nsrosenqvist/keel/tree/main/examples/agents-upstream)
   — sample upstream layout an org can fork.
-- [Install Flow](./Install-Flow.md) — how `apply-agents` slots into
+- [Install Flow](Install-Flow) — how `apply-agents` slots into
   the install plan.
-- [Configuration Reference: `[agents]`](./Configuration-Reference.md#agents-and-agentssources).
+- [Configuration Reference: `[agents]`](Configuration-Reference#agents-and-agentssources).

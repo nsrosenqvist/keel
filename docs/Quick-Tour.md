@@ -3,7 +3,7 @@
 Five minutes through the major features, in the order you'd
 typically meet them. Everything here cross-links to the deeper
 docs. Already comfortable? Jump to
-[Configuration Reference](./Configuration-Reference.md).
+[Configuration Reference](Configuration-Reference).
 
 ## 1. Two ways to define commands
 
@@ -29,7 +29,7 @@ php artisan db:seed
 
 Both show up in `keel list`, both are runnable as `keel <name>`.
 Use whichever shape matches the command's complexity. See
-[Recipes and Scripts](./Recipes-and-Scripts.md).
+[Recipes and Scripts](Recipes-and-Scripts).
 
 ## 2. Knows where commands run
 
@@ -44,7 +44,7 @@ forward_args = true        # keel test --filter Login → composer test --filter
 ```
 
 Backend selection is `[runtime].backend` — compose, docker,
-podman, or none. See [Container Backends](./Container-Backends.md).
+podman, or none. See [Container Backends](Container-Backends).
 
 ## 3. Per-worktree isolation, automatic
 
@@ -63,7 +63,7 @@ DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
 `KEEL_WORKTREE_OFFSET` is computed deterministically from the
 worktree slug, so each checkout gets a stable, distinct integer
 that drifts ports / `COMPOSE_PROJECT_NAME` / anything else
-needing isolation. See [Worktrees](./Worktrees.md).
+needing isolation. See [Worktrees](Worktrees).
 
 ## 4. Git hooks, pre-commit-compatible
 
@@ -81,7 +81,7 @@ keel hooks install
 
 External repos in `.pre-commit-config.yaml` are cloned into
 `.keel/cache/hooks/<rev>/` and run natively — no `pre-commit`
-binary required. See [Hooks](./Hooks.md).
+binary required. See [Hooks](Hooks).
 
 ## 5. First-time setup with `keel install`
 
@@ -105,8 +105,8 @@ Each step runs in order, with a line-redraw progress UI. Failures
 prompt **"Resume from `<step>`?"** on the next run. Marking a step
 `# @optional: yes` lets it fail without halting the rest;
 `# @interactive: yes` hands the terminal to the step so
-[`keel lib *`](./Shell-Library.md) prompts work. See
-[Install Flow](./Install-Flow.md).
+[`keel lib *`](Shell-Library) prompts work. See
+[Install Flow](Install-Flow).
 
 ## 6. Agent instructions from upstream repos
 
@@ -128,7 +128,7 @@ keel agents status         # per-source rev + per-file drift
 
 Whole-file ownership: keel tracks every file it writes by
 SHA-256 and never touches local sibling files. See
-[Agents](./Agents.md).
+[Agents](Agents).
 
 ## 7. Open the dashboard
 
@@ -138,9 +138,9 @@ keel
 
 A sidebar of recipes / scripts / services, an output pane,
 lifecycle keymaps for compose + systemd + custom services, the
-built-in [diff view](./Diff-View.md) (`G`), and a
-[worktree switcher](./Worktrees.md#tui-worktree-switcher-w) (`W`).
-See [TUI](./TUI.md).
+built-in [diff view](Diff-View) (`G`), and a
+[worktree switcher](Worktrees#tui-worktree-switcher-w) (`W`).
+See [TUI](TUI).
 
 ## 8. Watch mode
 
@@ -149,7 +149,7 @@ keel watch test
 ```
 
 Re-runs the recipe on filesystem change with a 300 ms debounce. See
-[Watch](./Watch.md).
+[Watch](Watch).
 
 ## 9. Shell prompts in any script
 
@@ -160,11 +160,11 @@ SVC=$(keel lib select "Service" app db redis)
 ```
 
 Prompts to stderr, answer to stdout, `--default` for non-tty / CI.
-See [Shell Library](./Shell-Library.md).
+See [Shell Library](Shell-Library).
 
 ## Where to go next
 
-- [Configuration Reference](./Configuration-Reference.md) — every
+- [Configuration Reference](Configuration-Reference) — every
   key.
-- [Commands Reference](./Commands-Reference.md) — every CLI flag.
-- [Examples](./Examples.md) — runnable projects.
+- [Commands Reference](Commands-Reference) — every CLI flag.
+- [Examples](Examples) — runnable projects.

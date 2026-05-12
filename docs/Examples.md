@@ -93,7 +93,7 @@ Showcases:
 
 ## See also
 
-- [Getting Started](./Getting-Started.md) — first project from
+- [Getting Started](Getting-Started) — first project from
   scratch.
-- [Quick Tour](./Quick-Tour.md) — a guided walk-through that
+- [Quick Tour](Quick-Tour) — a guided walk-through that
   references each example.

@@ -2,7 +2,7 @@
 
 This page takes you from "no keel" to "first recipe + first
 hook + open dashboard" in under five minutes. After that, the
-[Quick Tour](./Quick-Tour.md) shows the rest of the surface.
+[Quick Tour](Quick-Tour) shows the rest of the surface.
 
 ## 1. Install
 
@@ -105,7 +105,7 @@ keel hooks install
 
 This writes `.git/hooks/pre-commit` as a shim that runs `keel
 hooks run pre-commit`. Try it: `git commit` triggers `check`
-automatically. See [Hooks](./Hooks.md) for the full model
+automatically. See [Hooks](Hooks) for the full model
 (including `.pre-commit-config.yaml` compatibility).
 
 ## 5. Open the dashboard
@@ -114,19 +114,19 @@ automatically. See [Hooks](./Hooks.md) for the full model
 keel
 ```
 
-Bare `keel` opens the [TUI](./TUI.md): a sidebar of every recipe,
+Bare `keel` opens the [TUI](TUI): a sidebar of every recipe,
 script, and service; an output pane for whatever's selected; service
-lifecycle keymaps; a built-in [diff view](./Diff-View.md) (`G`); a
-[worktree switcher](./Worktrees.md#tui-worktree-switcher-w) (`W`).
+lifecycle keymaps; a built-in [diff view](Diff-View) (`G`); a
+[worktree switcher](Worktrees#tui-worktree-switcher-w) (`W`).
 
 ## 6. Where to go next
 
-- **The full tour** → [Quick Tour](./Quick-Tour.md) — a guided 5-minute walk
+- **The full tour** → [Quick Tour](Quick-Tour) — a guided 5-minute walk
   through every major feature.
 - **Schema reference** →
-  [Configuration Reference](./Configuration-Reference.md) for
+  [Configuration Reference](Configuration-Reference) for
   every `keel.toml` key.
-- **Real projects** → [Examples](./Examples.md) — runnable
+- **Real projects** → [Examples](Examples) — runnable
   configurations under `examples/`.
-- **Stuck?** → [Troubleshooting](./Troubleshooting.md) — `keel
+- **Stuck?** → [Troubleshooting](Troubleshooting) — `keel
   doctor` and common pitfalls.

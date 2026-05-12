@@ -92,17 +92,17 @@ tty  = true
 
 The TUI sidebar (`keel ui`) auto-discovers every compose service
 and shows them with lifecycle keymaps (`r` start, `R` restart,
-`s` stop, `S` stop & remove, `U` up, `D` down). See [TUI](./TUI.md).
+`s` stop, `S` stop & remove, `U` up, `D` down). See [TUI](TUI).
 
 ## Doctor
 
 `keel doctor` reports the active backend, whether its CLI is on
 PATH, and whether each declared `default_service` exists in the
-compose project. See [Troubleshooting](./Troubleshooting.md).
+compose project. See [Troubleshooting](Troubleshooting).
 
 ## See also
 
-- [Non Container Services](./Non-Container-Services.md) for system
+- [Non Container Services](Non-Container-Services) for system
   daemons you want to manage alongside compose.
-- [Recipes and Scripts](./Recipes-and-Scripts.md) for the full
+- [Recipes and Scripts](Recipes-and-Scripts) for the full
   resolution order and `in = "..."` semantics.

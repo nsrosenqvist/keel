@@ -53,7 +53,7 @@ When `[worktrees].dotenv = "..."` is set, `keel hooks install`
 without an explicit `--stages` list also installs `post-checkout`
 and `post-merge` shims so the dotenv writer keeps the file fresh
 across branch switches even when the developer skips keel. See
-[Worktrees](./Worktrees.md#materialising-worktree-env-into-env).
+[Worktrees](Worktrees#materialising-worktree-env-into-env).
 
 ## External pre-commit repos
 
@@ -139,9 +139,9 @@ of which files are staged.
 
 ## See also
 
-- [Install Flow](./Install-Flow.md) — `keel install` includes a
+- [Install Flow](Install-Flow) — `keel install` includes a
   synthetic step that installs hook shims and prefetches external
   repos.
 - [`examples/hooks/`](https://github.com/nsrosenqvist/keel/tree/main/examples/hooks)
   — runnable demo with a local hook and an external repo.
-- [Configuration Reference: `[hooks]`](./Configuration-Reference.md#hooks).
+- [Configuration Reference: `[hooks]`](Configuration-Reference#hooks).

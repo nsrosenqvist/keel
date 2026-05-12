@@ -20,11 +20,11 @@ Two synthetic steps are appended automatically:
 
 - **`apply-agents`** — runs first, when
   `[agents].install_with_setup = true` (default) and at least one
-  `[[agents.sources]]` is declared. See [Agents](./Agents.md).
+  `[[agents.sources]]` is declared. See [Agents](Agents).
 - **`install-hooks`** — runs last, when `[install].install_git_hooks
   = true` (default). Installs git hook shims and prefetches any
   external `.pre-commit-config.yaml` repos into
-  `.keel/cache/hooks/<rev>/`. See [Hooks](./Hooks.md).
+  `.keel/cache/hooks/<rev>/`. See [Hooks](Hooks).
 
 Install steps are deliberately separate from `keel list` /
 `.keel/commands/` — they don't surface in the TUI sidebar or the
@@ -90,7 +90,7 @@ EMAIL=$(keel lib ask "Admin email")
 echo "ADMIN_EMAIL=$EMAIL" >> .env
 ```
 
-See [Shell Library](./Shell-Library.md).
+See [Shell Library](Shell-Library).
 
 ## Optional steps
 
@@ -147,7 +147,7 @@ worktree dotenv writer).
 
 - [`examples/install-flow/`](https://github.com/nsrosenqvist/keel/tree/main/examples/install-flow)
   — runnable demo with ordered + optional + interactive steps.
-- [Hooks](./Hooks.md) and [Agents](./Agents.md) for the synthetic
+- [Hooks](Hooks) and [Agents](Agents) for the synthetic
   steps that bookend the user-defined plan.
-- [Shell Library](./Shell-Library.md) for prompts inside interactive
+- [Shell Library](Shell-Library) for prompts inside interactive
   steps.

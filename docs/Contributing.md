@@ -61,7 +61,7 @@ footer, and add `!` after type/scope:
 
 ## Design philosophy
 
-See [Architecture](./Architecture.md) for the operating principles
+See [Architecture](Architecture) for the operating principles
 (SOLID, DDD, performance is a default, one source of truth per
 concern, no dead config). Every code change is judged against those.
 
@@ -77,7 +77,7 @@ calls out which features it demonstrates.
    etc.).
 2. Add a `README.md` linking back to the relevant wiki page(s) and
    explaining what the example shows.
-3. Update [`docs/Examples.md`](./Examples.md) with a one-paragraph
+3. Update [`docs/Examples.md`](Examples) with a one-paragraph
    summary and links.
 4. Open the PR with a `docs(examples): add <name> example` commit.
 
@@ -108,6 +108,6 @@ Sketch:
 
 ## See also
 
-- [Architecture](./Architecture.md) — crate layout + design
+- [Architecture](Architecture) — crate layout + design
   principles.
-- [Examples](./Examples.md) — existing examples to model from.
+- [Examples](Examples) — existing examples to model from.

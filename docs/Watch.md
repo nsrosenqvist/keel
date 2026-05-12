@@ -42,10 +42,10 @@ FSEvents on macOS, ReadDirectoryChangesW on Windows.
 ## Use inside the TUI
 
 The TUI's `[[ui.pane]] type = "watcher"` and `restart_on = [...]` on
-command panes use the same engine. See [TUI](./TUI.md).
+command panes use the same engine. See [TUI](TUI).
 
 ## See also
 
-- [Recipes and Scripts](./Recipes-and-Scripts.md) — `forward_args`
+- [Recipes and Scripts](Recipes-and-Scripts) — `forward_args`
   and recipe basics.
-- [TUI](./TUI.md) — watcher panes pinned in the dashboard.
+- [TUI](TUI) — watcher panes pinned in the dashboard.

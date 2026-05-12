@@ -15,12 +15,12 @@ keel doctor
 
 keel uses `deny_unknown_fields` on every TOML section. Typo or a
 removed field. Cross-check the
-[Configuration Reference](./Configuration-Reference.md).
+[Configuration Reference](Configuration-Reference).
 
 ### "duplicate service name `<name>`"
 
 A name appears in two of:
-[`[[services.custom]]`](./Non-Container-Services.md), `[[services.systemd]]`,
+[`[[services.custom]]`](Non-Container-Services), `[[services.systemd]]`,
 or the compose project. Rename one. Errors at config-load time, not
 at runtime.
 
@@ -39,7 +39,7 @@ duplicate from `[install].steps`).
 ### "compose backend selected but `docker` is not on PATH"
 
 Install Docker, or set `[runtime].backend = "none"` if you only
-use [`[[services.custom]]`](./Non-Container-Services.md) /
+use [`[[services.custom]]`](Non-Container-Services) /
 `[[services.systemd]]` declarations.
 
 ### Recipe with `in = "<svc>"` errors with "no such service"
@@ -51,7 +51,7 @@ The compose service isn't defined in `docker-compose.yml`. Check
 
 Either `[runtime].service_passthrough = false` is set, or the
 name resolved to something earlier in the [resolution
-order](./Recipes-and-Scripts.md#resolution-order) (a recipe or
+order](Recipes-and-Scripts#resolution-order) (a recipe or
 script with the same name). Use `keel which <svc>` to see how it
 resolves.
 
@@ -60,7 +60,7 @@ resolves.
 ### `[env]` value not visible to `docker compose up`
 
 Tools invoked outside keel don't see the resolved `[env]`. Set
-[`[worktrees].dotenv = ".env"`](./Worktrees.md#materialising-worktree-env-into-env)
+[`[worktrees].dotenv = ".env"`](Worktrees#materialising-worktree-env-into-env)
 to materialise the resolved env into `.env` automatically.
 
 ### "required env `<KEY>` could not be resolved"
@@ -80,7 +80,7 @@ APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
 
 `keel worktree list` shows every worktree's computed offset and
 warns on collisions. Pin a slug explicitly with `keel worktree
-assign <slug> <n>` if needed. See [Worktrees](./Worktrees.md).
+assign <slug> <n>` if needed. See [Worktrees](Worktrees).
 
 ## Hook issues
 
@@ -88,7 +88,7 @@ assign <slug> <n>` if needed. See [Worktrees](./Worktrees.md).
 
 `.git/hooks/<stage>` exists and isn't a keel-managed shim. Move
 it aside (e.g. `.git/hooks/pre-commit.bak`) and rerun
-`keel hooks install`. See [Hooks](./Hooks.md).
+`keel hooks install`. See [Hooks](Hooks).
 
 ### "hook `<id>` uses language `<lang>`; keel runs only `system` / `script` hooks"
 
@@ -106,7 +106,7 @@ replace it with an equivalent `repo: local` hook.
 
 When an upstream pre-commit repo moves a tag, the cached SHA goes
 stale. `--update-hooks` clears the cache entry and re-clones at the
-same rev. See [Hooks](./Hooks.md#external-pre-commit-repos).
+same rev. See [Hooks](Hooks#external-pre-commit-repos).
 
 ## Install flow issues
 
@@ -115,7 +115,7 @@ same rev. See [Hooks](./Hooks.md#external-pre-commit-repos).
 A previous `keel install` failed mid-flight and left state. Press
 Enter (or `--resume` non-interactively) to pick up where it
 stopped, or `--restart` to wipe state and start over. See
-[Install Flow](./Install-Flow.md#state-and-resume).
+[Install Flow](Install-Flow#state-and-resume).
 
 ### Single new step everyone needs to apply
 
@@ -130,19 +130,19 @@ rebuild-search-index`).
 
 A local file in a `[[dir]]` target has the same name as an upstream
 file. Rename the local file (e.g. `foo.local.md`) so the conflict
-is unambiguous. See [Agents](./Agents.md#whole-file-ownership).
+is unambiguous. See [Agents](Agents#whole-file-ownership).
 
 ### Drift warning on `keel agents install`
 
 You hand-edited a keel-owned file. By default keel leaves it
 alone (warning only); `--force-overwrite-drift` overwrites it from
-upstream. See [Agents](./Agents.md#state--drift).
+upstream. See [Agents](Agents#state--drift).
 
 ### Floating ref didn't refetch
 
 `keel agents install` reuses cache for floating refs too — only
 `keel agents update` (or `install --force`) re-fetches them. See
-[Agents](./Agents.md#floating-refs).
+[Agents](Agents#floating-refs).
 
 ## TUI issues
 
@@ -151,13 +151,13 @@ upstream. See [Agents](./Agents.md#state--drift).
 Compose detection failed. Run `docker compose config --services`
 manually. If output is fine but keel still doesn't show rows,
 declare them explicitly via `[[ui.pane]] type = "service"` so they
-appear regardless of detection. See [TUI](./TUI.md#explicit-panes-uipane).
+appear regardless of detection. See [TUI](TUI#explicit-panes-uipane).
 
 ### `G` (diff view) shows wrong base branch
 
 keel picks trunk via `origin/HEAD` → `main` → `master` →
 `develop` → `trunk`. Override with `[diff] base = "release/stable"`
-in `keel.toml`. See [Diff View](./Diff-View.md#manual-override).
+in `keel.toml`. See [Diff View](Diff-View#manual-override).
 
 ## Still stuck?
 

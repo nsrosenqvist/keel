@@ -91,7 +91,7 @@ DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
 ```
 
 Two checkouts of the same project get different ports automatically.
-See [Worktrees](./Worktrees.md) for the slug-and-offset model in
+See [Worktrees](Worktrees) for the slug-and-offset model in
 full.
 
 ## Inspecting the resolved environment
@@ -135,6 +135,6 @@ For a one-shot write outside keel's normal lifecycle, use
 
 ## See also
 
-- [Configuration Reference: `[env]`](./Configuration-Reference.md#env-and-env_files)
-- [Worktrees](./Worktrees.md) for the slug + offset model.
-- [Hooks](./Hooks.md) for how the post-checkout / post-merge auto-wiring works.
+- [Configuration Reference: `[env]`](Configuration-Reference#env-and-env_files)
+- [Worktrees](Worktrees) for the slug + offset model.
+- [Hooks](Hooks) for how the post-checkout / post-merge auto-wiring works.

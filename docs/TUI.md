@@ -86,7 +86,7 @@ service list changes.
 
 | Key | Action |
 |---|---|
-| `G` | Open the [Diff View](./Diff-View.md). |
+| `G` | Open the [Diff View](Diff-View). |
 | `W` | Open the worktree switcher modal. |
 
 ## Worktree switcher (`W`)
@@ -103,7 +103,7 @@ entry opens a branch-first picker:
 The path field auto-fills as `<parent>/<slug(branch)>`; Tab into it
 for a manual override.
 
-See [Worktrees](./Worktrees.md) for the slug + offset model that
+See [Worktrees](Worktrees) for the slug + offset model that
 makes per-worktree ports / `COMPOSE_PROJECT_NAME` automatic.
 
 ## Pane types
@@ -117,7 +117,7 @@ Pinned slot for a service row. The lifecycle keymap operates on it.
 
 Pinned slot for a recipe / script. Press `Enter` (or the `key`
 shortcut) to run it. `restart_on = ["src/**", ...]` re-runs on file
-changes — same engine as `keel watch`. See [Watch](./Watch.md).
+changes — same engine as `keel watch`. See [Watch](Watch).
 
 ### `watcher`
 
@@ -127,7 +127,7 @@ debounce window (default 300).
 
 ## See also
 
-- [Diff View](./Diff-View.md) for the `G` view's trunk resolution.
-- [Watch](./Watch.md) for the standalone `keel watch` command,
+- [Diff View](Diff-View) for the `G` view's trunk resolution.
+- [Watch](Watch) for the standalone `keel watch` command,
   which uses the same engine as `restart_on` panes.
-- [Worktrees](./Worktrees.md) for `W` behavior.
+- [Worktrees](Worktrees) for `W` behavior.

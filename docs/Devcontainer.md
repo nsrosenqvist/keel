@@ -108,6 +108,6 @@ entirely when `[devcontainer] enabled = false`.
 
 ## See also
 
-- [Container Backends](./Container-Backends.md) for the existing
+- [Container Backends](Container-Backends) for the existing
   compose / podman / docker routing — devcontainer is orthogonal.
-- [Worktrees](./Worktrees.md) for slug derivation and isolation.
+- [Worktrees](Worktrees) for slug derivation and isolation.

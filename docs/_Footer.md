@@ -1,1 +1,1 @@
-keel is dual-licensed under [MIT](https://github.com/nsrosenqvist/keel/blob/main/LICENSE-MIT) or [Apache 2.0](https://github.com/nsrosenqvist/keel/blob/main/LICENSE-APACHE). Source: [github.com/nsrosenqvist/keel](https://github.com/nsrosenqvist/keel). [Back to Home](./Home.md).
+keel is dual-licensed under [MIT](https://github.com/nsrosenqvist/keel/blob/main/LICENSE-MIT) or [Apache 2.0](https://github.com/nsrosenqvist/keel/blob/main/LICENSE-APACHE). Source: [github.com/nsrosenqvist/keel](https://github.com/nsrosenqvist/keel). [Back to Home](Home).

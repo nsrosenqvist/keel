@@ -66,7 +66,7 @@ backend kind. The lifecycle keymap is uniform across all kinds:
 | `U` | Up (compose only) |
 | `D` | Down (compose only) |
 
-See [TUI](./TUI.md).
+See [TUI](TUI).
 
 ## Backend = "none" stacks
 
@@ -100,6 +100,6 @@ declarations before opening the TUI.
 
 ## See also
 
-- [Container Backends](./Container-Backends.md) for how compose
+- [Container Backends](Container-Backends) for how compose
   services interact with the same TUI keymap.
-- [Configuration Reference](./Configuration-Reference.md#servicescustom--servicessystemd).
+- [Configuration Reference](Configuration-Reference#servicescustom--servicessystemd).

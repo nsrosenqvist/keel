@@ -34,7 +34,7 @@ Resolves to `base.parse::<i64>() + existing[offset].parse::<i64>()`.
 Missing offset var → falls back to `base`. Non-integer base → error.
 Use this instead of shell math in `from_command`.
 
-See [Environments](./Environments.md) for the rest of the env
+See [Environments](Environments) for the rest of the env
 resolution model.
 
 ## Loading order
@@ -133,7 +133,7 @@ Tab into it for a manual override.
 
 ## See also
 
-- [Environments](./Environments.md) for env resolution details.
-- [Hooks](./Hooks.md) for the post-checkout / post-merge wiring.
-- [TUI](./TUI.md) for the worktree switcher modal.
-- [Configuration Reference: `[worktrees]`](./Configuration-Reference.md#worktrees).
+- [Environments](Environments) for env resolution details.
+- [Hooks](Hooks) for the post-checkout / post-merge wiring.
+- [TUI](TUI) for the worktree switcher modal.
+- [Configuration Reference: `[worktrees]`](Configuration-Reference#worktrees).

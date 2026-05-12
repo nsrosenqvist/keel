@@ -114,11 +114,11 @@ echo "ADMIN_EMAIL=$EMAIL" >> .env
 echo "ADMIN_PASS=$PASS"   >> .env
 ```
 
-See [Install Flow](./Install-Flow.md#interactive-steps).
+See [Install Flow](Install-Flow#interactive-steps).
 
 ## See also
 
-- [Install Flow](./Install-Flow.md) for the `# @interactive:`
+- [Install Flow](Install-Flow) for the `# @interactive:`
   frontmatter.
 - [`examples/install-flow/`](https://github.com/nsrosenqvist/keel/tree/main/examples/install-flow)
   for a runnable demo using `keel lib ask` inside an install

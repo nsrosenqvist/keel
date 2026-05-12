@@ -138,5 +138,5 @@ before reporting the change as complete.
 
 ## See also
 
-- [Contributing](./Contributing.md) — verification ladder, commit
+- [Contributing](Contributing) — verification ladder, commit
   conventions, how to add a new example.

@@ -27,7 +27,7 @@ description = "Public-facing API"
 
 ## `[runtime]`
 
-Container-runtime selection. See [Container Backends](./Container-Backends.md).
+Container-runtime selection. See [Container Backends](Container-Backends).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -38,7 +38,7 @@ Container-runtime selection. See [Container Backends](./Container-Backends.md).
 
 ## `[env]` and `[env_files]`
 
-Per-key spec. See [Environments](./Environments.md).
+Per-key spec. See [Environments](Environments).
 
 ```toml
 [env_files]
@@ -64,7 +64,7 @@ Resolution order per key (first match wins): `value` → `base + offset`
 
 ## `[command.<name>]` (recipes)
 
-Declarative commands. See [Recipes and Scripts](./Recipes-and-Scripts.md).
+Declarative commands. See [Recipes and Scripts](Recipes-and-Scripts).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -98,7 +98,7 @@ inherit the recipe's value. Activated with `keel --profile <name> <recipe>`.
 
 ## `[hooks]`
 
-Native keel git hooks. See [Hooks](./Hooks.md).
+Native keel git hooks. See [Hooks](Hooks).
 
 ```toml
 [hooks]
@@ -112,7 +112,7 @@ installed shim.
 
 ## `[install]`
 
-First-time setup. See [Install Flow](./Install-Flow.md).
+First-time setup. See [Install Flow](Install-Flow).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -136,7 +136,7 @@ env         = { APP_ENV = "local" }
 
 ## `[worktrees]`
 
-Per-worktree isolation. See [Worktrees](./Worktrees.md).
+Per-worktree isolation. See [Worktrees](Worktrees).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -158,7 +158,7 @@ production = 0
 
 ## `[devcontainer]`
 
-Opt-in devcontainer integration. See [Devcontainer](./Devcontainer.md).
+Opt-in devcontainer integration. See [Devcontainer](Devcontainer).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -172,7 +172,7 @@ enabled = true
 
 ## `[diff]`
 
-Diff-view trunk override. See [Diff View](./Diff-View.md).
+Diff-view trunk override. See [Diff View](Diff-View).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -180,7 +180,7 @@ Diff-view trunk override. See [Diff View](./Diff-View.md).
 
 ## `[[services.custom]]` / `[[services.systemd]]`
 
-Non-container services. See [Non Container Services](./Non-Container-Services.md).
+Non-container services. See [Non Container Services](Non-Container-Services).
 
 ```toml
 [[services.custom]]
@@ -200,7 +200,7 @@ scope = "user"                     # "user" (default) | "system"
 
 ## `[agents]` and `[[agents.sources]]`
 
-Upstream-sourced agent instructions. See [Agents](./Agents.md).
+Upstream-sourced agent instructions. See [Agents](Agents).
 
 | `[agents]` | Type | Default | Notes |
 |---|---|---|---|
@@ -236,7 +236,7 @@ relocate = ".claude/skills/security-review.upstream.md"
 
 ## `[ui]`
 
-Optional TUI customisation. See [TUI](./TUI.md).
+Optional TUI customisation. See [TUI](TUI).
 
 ```toml
 [ui]

@@ -121,9 +121,9 @@ resolver tries:
 
 ## See also
 
-- [Configuration Reference](./Configuration-Reference.md#commandname-recipes)
+- [Configuration Reference](Configuration-Reference#commandname-recipes)
   for the recipe schema in full.
-- [Commands Reference](./Commands-Reference.md) for the built-in
+- [Commands Reference](Commands-Reference) for the built-in
   subcommands you can't override.
-- [Environments](./Environments.md) for how recipe `env` interacts
+- [Environments](Environments) for how recipe `env` interacts
   with `.env` files and `[env]` arithmetic.

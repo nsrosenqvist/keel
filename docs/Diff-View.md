@@ -1,6 +1,6 @@
 # Diff View
 
-The diff view (`G` in the [TUI](./TUI.md)) is a built-in
+The diff view (`G` in the [TUI](TUI)) is a built-in
 branch-review surface pinned to the merge-base with the project's
 trunk branch.
 
@@ -66,5 +66,5 @@ of staying pinned to a stale base.
 
 ## See also
 
-- [TUI](./TUI.md) for the dashboard the diff view is part of.
-- [Configuration Reference: `[diff]`](./Configuration-Reference.md#diff).
+- [TUI](TUI) for the dashboard the diff view is part of.
+- [Configuration Reference: `[diff]`](Configuration-Reference#diff).

@@ -1,39 +1,39 @@
 ### Getting started
 
-- [Home](./Home.md)
-- [Getting Started](./Getting-Started.md)
-- [Quick Tour](./Quick-Tour.md)
+- [Home](Home)
+- [Getting Started](Getting-Started)
+- [Quick Tour](Quick-Tour)
 
 ### Concepts
 
-- [Recipes and Scripts](./Recipes-and-Scripts.md)
-- [Environments](./Environments.md)
-- [Container Backends](./Container-Backends.md)
-- [Devcontainer](./Devcontainer.md)
-- [Non Container Services](./Non-Container-Services.md)
-- [Worktrees](./Worktrees.md)
+- [Recipes and Scripts](Recipes-and-Scripts)
+- [Environments](Environments)
+- [Container Backends](Container-Backends)
+- [Devcontainer](Devcontainer)
+- [Non Container Services](Non-Container-Services)
+- [Worktrees](Worktrees)
 
 ### Subsystems
 
-- [Hooks](./Hooks.md)
-- [Agents](./Agents.md)
-- [Install Flow](./Install-Flow.md)
-- [TUI](./TUI.md)
-- [Diff View](./Diff-View.md)
-- [Watch](./Watch.md)
-- [Shell Library](./Shell-Library.md)
+- [Hooks](Hooks)
+- [Agents](Agents)
+- [Install Flow](Install-Flow)
+- [TUI](TUI)
+- [Diff View](Diff-View)
+- [Watch](Watch)
+- [Shell Library](Shell-Library)
 
 ### Reference
 
-- [Configuration Reference](./Configuration-Reference.md)
-- [Commands Reference](./Commands-Reference.md)
+- [Configuration Reference](Configuration-Reference)
+- [Commands Reference](Commands-Reference)
 
 ### Resources
 
-- [Examples](./Examples.md)
-- [Troubleshooting](./Troubleshooting.md)
+- [Examples](Examples)
+- [Troubleshooting](Troubleshooting)
 
 ### Project
 
-- [Architecture](./Architecture.md)
-- [Contributing](./Contributing.md)
+- [Architecture](Architecture)
+- [Contributing](Contributing)

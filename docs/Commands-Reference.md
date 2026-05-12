@@ -4,7 +4,7 @@ Every `keel <subcommand>` and its flags. Source of truth:
 [`src/cli/app.rs`](https://github.com/nsrosenqvist/keel/blob/main/src/cli/app.rs).
 Anything not matched by an explicit subcommand falls through to
 recipe / script resolution, then to compose passthrough — see
-[Recipes and Scripts](./Recipes-and-Scripts.md).
+[Recipes and Scripts](Recipes-and-Scripts).
 
 ## Global flags
 
@@ -16,7 +16,7 @@ recipe / script resolution, then to compose passthrough — see
 
 ## `keel` (no subcommand)
 
-Bare invocation opens the [TUI dashboard](./TUI.md). With a name and
+Bare invocation opens the [TUI dashboard](TUI). With a name and
 args, resolves the name as: built-in → recipe → script → compose
 passthrough → service exec → unknown.
 
@@ -42,7 +42,7 @@ post-merge git hooks.
 
 Validate config + backend availability + env files + non-container
 service status. Exits non-zero on any failure. See
-[Troubleshooting](./Troubleshooting.md).
+[Troubleshooting](Troubleshooting).
 
 ## `keel init [--template <NAME>]`
 
@@ -53,7 +53,7 @@ instead of auto-detecting (compose / docker / podman / minimal).
 ## `keel install [<step>] [flags]`
 
 Run the install plan (`.keel/install/*` + `[install].steps`). See
-[Install Flow](./Install-Flow.md). With a positional `<step>`, runs
+[Install Flow](Install-Flow). With a positional `<step>`, runs
 that step alone.
 
 | Flag | Notes |
@@ -66,7 +66,7 @@ that step alone.
 
 ## `keel ui`
 
-Open the [TUI dashboard](./TUI.md) explicitly (same as bare `keel`
+Open the [TUI dashboard](TUI) explicitly (same as bare `keel`
 with no args).
 
 ## `keel shell [--service <name>]`
@@ -78,7 +78,7 @@ Drop into an interactive shell.
 | (none) | Enter the project's devcontainer. Requires `[devcontainer] enabled = true`. Ensures the container is up first. |
 | `--service <name>` | Enter the named compose service (`docker compose exec -it <name>`). Independent of devcontainer config. |
 
-See [Devcontainer](./Devcontainer.md).
+See [Devcontainer](Devcontainer).
 
 ## `keel hooks <action>`
 
@@ -88,7 +88,7 @@ See [Devcontainer](./Devcontainer.md).
 | `uninstall [--stages s1,s2]` | Remove keel-managed shims; default: every known stage. |
 | `run <stage>` | Run hooks for `<stage>`. Used by the installed shims. |
 
-See [Hooks](./Hooks.md).
+See [Hooks](Hooks).
 
 ## `keel agents <action>`
 
@@ -99,7 +99,7 @@ See [Hooks](./Hooks.md).
 | `status [--strict]` | Per-source pinned rev + per-file drift. `--strict` exits non-zero on drift. |
 | `diff` | Print actions a fresh apply would take. |
 
-See [Agents](./Agents.md).
+See [Agents](Agents).
 
 ## `keel watch <recipe> [args...] [flags]`
 
@@ -110,7 +110,7 @@ Re-run `<recipe>` whenever watched files change.
 | `--path <PATH>` | Path to watch. Repeat for multiple. Default: project root. |
 | `--debounce-ms <MS>` | Debounce window. Default: 300. |
 
-See [Watch](./Watch.md).
+See [Watch](Watch).
 
 ## `keel worktree <action>`
 
@@ -120,13 +120,13 @@ See [Watch](./Watch.md).
 | `list` | Every git worktree + computed offset, with collision warnings. |
 | `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.keel/local.toml`. |
 
-See [Worktrees](./Worktrees.md).
+See [Worktrees](Worktrees).
 
 ## `keel lib <action>`
 
 Interactive prompt helpers callable from any shell script. Prompt to
 stderr, answer to stdout. Non-tty invocations honour `--default`.
-See [Shell Library](./Shell-Library.md).
+See [Shell Library](Shell-Library).
 
 | Action | Signature |
 |---|---|
