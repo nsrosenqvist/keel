@@ -540,15 +540,15 @@ async fn handle_mouse_switcher(app: &mut App, me: MouseEvent) {
             };
             let target = ClickTarget::SwitcherRow(idx);
             match resolve_click(app, target) {
-                ClickKind::Select => app.switcher_select_at(idx),
+                ClickKind::Select => if let Some(s) = app.switcher_mut() { s.select_at(idx); },
                 ClickKind::Activate => {
-                    app.switcher_select_at(idx);
+                    if let Some(s) = app.switcher_mut() { s.select_at(idx); };
                     activate_switcher_selection(app).await;
                 }
             }
         }
-        MouseEventKind::ScrollDown => app.switcher_select_next(),
-        MouseEventKind::ScrollUp => app.switcher_select_prev(),
+        MouseEventKind::ScrollDown => if let Some(s) = app.switcher_mut() { s.select_next(); },
+        MouseEventKind::ScrollUp => if let Some(s) = app.switcher_mut() { s.select_prev(); },
         _ => {}
     }
 }
@@ -882,8 +882,8 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
     }
     match code {
         KeyCode::Esc => app.close_switcher(),
-        KeyCode::Up | KeyCode::Char('k') => app.switcher_select_prev(),
-        KeyCode::Down | KeyCode::Char('j') => app.switcher_select_next(),
+        KeyCode::Up | KeyCode::Char('k') => if let Some(s) = app.switcher_mut() { s.select_prev(); },
+        KeyCode::Down | KeyCode::Char('j') => if let Some(s) = app.switcher_mut() { s.select_next(); },
         KeyCode::Enter => match app.switcher_confirm() {
             SwitcherConfirm::OpenCreateForm => {
                 let project_root = app.project_root().to_path_buf();
@@ -907,21 +907,21 @@ async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifie
 async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc => app.switcher_form_cancel(),
-        KeyCode::Tab => app.switcher_form_toggle_focus(),
-        KeyCode::Up => app.switcher_form_select_prev(),
-        KeyCode::Down => app.switcher_form_select_next(),
-        KeyCode::Backspace => app.switcher_form_pop_char(),
+        KeyCode::Tab => if let Some(f) = app.switcher_form_mut() { f.toggle_focus(); },
+        KeyCode::Up => if let Some(f) = app.switcher_form_mut() { f.select_prev(); },
+        KeyCode::Down => if let Some(f) = app.switcher_form_mut() { f.select_next(); },
+        KeyCode::Backspace => if let Some(f) = app.switcher_form_mut() { f.pop_char(); },
         KeyCode::Enter => {
             // Resolve the form into (path, BranchSpec); shell out
             // to git; report back via switcher_form_finish.
-            let Some(action) = app.switcher_form_resolve() else {
+            let Some(action) = app.switcher_form().and_then(|f| f.resolve()) else {
                 return;
             };
             let project_root = app.project_root().to_path_buf();
             let result = create_worktree(&project_root, &action).await;
             app.switcher_form_finish(result);
         }
-        KeyCode::Char(c) => app.switcher_form_push_char(c),
+        KeyCode::Char(c) => if let Some(f) = app.switcher_form_mut() { f.push_char(c); },
         _ => {}
     }
 }

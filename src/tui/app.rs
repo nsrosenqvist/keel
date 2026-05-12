@@ -10,8 +10,7 @@ use crate::tui::dialogs::Modal;
 use crate::tui::dialogs::args_prompt::ArgsPrompt;
 use crate::tui::dialogs::confirm::{ConfirmAction, ConfirmDialog};
 use crate::tui::dialogs::switcher::{
-    BranchSpec, NewFormField, NewWorktreeAction, NewWorktreeForm, SwitcherConfirm, WorktreeRow,
-    WorktreeSwitcher,
+    NewFormField, NewWorktreeForm, SwitcherConfirm, WorktreeRow, WorktreeSwitcher,
 };
 use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
@@ -238,53 +237,6 @@ pub enum Message {
         path: String,
         lines: Vec<ReadLine>,
     },
-}
-
-/// Recompute `filtered` from the current `branch_input`. Empty
-/// query → every branch in original order; non-empty → case-
-/// insensitive substring match (good enough for v1; can swap in
-/// nucleo-matcher later if anyone asks for fuzzy ordering).
-fn refilter_branches(form: &mut NewWorktreeForm) {
-    if form.branch_input.is_empty() {
-        form.filtered = (0..form.branches.len()).collect();
-    } else {
-        let q = form.branch_input.to_lowercase();
-        form.filtered = form
-            .branches
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.name.to_lowercase().contains(&q))
-            .map(|(i, _)| i)
-            .collect();
-    }
-    // Selection clamps to the new bounds. If the user types until
-    // the list shrinks to just the sentinel, that's selected.
-    let total = form.total_options();
-    form.selected = if total == 0 {
-        0
-    } else {
-        form.selected.min(total - 1)
-    };
-}
-
-/// Auto-fill the path field as `<parent>/<slug(branch)>` whenever
-/// the user is typing in the branch field AND hasn't manually
-/// edited the path yet. Once `path_dirty` is true, we leave the
-/// path alone — the user owns it.
-fn sync_path_from_branch(form: &mut NewWorktreeForm) {
-    if form.path_dirty {
-        return;
-    }
-    let dir = if form.branch_input.is_empty() {
-        String::new()
-    } else {
-        crate::runtime::slugify(&form.branch_input)
-    };
-    if dir.is_empty() {
-        form.path_input.clear();
-    } else {
-        form.path_input = form.parent.join(dir).display().to_string();
-    }
 }
 
 
@@ -991,7 +943,7 @@ impl App {
         }
     }
 
-    fn switcher_mut(&mut self) -> Option<&mut WorktreeSwitcher> {
+    pub fn switcher_mut(&mut self) -> Option<&mut WorktreeSwitcher> {
         match &mut self.modal {
             Some(Modal::Switcher(s)) => Some(s),
             _ => None,
@@ -1003,32 +955,6 @@ impl App {
         self.modal = None;
     }
 
-    pub fn switcher_select_next(&mut self) {
-        if let Some(s) = self.switcher_mut() {
-            let total = s.total_rows();
-            if total > 0 {
-                s.selected = (s.selected + 1).min(total - 1);
-            }
-        }
-    }
-
-    pub fn switcher_select_prev(&mut self) {
-        if let Some(s) = self.switcher_mut() {
-            s.selected = s.selected.saturating_sub(1);
-        }
-    }
-
-    /// Set the switcher selection to `idx`, clamped to the last row
-    /// (which is the synthetic "+ new worktree" sentinel). No-op when
-    /// the switcher isn't open.
-    pub fn switcher_select_at(&mut self, idx: usize) {
-        if let Some(s) = self.switcher_mut() {
-            let total = s.total_rows();
-            if total > 0 {
-                s.selected = idx.min(total - 1);
-            }
-        }
-    }
 
     /// Resolve the switcher: if the selected row is an existing
     /// worktree, queue a hot-reload to its path and close the modal.
@@ -1097,71 +1023,16 @@ impl App {
         s.creating = Some(form);
     }
 
-    /// Mutate the open new-worktree form. Caller dispatches keys to
-    /// these helpers from the switcher key handler.
-    pub fn switcher_form_push_char(&mut self, c: char) {
-        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
-            match form.focus {
-                NewFormField::Path => {
-                    form.path_input.push(c);
-                    form.path_dirty = true;
-                }
-                NewFormField::Branch => {
-                    form.branch_input.push(c);
-                    refilter_branches(form);
-                    sync_path_from_branch(form);
-                }
-            }
-            form.error = None;
-        }
+    /// Mutable handle to the open new-worktree form, if any. Modal
+    /// key handlers dispatch keys to the form's own methods
+    /// ([`NewWorktreeForm::push_char`], etc.) through this.
+    pub fn switcher_form_mut(&mut self) -> Option<&mut NewWorktreeForm> {
+        self.switcher_mut().and_then(|s| s.creating.as_mut())
     }
 
-    pub fn switcher_form_pop_char(&mut self) {
-        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
-            match form.focus {
-                NewFormField::Path => {
-                    form.path_input.pop();
-                    form.path_dirty = true;
-                }
-                NewFormField::Branch => {
-                    form.branch_input.pop();
-                    refilter_branches(form);
-                    sync_path_from_branch(form);
-                }
-            }
-            form.error = None;
-        }
-    }
-
-    pub fn switcher_form_toggle_focus(&mut self) {
-        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut()) {
-            form.focus = match form.focus {
-                NewFormField::Path => NewFormField::Branch,
-                NewFormField::Branch => NewFormField::Path,
-            };
-        }
-    }
-
-    /// Move the highlighted branch / sentinel down. Only meaningful
-    /// when focus is on the branch field (the path field has no
-    /// list to navigate).
-    pub fn switcher_form_select_next(&mut self) {
-        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut())
-            && form.focus == NewFormField::Branch
-        {
-            let total = form.total_options();
-            if total > 0 {
-                form.selected = (form.selected + 1).min(total - 1);
-            }
-        }
-    }
-
-    pub fn switcher_form_select_prev(&mut self) {
-        if let Some(form) = self.switcher_mut().and_then(|s| s.creating.as_mut())
-            && form.focus == NewFormField::Branch
-        {
-            form.selected = form.selected.saturating_sub(1);
-        }
+    /// Read-only view of the open new-worktree form, if any.
+    pub fn switcher_form(&self) -> Option<&NewWorktreeForm> {
+        self.switcher().and_then(|s| s.creating.as_ref())
     }
 
     pub fn switcher_form_cancel(&mut self) {
@@ -1174,45 +1045,7 @@ impl App {
     /// the caller invokes git from this data and reports back via
     /// [`Self::switcher_form_finish`].
     pub fn switcher_form_snapshot(&self) -> Option<NewWorktreeForm> {
-        self.switcher().and_then(|s| s.creating.clone())
-    }
-
-    /// What the caller should ask `git worktree add` to do. Folds
-    /// the focus + selection + sentinel logic into a single tuple
-    /// the terminal layer can shell out from.
-    pub fn switcher_form_resolve(&self) -> Option<NewWorktreeAction> {
-        let form = self.switcher().and_then(|s| s.creating.as_ref())?;
-        if form.path_input.trim().is_empty() {
-            return None;
-        }
-        let branch = match form.focus {
-            // In path-focus mode the branch list isn't relevant —
-            // submit with whatever was last typed in the branch field.
-            NewFormField::Path => {
-                if form.branch_input.trim().is_empty() {
-                    return None;
-                }
-                if form.branches.iter().any(|b| b.name == form.branch_input) {
-                    BranchSpec::Existing(form.branch_input.clone())
-                } else {
-                    BranchSpec::CreateOff(form.branch_input.clone())
-                }
-            }
-            NewFormField::Branch => {
-                if form.selected < form.filtered.len() {
-                    let idx = form.filtered[form.selected];
-                    BranchSpec::Existing(form.branches[idx].name.clone())
-                } else if form.show_create_sentinel() {
-                    BranchSpec::CreateOff(form.branch_input.clone())
-                } else {
-                    return None;
-                }
-            }
-        };
-        Some(NewWorktreeAction {
-            path: form.path_input.clone(),
-            branch,
-        })
+        self.switcher_form().cloned()
     }
 
     /// Resolve the form after a `git worktree add` attempt. On Ok,
@@ -2584,7 +2417,7 @@ mod tests {
     fn switcher_confirm_on_other_row_queues_switch() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
         let outcome = app.switcher_confirm();
         assert_eq!(outcome, SwitcherConfirm::Switched);
         assert_eq!(
@@ -2599,10 +2432,10 @@ mod tests {
         app.open_worktree_switcher(rows());
         // 2 entries + 1 sentinel = 3 rows. Down × 2 reaches the
         // sentinel; another Down clamps.
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         assert_eq!(app.switcher().unwrap().selected, 2);
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
         assert_eq!(app.switcher().unwrap().selected, 2);
     }
 
@@ -2610,8 +2443,8 @@ mod tests {
     fn switcher_confirm_on_new_row_signals_open_form() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         let outcome = app.switcher_confirm();
         assert_eq!(outcome, SwitcherConfirm::OpenCreateForm);
         // The form isn't populated yet — terminal layer fetches
@@ -2626,8 +2459,8 @@ mod tests {
     fn switcher_form_finish_ok_queues_switch() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         app.open_create_form(Vec::new(), None);
         app.switcher_form_finish(Ok(PathBuf::from("/repo-new")));
@@ -2639,8 +2472,8 @@ mod tests {
     fn switcher_form_finish_err_keeps_form_open_with_error() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         app.open_create_form(Vec::new(), None);
         app.switcher_form_finish(Err("git: branch already exists".into()));
@@ -3361,12 +3194,12 @@ mod tests {
     fn switcher_form_focus_toggles_between_path_and_branch() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         app.open_create_form(Vec::new(), None);
         let initial = app.switcher().unwrap().creating.as_ref().unwrap().focus;
-        app.switcher_form_toggle_focus();
+        app.switcher_form_mut().unwrap().toggle_focus();
         let toggled = app.switcher().unwrap().creating.as_ref().unwrap().focus;
         assert_ne!(initial, toggled);
     }
@@ -3379,14 +3212,14 @@ mod tests {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
         // Hop to "+ new worktree" sentinel + open the form.
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         app.open_create_form(Vec::new(), None);
 
         // Type "feat/auth" → path follows along.
         for c in "feat/auth".chars() {
-            app.switcher_form_push_char(c);
+            app.switcher_form_mut().unwrap().push_char(c);
         }
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert_eq!(form.branch_input, "feat/auth");
@@ -3398,17 +3231,17 @@ mod tests {
         assert!(!form.path_dirty);
 
         // Tab + edit path → path stops following the branch.
-        app.switcher_form_toggle_focus();
-        app.switcher_form_push_char('/');
+        app.switcher_form_mut().unwrap().toggle_focus();
+        app.switcher_form_mut().unwrap().push_char('/');
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert!(form.path_dirty);
         let dirty_path = form.path_input.clone();
 
         // Tab back, type more in the branch — path stays put.
-        app.switcher_form_toggle_focus();
-        app.switcher_form_push_char('-');
-        app.switcher_form_push_char('v');
-        app.switcher_form_push_char('2');
+        app.switcher_form_mut().unwrap().toggle_focus();
+        app.switcher_form_mut().unwrap().push_char('-');
+        app.switcher_form_mut().unwrap().push_char('v');
+        app.switcher_form_mut().unwrap().push_char('2');
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert_eq!(form.branch_input, "feat/auth-v2");
         assert_eq!(form.path_input, dirty_path);
@@ -3421,8 +3254,8 @@ mod tests {
     fn switcher_form_arrow_navigation_moves_selection() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         app.open_create_form(
             vec![
@@ -3443,14 +3276,14 @@ mod tests {
         );
         let sel = |a: &App| a.switcher().unwrap().creating.as_ref().unwrap().selected;
         assert_eq!(sel(&app), 0);
-        app.switcher_form_select_next();
+        app.switcher_form_mut().unwrap().select_next();
         assert_eq!(sel(&app), 1);
-        app.switcher_form_select_next();
+        app.switcher_form_mut().unwrap().select_next();
         assert_eq!(sel(&app), 2);
         // Clamp at end.
-        app.switcher_form_select_next();
+        app.switcher_form_mut().unwrap().select_next();
         assert_eq!(sel(&app), 2);
-        app.switcher_form_select_prev();
+        app.switcher_form_mut().unwrap().select_prev();
         assert_eq!(sel(&app), 1);
     }
 
@@ -3461,8 +3294,8 @@ mod tests {
     fn switcher_form_filter_and_sentinel() {
         let mut app = App::new(cfg());
         app.open_worktree_switcher(rows());
-        app.switcher_select_next();
-        app.switcher_select_next();
+        app.switcher_mut().unwrap().select_next();
+        app.switcher_mut().unwrap().select_next();
         app.switcher_confirm();
         let branches = vec![
             crate::runtime::BranchEntry {
@@ -3488,7 +3321,7 @@ mod tests {
         // Type "feat" → 2 matches, no exact branch named "feat" →
         // sentinel appears.
         for c in "feat".chars() {
-            app.switcher_form_push_char(c);
+            app.switcher_form_mut().unwrap().push_char(c);
         }
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert_eq!(form.filtered.len(), 2);
@@ -3497,8 +3330,8 @@ mod tests {
 
         // Type "-x" so the input becomes "feat-x" — exact match
         // suppresses the sentinel.
-        app.switcher_form_push_char('-');
-        app.switcher_form_push_char('x');
+        app.switcher_form_mut().unwrap().push_char('-');
+        app.switcher_form_mut().unwrap().push_char('x');
         let form = app.switcher().unwrap().creating.as_ref().unwrap();
         assert_eq!(form.filtered.len(), 1);
         assert!(!form.show_create_sentinel());

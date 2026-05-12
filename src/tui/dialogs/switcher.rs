@@ -87,7 +87,155 @@ impl NewWorktreeForm {
     pub fn total_options(&self) -> usize {
         self.filtered.len() + if self.show_create_sentinel() { 1 } else { 0 }
     }
+
+    /// Append `c` to the focused field. Branch keystrokes refilter
+    /// the visible branch list and auto-sync the path field (until
+    /// the user manually edits the path). Path keystrokes flip
+    /// `path_dirty` so subsequent branch typing leaves the path
+    /// alone. Clears any prior `error` so retries don't carry stale
+    /// "branch already exists" messages.
+    pub fn push_char(&mut self, c: char) {
+        match self.focus {
+            NewFormField::Path => {
+                self.path_input.push(c);
+                self.path_dirty = true;
+            }
+            NewFormField::Branch => {
+                self.branch_input.push(c);
+                self.refilter_branches();
+                self.sync_path_from_branch();
+            }
+        }
+        self.error = None;
+    }
+
+    pub fn pop_char(&mut self) {
+        match self.focus {
+            NewFormField::Path => {
+                self.path_input.pop();
+                self.path_dirty = true;
+            }
+            NewFormField::Branch => {
+                self.branch_input.pop();
+                self.refilter_branches();
+                self.sync_path_from_branch();
+            }
+        }
+        self.error = None;
+    }
+
+    pub fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            NewFormField::Path => NewFormField::Branch,
+            NewFormField::Branch => NewFormField::Path,
+        };
+    }
+
+    /// Move the highlighted branch / sentinel down. Only meaningful
+    /// when focus is on the branch field (the path field has no
+    /// list to navigate).
+    pub fn select_next(&mut self) {
+        if self.focus != NewFormField::Branch {
+            return;
+        }
+        let total = self.total_options();
+        if total > 0 {
+            self.selected = (self.selected + 1).min(total - 1);
+        }
+    }
+
+    pub fn select_prev(&mut self) {
+        if self.focus != NewFormField::Branch {
+            return;
+        }
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// What the caller should ask `git worktree add` to do. Folds
+    /// the focus + selection + sentinel logic into a single tuple
+    /// the terminal layer can shell out from.
+    pub fn resolve(&self) -> Option<NewWorktreeAction> {
+        if self.path_input.trim().is_empty() {
+            return None;
+        }
+        let branch = match self.focus {
+            // In path-focus mode the branch list isn't relevant —
+            // submit with whatever was last typed in the branch field.
+            NewFormField::Path => {
+                if self.branch_input.trim().is_empty() {
+                    return None;
+                }
+                if self.branches.iter().any(|b| b.name == self.branch_input) {
+                    BranchSpec::Existing(self.branch_input.clone())
+                } else {
+                    BranchSpec::CreateOff(self.branch_input.clone())
+                }
+            }
+            NewFormField::Branch => {
+                if self.selected < self.filtered.len() {
+                    let idx = self.filtered[self.selected];
+                    BranchSpec::Existing(self.branches[idx].name.clone())
+                } else if self.show_create_sentinel() {
+                    BranchSpec::CreateOff(self.branch_input.clone())
+                } else {
+                    return None;
+                }
+            }
+        };
+        Some(NewWorktreeAction {
+            path: self.path_input.clone(),
+            branch,
+        })
+    }
+
+    /// Recompute `filtered` from the current `branch_input`. Empty
+    /// query → every branch in original order; non-empty → case-
+    /// insensitive substring match (good enough for v1; can swap in
+    /// nucleo-matcher later if anyone asks for fuzzy ordering).
+    fn refilter_branches(&mut self) {
+        if self.branch_input.is_empty() {
+            self.filtered = (0..self.branches.len()).collect();
+        } else {
+            let q = self.branch_input.to_lowercase();
+            self.filtered = self
+                .branches
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.name.to_lowercase().contains(&q))
+                .map(|(i, _)| i)
+                .collect();
+        }
+        // Selection clamps to the new bounds. If the user types until
+        // the list shrinks to just the sentinel, that's selected.
+        let total = self.total_options();
+        self.selected = if total == 0 {
+            0
+        } else {
+            self.selected.min(total - 1)
+        };
+    }
+
+    /// Auto-fill the path field as `<parent>/<slug(branch)>` whenever
+    /// the user is typing in the branch field AND hasn't manually
+    /// edited the path yet. Once `path_dirty` is true, we leave the
+    /// path alone — the user owns it.
+    fn sync_path_from_branch(&mut self) {
+        if self.path_dirty {
+            return;
+        }
+        let dir = if self.branch_input.is_empty() {
+            String::new()
+        } else {
+            crate::runtime::slugify(&self.branch_input)
+        };
+        if dir.is_empty() {
+            self.path_input.clear();
+        } else {
+            self.path_input = self.parent.join(dir).display().to_string();
+        }
+    }
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewFormField {
@@ -147,8 +295,30 @@ impl WorktreeSwitcher {
     pub fn new_row_index(&self) -> usize {
         self.entries.len()
     }
+
     /// Total rows including the new-worktree sentinel.
     pub fn total_rows(&self) -> usize {
         self.entries.len() + 1
     }
+
+    pub fn select_next(&mut self) {
+        let total = self.total_rows();
+        if total > 0 {
+            self.selected = (self.selected + 1).min(total - 1);
+        }
+    }
+
+    pub fn select_prev(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// Set the selection to `idx`, clamped to the last row (which is
+    /// the synthetic "+ new worktree" sentinel).
+    pub fn select_at(&mut self, idx: usize) {
+        let total = self.total_rows();
+        if total > 0 {
+            self.selected = idx.min(total - 1);
+        }
+    }
 }
+

@@ -1772,7 +1772,7 @@ mod tests {
         }];
         app.open_worktree_switcher(entries);
         // Move to "+ new worktree" sentinel and confirm.
-        app.switcher_select_next();
+        if let Some(s) = app.switcher_mut() { s.select_next(); };
         app.switcher_confirm();
         // Provide a couple of fake branches.
         app.open_create_form(
