@@ -14,8 +14,12 @@ use crate::tui::dialogs::switcher::WorktreeSwitcher;
 use crate::tui::palette::Palette;
 
 pub mod args_prompt;
+pub mod args_prompt_view;
 pub mod confirm;
+pub mod confirm_view;
+pub mod palette_view;
 pub mod switcher;
+pub mod switcher_view;
 
 /// Which modal surface is currently open, plus its state. The
 /// `App` carries this as `Option<Modal>`; `None` is "normal mode"
