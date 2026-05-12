@@ -1,17 +1,17 @@
 # Install Flow
 
-`keel install` is the project-bootstrap surface: a teammate
+`ampelos install` is the project-bootstrap surface: a teammate
 clones the repo, runs one command, and gets a working dev
-environment. You define an ordered list of steps once; keel runs
+environment. You define an ordered list of steps once; ampelos runs
 them with progress display, remembers what succeeded, and resumes
 where it left off if something fails.
 
 ## Quickstart
 
-**1. Drop a step file** in `.keel/install/`:
+**1. Drop a step file** in `.ampelos/install/`:
 
 ```sh
-# .keel/install/10-deps.sh
+# .ampelos/install/10-deps.sh
 #!/usr/bin/env bash
 # @desc: Install dependencies
 set -euo pipefail
@@ -25,7 +25,7 @@ progress display.
 **2. Run it:**
 
 ```sh
-keel install
+ampelos install
 ```
 
 Each step shows a row that updates in place (spinner → ✓ / ✗,
@@ -36,7 +36,7 @@ unless you ask.
 **3. Add more steps as the project grows:**
 
 ```
-.keel/install/
+.ampelos/install/
 ├── 10-deps.sh
 ├── 20-db-up.sh
 ├── 30-migrate.sh
@@ -48,18 +48,18 @@ as synthetic steps around your plan (see below).
 
 ## Mental model
 
-- **Two ways to define a step.** A file under `.keel/install/`
+- **Two ways to define a step.** A file under `.ampelos/install/`
   (most common), or a `[install].steps = [...]` entry in
-  `keel.toml` referencing a recipe or inline command. Files and
+  `ampelos.toml` referencing a recipe or inline command. Files and
   the config list are alternatives, not layers — when
   `[install].steps` is set, it wins.
-- **Two synthetic steps wrap your plan.** keel auto-appends
+- **Two synthetic steps wrap your plan.** ampelos auto-appends
   `apply-agents` at the start (if `[agents]` is declared) and
   `install-hooks` at the end. You don't write or order these —
   they're managed for you.
 - **State remembers progress.** Every step's last outcome is
-  recorded in `.keel/install.state.json`. On the next
-  `keel install`, if any step is unresolved, keel prompts
+  recorded in `.ampelos/install.state.json`. On the next
+  `ampelos install`, if any step is unresolved, ampelos prompts
   "Resume from `<step>`?" so a half-finished setup doesn't redo
   the slow parts.
 
@@ -67,11 +67,11 @@ as synthetic steps around your plan (see below).
 
 ### Add a step
 
-Drop a shell file in `.keel/install/`. Numeric prefix sets
+Drop a shell file in `.ampelos/install/`. Numeric prefix sets
 order:
 
 ```sh
-# .keel/install/25-rebuild-search.sh
+# .ampelos/install/25-rebuild-search.sh
 #!/usr/bin/env bash
 # @desc: Rebuild search index
 set -euo pipefail
@@ -86,7 +86,7 @@ helper scripts can live alongside.
 Set `@in: <service>` (same key as recipes):
 
 ```sh
-# .keel/install/20-composer.sh
+# .ampelos/install/20-composer.sh
 #!/usr/bin/env bash
 # @desc: Install PHP deps
 # @in: app
@@ -102,23 +102,23 @@ users get the devcontainer automatically for steps without `@in`.
 Mark the step interactive so it gets the terminal:
 
 ```sh
-# .keel/install/50-secrets.sh
+# .ampelos/install/50-secrets.sh
 #!/usr/bin/env bash
 # @desc: Configure first-run secrets
 # @interactive: yes
-EMAIL=$(keel lib ask "Admin email")
-PASS=$(keel lib password "Admin password")
+EMAIL=$(ampelos lib ask "Admin email")
+PASS=$(ampelos lib password "Admin password")
 echo "ADMIN_EMAIL=$EMAIL" >> .env
 echo "ADMIN_PASS=$PASS"   >> .env
 ```
 
-`keel lib ask | confirm | password | select | filter` give you
+`ampelos lib ask | confirm | password | select | filter` give you
 prompt helpers without an extra dependency. See [Shell Library](Shell-Library).
 
 ### Mark a step optional
 
 ```sh
-# .keel/install/60-fixtures.sh
+# .ampelos/install/60-fixtures.sh
 #!/usr/bin/env bash
 # @desc: Pull the latest fixtures
 # @optional: yes
@@ -132,23 +132,23 @@ environments (no network access, missing credentials, etc.).
 ### Run a single step
 
 ```sh
-keel install 30-migrate
+ampelos install 30-migrate
 ```
 
 Useful when a maintainer adds a new step that every teammate
-needs to apply ("everyone please run `keel install
+needs to apply ("everyone please run `ampelos install
 rebuild-search-index` once"). Updates only that step's state
 record.
 
 ### Resume after a failure
 
-If a step fails, keel exits non-zero and records `failed`. Fix
+If a step fails, ampelos exits non-zero and records `failed`. Fix
 the underlying issue and re-run:
 
 ```sh
-keel install              # prompts "Resume from <step>?"
-keel install --resume     # non-interactive resume
-keel install --restart    # wipe state and start over
+ampelos install              # prompts "Resume from <step>?"
+ampelos install --resume     # non-interactive resume
+ampelos install --restart    # wipe state and start over
 ```
 
 In CI / piped invocations, the resume prompt defaults to "yes" so
@@ -157,20 +157,20 @@ non-interactive runs do the right thing.
 ### Preview the plan without running
 
 ```sh
-keel install --dry-run    # print steps, don't execute
-keel install --list       # plan + last-known status per step
+ampelos install --dry-run    # print steps, don't execute
+ampelos install --list       # plan + last-known status per step
 ```
 
 ### Refresh hook caches
 
 ```sh
-keel install --update-hooks
+ampelos install --update-hooks
 ```
 
 Forces a re-clone of every external repo in
 `.pre-commit-config.yaml`. Useful when an upstream moves a tag.
 
-### Order steps from `keel.toml` instead
+### Order steps from `ampelos.toml` instead
 
 If your steps are mostly recipes you already have, declare them
 directly:
@@ -182,7 +182,7 @@ steps = ["copy-env", "deps", "db:migrate", { name = "seed", optional = true }]
 
 Each entry is either a recipe / script name or an inline table
 with `{ name, run, in, env, cwd, optional, interactive }`.
-`[install].steps` is the plan; `.keel/install/` files are
+`[install].steps` is the plan; `.ampelos/install/` files are
 ignored when it's set.
 
 ## Reference
@@ -214,33 +214,33 @@ Two steps are auto-appended:
 - **`install-hooks`** — runs last, when
   `[install].install_git_hooks = true` (default). Installs git
   hook shims and prefetches `.pre-commit-config.yaml` external
-  repos into `.keel/cache/hooks/<rev>/`. See [Hooks](Hooks).
+  repos into `.ampelos/cache/hooks/<rev>/`. See [Hooks](Hooks).
 
 ### Step plan resolution
 
 In precedence:
 
-1. **`[install].steps = [...]` in `keel.toml`.** Each entry is a
+1. **`[install].steps = [...]` in `ampelos.toml`.** Each entry is a
    name (recipe / discovered file) or an inline `{ name, run, in,
    env, cwd, optional, interactive }` table.
-2. **Files discovered under `.keel/install/`.** Same `# @key:`
-   parser as `.keel/commands/`. When `[install].steps` is empty,
+2. **Files discovered under `.ampelos/install/`.** Same `# @key:`
+   parser as `.ampelos/commands/`. When `[install].steps` is empty,
    discovered files **are** the plan, file-name sorted.
 
-Install steps are intentionally separate from `keel list` /
-`.keel/commands/` — they don't surface in the TUI sidebar or the
+Install steps are intentionally separate from `ampelos list` /
+`.ampelos/commands/` — they don't surface in the TUI sidebar or the
 command resolver.
 
 ### Environment variables
 
-Each step runs with `KEEL_PROJECT_DIR` set to the host path of
+Each step runs with `AMPELOS_PROJECT_DIR` set to the host path of
 the worktree project root. Script-source steps also get
-`KEEL_SCRIPT_DIR` pointing at the parent directory of the step
-file (typically `.keel/install/`). Both sit alongside the
+`AMPELOS_SCRIPT_DIR` pointing at the parent directory of the step
+file (typically `.ampelos/install/`). Both sit alongside the
 resolved [Environments](Environments) layers and `@env:`
 declarations. Inline install steps in `[install].steps` get
-`KEEL_PROJECT_DIR` only — there's no script file for
-`KEEL_SCRIPT_DIR` to point at.
+`AMPELOS_PROJECT_DIR` only — there's no script file for
+`AMPELOS_SCRIPT_DIR` to point at.
 
 ### Renderer
 
@@ -266,17 +266,17 @@ lines) shows below its row:
 | `--list` | Plan + last-known status per step. |
 | `--update-hooks` | Force-refresh the external hook cache. |
 
-### `.keel/.gitignore`
+### `.ampelos/.gitignore`
 
-`keel install` writes a marker-delimited managed block in
-`.keel/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
+`ampelos install` writes a marker-delimited managed block in
+`.ampelos/.gitignore` covering `local.toml`, `worktrees/`, `cache/`,
 `install.state.json`, and `agents.state.json`. Idempotent —
 when the file is already correct, the mtime stays put. Path is
 configurable via `[install].gitignore = "..."`.
 
 ## See also
 
-- [`examples/install-flow/`](https://github.com/nsrosenqvist/keel/tree/main/examples/install-flow)
+- [`examples/install-flow/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/install-flow)
   — runnable demo with ordered + optional + interactive steps.
 - [Hooks](Hooks) and [Agents](Agents) — the synthetic steps that
   bookend your plan.

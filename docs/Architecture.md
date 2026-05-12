@@ -1,6 +1,6 @@
 # Architecture
 
-keel is a Rust workspace of focused crates, each one a bounded
+ampelos is a Rust workspace of focused crates, each one a bounded
 context. Cross-context types travel through value objects; no
 shared mutable state.
 
@@ -21,8 +21,8 @@ These shape every code change:
   time.
 - **One source of truth per concern.** A recipe is defined once.
   The CLI runs it. The TUI runs it. Both go through
-  `keel::runtime`.
-- **No dead config.** Every option in `keel.toml` must change
+  `ampelos::runtime`.
+- **No dead config.** Every option in `ampelos.toml` must change
   observable behaviour, or it doesn't ship.
 
 ## Module map
@@ -31,18 +31,18 @@ Each top-level directory under `src/` is a bounded context.
 
 | Module | Bounded context |
 |---|---|
-| `keel::cli` | Binary; clap; subcommand dispatch. The only module that knows about `clap`. |
-| `keel::config` | TOML / YAML parsing; schema; env resolution. No I/O orchestration. |
-| `keel::runtime` | Recipe resolver; executor; output sinks; preflight. |
-| `keel::container` | `Backend` trait; compose / docker / podman / null impls. |
-| `keel::tui` | Embedded ratatui dashboard; stateful `App`; pure render fn. |
-| `keel::cache` | Content-addressed git cache shared by hooks + agents. |
-| `keel::hooks` | `.pre-commit-config.yaml` reader; native runner; git hook shim installer. |
-| `keel::agents` | Upstream-sourced agent instructions / skills pipeline. |
+| `ampelos::cli` | Binary; clap; subcommand dispatch. The only module that knows about `clap`. |
+| `ampelos::config` | TOML / YAML parsing; schema; env resolution. No I/O orchestration. |
+| `ampelos::runtime` | Recipe resolver; executor; output sinks; preflight. |
+| `ampelos::container` | `Backend` trait; compose / docker / podman / null impls. |
+| `ampelos::tui` | Embedded ratatui dashboard; stateful `App`; pure render fn. |
+| `ampelos::cache` | Content-addressed git cache shared by hooks + agents. |
+| `ampelos::hooks` | `.pre-commit-config.yaml` reader; native runner; git hook shim installer. |
+| `ampelos::agents` | Upstream-sourced agent instructions / skills pipeline. |
 
 ```
 src/
-  main.rs        # thin wrapper → keel::cli::run
+  main.rs        # thin wrapper → ampelos::cli::run
   lib.rs         # exposes every bounded-context module
   cli/           # binary; clap; subcommand dispatch
   config/        # TOML / YAML parsing; schema; env resolution
@@ -52,7 +52,7 @@ src/
   cache/         # content-addressed git cache shared by hooks + agents
   hooks/         # .pre-commit-config.yaml reader; git hook installer
   agents/        # upstream-sourced agent instructions / skills pipeline
-examples/        # runnable keel projects
+examples/        # runnable ampelos projects
 docs/            # this wiki, synced via .github/workflows/wiki-sync.yml
 ```
 
@@ -71,13 +71,13 @@ config →  runtime  →  cli
 container →  runtime
 ```
 
-`keel::cli` is the only module that imports everything else. The
+`ampelos::cli` is the only module that imports everything else. The
 TUI and the CLI are different views of the same runtime, never two
 implementations of the same logic.
 
 The bounded contexts are enforced by directory + `pub(crate)` /
 `pub(super)` visibility rather than crate boundaries — the project
-ships as a single `keel` binary crate; the layering is a code-review
+ships as a single `ampelos` binary crate; the layering is a code-review
 and refactor-discipline concern, not a compiler-enforced one.
 
 ## Cross-context patterns
@@ -86,24 +86,24 @@ and refactor-discipline concern, not a compiler-enforced one.
 
 Each context defines its own concrete types and exposes value
 objects (no behaviour, no `&mut self`) for travel between contexts.
-Example: `keel::cache::RepoRef` is the input shape both
-`keel::hooks` and `keel::agents` translate their domain types
+Example: `ampelos::cache::RepoRef` is the input shape both
+`ampelos::hooks` and `ampelos::agents` translate their domain types
 into; the cache module stays unaware of either consumer's `Repo` /
 `SourceSpec`.
 
 ### Backend trait
 
-`keel::container::Backend` is the only abstraction `keel::runtime`
-depends on. Implementations live in `keel::container` (`compose`,
+`ampelos::container::Backend` is the only abstraction `ampelos::runtime`
+depends on. Implementations live in `ampelos::container` (`compose`,
 `docker`, `podman`, `null`) and a custom backend in
-`keel::container::custom` for `[[services.systemd]]` /
+`ampelos::container::custom` for `[[services.systemd]]` /
 `[[services.custom]]` declarations.
 
 ### Idempotent managed blocks
 
-`keel::config::managed_block` writes a marker-delimited section
+`ampelos::config::managed_block` writes a marker-delimited section
 into a file (used by the worktree dotenv writer and the
-`.keel/.gitignore` writer). The block is replaced in place on
+`.ampelos/.gitignore` writer). The block is replaced in place on
 each write; user content above and below is preserved; identical
 content is a no-op (mtime stays put).
 
@@ -131,9 +131,9 @@ before reporting the change as complete.
 - Default to fewer features, smaller surface area, sharper traits.
 - A single integration test that runs against a real fixture beats
   five mocked unit tests.
-- If a change makes `keel` slower for the common case, it does
+- If a change makes `ampelos` slower for the common case, it does
   not ship without a measurement.
-- Read `keel.toml` semantics conservatively: silent inference is
+- Read `ampelos.toml` semantics conservatively: silent inference is
   a bug.
 
 ## See also

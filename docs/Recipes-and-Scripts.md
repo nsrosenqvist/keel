@@ -1,12 +1,12 @@
 # Recipes and Scripts
 
-keel gives you two ways to define a command. Use whichever shape
+ampelos gives you two ways to define a command. Use whichever shape
 matches the command's complexity — they coexist, neither shadows the
 other, and resolution is deterministic.
 
 ## Recipes (`[command.<name>]`)
 
-Declarative TOML in `keel.toml`. Best for one-liners and small
+Declarative TOML in `ampelos.toml`. Best for one-liners and small
 sequences.
 
 ```toml
@@ -42,7 +42,7 @@ after a status preflight. Absent → host. `tty = true` allocates a
 TTY (required for shells, irrelevant for pure-stdout commands).
 
 `forward_args = true` appends the trailing CLI args to the command:
-`keel test --filter Login` → `composer test --filter Login`.
+`ampelos test --filter Login` → `composer test --filter Login`.
 
 ### Profiles
 
@@ -59,15 +59,15 @@ forward_args = true
 env = { XDEBUG_MODE = "off" }
 ```
 
-`keel --profile ci test --testdox` runs `composer test --testdox`
+`ampelos --profile ci test --testdox` runs `composer test --testdox`
 with `tty = false` and the override env.
 
-## Scripts (`.keel/commands/`)
+## Scripts (`.ampelos/commands/`)
 
 Plain shell files — anything that grows past one or two lines.
 
 ```sh
-# .keel/commands/seed
+# .ampelos/commands/seed
 #!/usr/bin/env bash
 # @desc: Seed the database with development data
 # @in: app
@@ -77,7 +77,7 @@ php artisan migrate:fresh
 php artisan db:seed
 ```
 
-keel scans `.keel/commands/` at load time. The optional `# @key:
+ampelos scans `.ampelos/commands/` at load time. The optional `# @key:
 value` frontmatter (terminated by the first non-`# @` line) sets the
 same fields you'd put in a `[command.*]` recipe:
 
@@ -96,14 +96,14 @@ explicitly.
 
 ### Environment variables provided to scripts
 
-Every `.keel/commands/<name>` script runs with two extra env vars
-set by keel, on top of the resolved [Environments](Environments)
+Every `.ampelos/commands/<name>` script runs with two extra env vars
+set by ampelos, on top of the resolved [Environments](Environments)
 layers:
 
 | Var | Value |
 |---|---|
-| `KEEL_PROJECT_DIR` | Host path to the worktree project root. |
-| `KEEL_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+| `AMPELOS_PROJECT_DIR` | Host path to the worktree project root. |
+| `AMPELOS_SCRIPT_DIR`  | Host path to the script file's parent directory. |
 
 Both are **host-side paths** even when the script runs inside a
 service (`@in:`) or devcontainer — convenient on the host,
@@ -117,7 +117,7 @@ sibling helper:
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
-source "$KEEL_SCRIPT_DIR/_lib.sh"
+source "$AMPELOS_SCRIPT_DIR/_lib.sh"
 ```
 
 Recipes (`[command.<name>]`) don't receive these vars — they're a
@@ -135,18 +135,18 @@ collision.
 
 ## Resolution order
 
-When you run `keel <name> [args...]` (no explicit subcommand), the
+When you run `ampelos <name> [args...]` (no explicit subcommand), the
 resolver tries:
 
 1. Built-in subcommand (e.g. `list`, `doctor`).
 2. `[command.<name>]` recipe.
-3. `.keel/commands/<name>` script.
+3. `.ampelos/commands/<name>` script.
 4. `<name>` as a docker-compose subcommand (passthrough), if
    `[runtime].compose_passthrough = true`.
 5. `<name>` as a compose service name (exec into it), if
    `[runtime].service_passthrough = true`.
 
-`keel which <name>` prints which slot resolved.
+`ampelos which <name>` prints which slot resolved.
 
 ## See also
 

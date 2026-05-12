@@ -1,6 +1,6 @@
 [package]
 name = "ampelos"
-description = "Dev-loop conductor: one config for Docker Compose, scripts, hooks, and agents"
+description = "Dev-loop trellis: one config for Docker Compose, scripts, hooks, and agents"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"

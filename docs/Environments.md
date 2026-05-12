@@ -1,6 +1,6 @@
 # Environments
 
-`keel` controls the environment variables your commands see. It
+`ampelos` controls the environment variables your commands see. It
 loads `.env` files, lets you compute values (e.g. a port that's
 unique per git checkout), and forwards a project-declared subset
 into container exec sessions. The same model drives recipe runs,
@@ -8,7 +8,7 @@ compose preflight, and the optional `.env` writer.
 
 ## Quickstart
 
-**1. List your dotenv files** in `keel.toml`:
+**1. List your dotenv files** in `ampelos.toml`:
 
 ```toml
 [env_files]
@@ -22,7 +22,7 @@ files = [".env", ".env.local"]
 ```toml
 [env]
 LOG_LEVEL = { default = "info" }
-APP_PORT  = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+APP_PORT  = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
 DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 ```
 
@@ -34,7 +34,7 @@ DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 **3. Verify what's resolved:**
 
 ```sh
-keel env
+ampelos env
 ```
 
 Prints every key as `KEY=VALUE` lines.
@@ -97,7 +97,7 @@ DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 GIT_SHA      = { from_command = "git rev-parse --short HEAD" }
 ```
 
-The command runs once per keel invocation; stdout (trimmed) is
+The command runs once per ampelos invocation; stdout (trimmed) is
 the value. `required = true` errors at preflight if no value
 resolves.
 
@@ -105,11 +105,11 @@ resolves.
 
 ```toml
 [env]
-APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
-DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+DB_PORT  = { base = "5432", offset = "AMPELOS_WORKTREE_OFFSET" }
 ```
 
-`KEEL_WORKTREE_OFFSET` is injected automatically (see [Worktrees](Worktrees)).
+`AMPELOS_WORKTREE_OFFSET` is injected automatically (see [Worktrees](Worktrees)).
 Two checkouts get different offsets → different ports → no
 collisions when both stacks are up.
 
@@ -137,26 +137,26 @@ GITHUB_TOKEN = { default = "" }   # default empty string; picks up the shell val
 This becomes part of the project-declared subset that's forwarded
 with `-e GITHUB_TOKEN=...`.
 
-### Auto-write `.env` for tools outside keel
+### Auto-write `.env` for tools outside ampelos
 
 ```toml
 [worktrees]
 dotenv = ".env"
 ```
 
-Every `keel <anything>` invocation re-writes the managed block in
+Every `ampelos <anything>` invocation re-writes the managed block in
 `.env` so `docker compose up` (run directly), IDE launch configs,
 and `bin/rails s` all see the same values. The write is
 idempotent — when the contents already match, the file's mtime
 stays put.
 
-`keel env --write .env` does the same one-shot.
+`ampelos env --write .env` does the same one-shot.
 
 ### Inspect the resolved environment
 
 ```sh
-keel env                # everything
-keel env | grep '^APP_' # just APP_*
+ampelos env                # everything
+ampelos env | grep '^APP_' # just APP_*
 ```
 
 Useful when you've layered three `from_command`s and can't
@@ -168,7 +168,7 @@ remember which one won.
 
 In order, later wins:
 
-1. **Inherited process env.** Whatever shell variables keel was
+1. **Inherited process env.** Whatever shell variables ampelos was
    launched with.
 2. **Dotenv files**, in `[env_files].files` order. `${VAR}`
    expansion inside dotenv values resolves against earlier
@@ -185,7 +185,7 @@ a single key declaration):
 ```toml
 [env]
 LOG_LEVEL  = { default = "info" }
-APP_PORT   = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+APP_PORT   = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
 DB_URL     = { from_command = "scripts/db-url.sh", required = true }
 EDITOR     = { value = "vim" }
 ```
@@ -212,7 +212,7 @@ Container (`in = "<service>"` or under a devcontainer): only the
 
 - Keys loaded from `[env_files]` dotenv files.
 - Keys defined under `[env]`.
-- Injected `KEEL_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
+- Injected `AMPELOS_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
 - Per-recipe / per-script `env = {...}` overrides.
 
 Inherited host process env is intentionally **not** propagated —
@@ -226,26 +226,26 @@ Always injected, ahead of `[env]` resolution:
 
 | Key | Source |
 |---|---|
-| `KEEL_WORKTREE_SLUG` | Detected from the active git checkout. |
-| `KEEL_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed from the slug. |
+| `AMPELOS_WORKTREE_SLUG` | Detected from the active git checkout. |
+| `AMPELOS_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed from the slug. |
 | `COMPOSE_PROJECT_NAME` | `<project>-<slug>` when `[worktrees].isolate_compose` is on and the user hasn't set it. |
 
 ### Script-only variables
 
 Set by the script and install-flow runners, **outside** the merge
-pipeline. Reach `.keel/commands/` scripts and `.keel/install/`
+pipeline. Reach `.ampelos/commands/` scripts and `.ampelos/install/`
 steps only — not `[command.*]` recipes, not the dotenv writer,
-not `keel env`:
+not `ampelos env`:
 
 | Key | Source |
 |---|---|
-| `KEEL_PROJECT_DIR` | Host path to the worktree project root. |
-| `KEEL_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+| `AMPELOS_PROJECT_DIR` | Host path to the worktree project root. |
+| `AMPELOS_SCRIPT_DIR`  | Host path to the script file's parent directory. |
 
 Both are host-side paths even when the script runs inside a
 service or devcontainer. Inline install steps get
-`KEEL_PROJECT_DIR` only — there's no script file for
-`KEEL_SCRIPT_DIR` to point at.
+`AMPELOS_PROJECT_DIR` only — there's no script file for
+`AMPELOS_SCRIPT_DIR` to point at.
 
 See [Recipes and Scripts](Recipes-and-Scripts#environment-variables-provided-to-scripts)
 and [Install Flow](Install-Flow#environment-variables) for the

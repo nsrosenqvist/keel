@@ -2,7 +2,7 @@
 
 Some projects mix compose-managed containers with services
 controlled some other way: a system Postgres, a brew-installed
-Redis, an `ngrok` tunnel, an LSP daemon. keel handles them through
+Redis, an `ngrok` tunnel, an LSP daemon. ampelos handles them through
 two config shapes that compile down to the same internal
 `CustomBackend`.
 
@@ -89,12 +89,12 @@ start  = "brew services start redis"
 stop   = "brew services stop redis"
 ```
 
-keel skips compose preflight entirely; `keel ui` shows just the
+ampelos skips compose preflight entirely; `ampelos ui` shows just the
 declared services.
 
 ## Doctor probe
 
-`keel doctor` runs each declared service's `status` command and
+`ampelos doctor` runs each declared service's `status` command and
 reports running / stopped per entry. Use it to validate the
 declarations before opening the TUI.
 

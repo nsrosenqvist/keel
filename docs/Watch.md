@@ -1,14 +1,14 @@
 # Watch
 
-`keel watch <recipe>` re-runs `<recipe>` whenever watched files
+`ampelos watch <recipe>` re-runs `<recipe>` whenever watched files
 change.
 
 ## Basic usage
 
 ```sh
-keel watch test
-keel watch test --filter Login
-keel watch lint --path src --path tests --debounce-ms 500
+ampelos watch test
+ampelos watch test --filter Login
+ampelos watch lint --path src --path tests --debounce-ms 500
 ```
 
 The recipe runs once at start, then on each filesystem event after a
@@ -23,7 +23,7 @@ the next event interrupts a running invocation only after it finishes
 | `--path <PATH>` | project root | Path to watch. Repeat for multiple paths. |
 | `--debounce-ms <MS>` | `300` | Coalesce bursts of events into one re-run. |
 
-Trailing args are forwarded to the recipe in the same way `keel
+Trailing args are forwarded to the recipe in the same way `ampelos
 <recipe> args...` would. Add `forward_args = true` to the recipe so
 it picks them up:
 

@@ -1,6 +1,6 @@
 # Hooks
 
-`keel hooks` runs checks at git lifecycle points — typically
+`ampelos hooks` runs checks at git lifecycle points — typically
 formatters and linters before a commit, tests before a push.
 Same effect as the `pre-commit` Python tool, but built in: no
 extra binary to install, no virtualenvs created in your tree,
@@ -9,7 +9,7 @@ devcontainer the same way recipes do.
 
 ## Quickstart
 
-**1. Pick what to run** in `keel.toml`:
+**1. Pick what to run** in `ampelos.toml`:
 
 ```toml
 [hooks]
@@ -17,18 +17,18 @@ pre-commit = ["check:format", "check:lint"]
 pre-push   = ["test"]
 ```
 
-The strings are recipe / script names — anything `keel <name>`
+The strings are recipe / script names — anything `ampelos <name>`
 runs, a hook can run. (`check:format` and `check:lint` here are
-ordinary `[command.*]` recipes elsewhere in your `keel.toml`.)
+ordinary `[command.*]` recipes elsewhere in your `ampelos.toml`.)
 
 **2. Install the git shims:**
 
 ```sh
-keel hooks install
+ampelos hooks install
 ```
 
 This writes `.git/hooks/pre-commit` and `pre-push` that delegate
-to `keel hooks run <stage>`. Foreign hooks at the same paths are
+to `ampelos hooks run <stage>`. Foreign hooks at the same paths are
 left alone (with a clear error) so you don't lose a hand-written
 setup.
 
@@ -38,19 +38,19 @@ commit is aborted, same as plain git.
 To run a stage manually for debugging:
 
 ```sh
-keel hooks run pre-commit
+ampelos hooks run pre-commit
 ```
 
 ## Mental model
 
-- **Two sources, one runner.** keel looks at `[hooks.<stage>]` in
-  `keel.toml` *and* at `.pre-commit-config.yaml` if it exists.
+- **Two sources, one runner.** ampelos looks at `[hooks.<stage>]` in
+  `ampelos.toml` *and* at `.pre-commit-config.yaml` if it exists.
   Both are evaluated for the firing stage and run sequentially;
   the first non-zero exit halts.
-- **Every hook's `entry` runs verbatim.** keel doesn't manage
+- **Every hook's `entry` runs verbatim.** ampelos doesn't manage
   toolchains the way the `pre-commit` binary does. If your
-  `.pre-commit-config.yaml` says `entry: ruff`, keel runs `ruff`
-  — make sure it's on `PATH` (typically as part of `keel install`).
+  `.pre-commit-config.yaml` says `entry: ruff`, ampelos runs `ruff`
+  — make sure it's on `PATH` (typically as part of `ampelos install`).
   The `language:` field is parsed and remembered but never gates
   execution.
 - **Hooks route like recipes.** A hook with `in: "<service>"`
@@ -74,7 +74,7 @@ A single recipe wraps the checks; the hook just calls it.
 
 ### Use an existing `.pre-commit-config.yaml`
 
-If your repo already has one, keel reads it as-is — both
+If your repo already has one, ampelos reads it as-is — both
 `repo: local` hooks and external repos (`repo: https://...`)
 work:
 
@@ -95,14 +95,14 @@ repos:
       - id: end-of-file-fixer
 ```
 
-External repos are cloned into `.keel/cache/hooks/<slug-rev>/` on
-first use and reused thereafter. `keel install --update-hooks`
+External repos are cloned into `.ampelos/cache/hooks/<slug-rev>/` on
+first use and reused thereafter. `ampelos install --update-hooks`
 force-refreshes the cache.
 
 ### Run a hook inside a service container
 
 Add `in: <service>` to any hook in `.pre-commit-config.yaml`
-(keel extension; plain pre-commit ignores it):
+(ampelos extension; plain pre-commit ignores it):
 
 ```yaml
 - repo: local
@@ -121,11 +121,11 @@ referenced recipe's own `in =` field — no separate switch needed.
 ### Hook a different stage
 
 ```sh
-keel hooks install --stages pre-commit,pre-push,commit-msg,post-merge
+ampelos hooks install --stages pre-commit,pre-push,commit-msg,post-merge
 ```
 
-Any of git's standard stages works. `keel hooks uninstall
-[--stages ...]` removes only keel-managed shims (identified by
+Any of git's standard stages works. `ampelos hooks uninstall
+[--stages ...]` removes only ampelos-managed shims (identified by
 a marker comment).
 
 ### Use `language: python` / `node` / etc.
@@ -141,11 +141,11 @@ Declare them as you would in pre-commit:
       files: \.py$
 ```
 
-keel runs `ruff` directly. Make sure it's installed — for
+ampelos runs `ruff` directly. Make sure it's installed — for
 example, by adding an install step:
 
 ```sh
-# .keel/install/40-tools.sh
+# .ampelos/install/40-tools.sh
 #!/usr/bin/env bash
 # @desc: Dev tooling
 pip install --user ruff
@@ -156,10 +156,10 @@ in the image.
 
 ### Auto-refresh `.env` after a branch switch
 
-Setting `[worktrees].dotenv = ".env"` makes `keel hooks install`
+Setting `[worktrees].dotenv = ".env"` makes `ampelos hooks install`
 auto-include `post-checkout` and `post-merge` shims (no need to
 list them explicitly) so the dotenv file stays fresh when a
-developer skips keel and runs `docker compose up` directly. See
+developer skips ampelos and runs `docker compose up` directly. See
 [Worktrees](Worktrees#materialising-worktree-env-into-env).
 
 ## Where hooks run
@@ -172,7 +172,7 @@ For each hook, precedence is:
    inside the project's devcontainer.
 3. **Otherwise** → host spawn, with cwd set to the git repo root.
 
-`in` is a keel extension to `.pre-commit-config.yaml` — plain
+`in` is a ampelos extension to `.pre-commit-config.yaml` — plain
 `pre-commit` ignores it, so the same config works for either
 tool.
 
@@ -181,7 +181,7 @@ tool.
 For a given stage, hooks run in this order, first non-zero exit
 halts:
 
-1. Every `[hooks.<stage>]` entry from `keel.toml`, in declaration
+1. Every `[hooks.<stage>]` entry from `ampelos.toml`, in declaration
    order, via the recipe runner.
 2. Every `.pre-commit-config.yaml` hook whose `stages` includes
    `<stage>` (or whose `default_stages` does), in declaration
@@ -192,7 +192,7 @@ which files are staged.
 
 ## Configuration reference
 
-### `keel.toml`
+### `ampelos.toml`
 
 ```toml
 [hooks]
@@ -206,11 +206,11 @@ names. Routing comes from the referenced recipe's own `in =`.
 
 ### `.pre-commit-config.yaml`
 
-Standard pre-commit format, plus the keel-only `in:` extension
+Standard pre-commit format, plus the ampelos-only `in:` extension
 on hook entries. Every hook's `entry` is parsed with
 `shell_words` and spawned directly; `language:` is advisory.
 
-The one shape keel still rejects is `repo: meta` (pre-commit's
+The one shape ampelos still rejects is `repo: meta` (pre-commit's
 built-in `check-hooks-apply` / `identity` etc.) — there's no
 `entry` to dispatch.
 
@@ -218,16 +218,16 @@ built-in `check-hooks-apply` / `identity` etc.) — there's no
 
 | Command | Notes |
 |---|---|
-| `keel hooks install [--stages ...]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit` (plus `post-checkout`/`post-merge` if `[worktrees].dotenv` is set). |
-| `keel hooks uninstall [--stages ...]` | Remove only keel-managed shims. |
-| `keel hooks run <stage> [args...]` | What the shim invokes. Run directly to debug. |
-| `keel install --update-hooks` | Force-refresh cached external pre-commit repos. |
+| `ampelos hooks install [--stages ...]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit` (plus `post-checkout`/`post-merge` if `[worktrees].dotenv` is set). |
+| `ampelos hooks uninstall [--stages ...]` | Remove only ampelos-managed shims. |
+| `ampelos hooks run <stage> [args...]` | What the shim invokes. Run directly to debug. |
+| `ampelos install --update-hooks` | Force-refresh cached external pre-commit repos. |
 
 ## See also
 
-- [Install Flow](Install-Flow) — `keel install` includes a
+- [Install Flow](Install-Flow) — `ampelos install` includes a
   synthetic step that installs hook shims and prefetches external
   repos.
-- [`examples/hooks/`](https://github.com/nsrosenqvist/keel/tree/main/examples/hooks)
+- [`examples/hooks/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/hooks)
   — runnable demo with a local hook and an external repo.
 - [Configuration Reference: `[hooks]`](Configuration-Reference#hooks).

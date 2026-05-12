@@ -1,6 +1,6 @@
 # Contributing
 
-keel is an open-source dev-loop wrapper. Contributions —
+ampelos is an open-source dev-loop wrapper. Contributions —
 features, fixes, docs, examples — are welcome. This page captures
 the non-negotiables.
 
@@ -68,12 +68,12 @@ concern, no dead config). Every code change is judged against those.
 ## Adding a new example
 
 Examples live under
-[`examples/`](https://github.com/nsrosenqvist/keel/tree/main/examples).
-Each example is a runnable keel project plus a short README that
+[`examples/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples).
+Each example is a runnable ampelos project plus a short README that
 calls out which features it demonstrates.
 
-1. `mkdir examples/<name>` and add a `keel.toml` plus any
-   supporting files (`.pre-commit-config.yaml`, `.keel/install/*`,
+1. `mkdir examples/<name>` and add a `ampelos.toml` plus any
+   supporting files (`.pre-commit-config.yaml`, `.ampelos/install/*`,
    etc.).
 2. Add a `README.md` linking back to the relevant wiki page(s) and
    explaining what the example shows.
@@ -90,7 +90,7 @@ Sketch:
 2. **Implement.** Land the feature behind well-bounded crate
    surfaces. Cross-crate types travel as value objects.
 3. **Document.** Add or update the relevant
-   [`docs/`](https://github.com/nsrosenqvist/keel/tree/main/docs)
+   [`docs/`](https://github.com/nsrosenqvist/ampelos/tree/main/docs)
    wiki page. The wiki is auto-synced from `docs/` on push to `main`.
 4. **Test.** At least one integration test against a real fixture
    under `examples/` or a `tempfile::TempDir`.

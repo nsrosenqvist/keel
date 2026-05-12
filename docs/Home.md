@@ -1,26 +1,26 @@
-# keel
+# ampelos
 
-> *Your dev loop, held steady.*
+> *Bends to your project. Holds it together.*
 
-Keel is a dev-loop conductor. One `keel.toml` holds Docker
+Ampelos is a dev-loop trellis. One `ampelos.toml` holds Docker
 Compose, scripts, hooks, and agent instructions together. Your
 stack runs the way your project runs it — the tool bends, not
 the project.
 
-- **Site:** [keel.rs](https://keel.rs)
+- **Site:** [ampelos.dev](https://ampelos.dev)
 - **Status:** alpha. End-to-end usable on Linux and macOS
   for the features documented here.
 
-## 60 seconds with keel
+## 60 seconds with ampelos
 
 ```sh
 cargo install --path .   # from a clone
 cd my-project
-keel init                              # generate a starter keel.toml
-keel                                   # open the TUI dashboard
+ampelos init                              # generate a starter ampelos.toml
+ampelos                                   # open the TUI dashboard
 ```
 
-A minimal `keel.toml`:
+A minimal `ampelos.toml`:
 
 ```toml
 [project]
@@ -48,21 +48,21 @@ pre-commit = ["check"]
 Then:
 
 ```sh
-keel up                   # docker compose up -d
-keel test --filter Login  # forwards to composer test
-keel hooks install        # writes .git/hooks/pre-commit
-keel                      # TUI dashboard with every recipe + service
+ampelos up                   # docker compose up -d
+ampelos test --filter Login  # forwards to composer test
+ampelos hooks install        # writes .git/hooks/pre-commit
+ampelos                      # TUI dashboard with every recipe + service
 ```
 
 ## Where to go next
 
 - **New here?** → [Getting Started](Getting-Started): install,
-  `keel init`, your first recipe and hook.
+  `ampelos init`, your first recipe and hook.
 - **Want the tour?** → [Quick Tour](Quick-Tour): a guided
   5-minute walk through recipes, hooks, agents, and the TUI.
 - **Need the reference?** →
   [Configuration Reference](Configuration-Reference) for every
-  `keel.toml` key, [Commands Reference](Commands-Reference)
+  `ampelos.toml` key, [Commands Reference](Commands-Reference)
   for every CLI subcommand.
 
 ## All pages
@@ -70,7 +70,7 @@ keel                      # TUI dashboard with every recipe + service
 ### Concepts
 
 - [Recipes and Scripts](Recipes-and-Scripts) — declarative
-  TOML vs `.keel/commands/` shell scripts.
+  TOML vs `.ampelos/commands/` shell scripts.
 - [Environments](Environments) — `[env]`, dotenv layering,
   `base + offset` arithmetic.
 - [Container Backends](Container-Backends) — compose / docker
@@ -86,27 +86,27 @@ keel                      # TUI dashboard with every recipe + service
   `.pre-commit-config.yaml` runner.
 - [Agents](Agents) — sync agent instructions / skills from
   upstream repos.
-- [Install Flow](Install-Flow) — `.keel/install/` ordered
+- [Install Flow](Install-Flow) — `.ampelos/install/` ordered
   setup steps with state + resume.
 - [TUI](TUI) — the embedded dashboard.
 - [Diff View](Diff-View) — branch-review surface pinned to
   the trunk merge-base.
 - [Watch](Watch) — re-run a recipe on filesystem change.
-- [Shell Library](Shell-Library) — `keel lib ask|confirm|…`
+- [Shell Library](Shell-Library) — `ampelos lib ask|confirm|…`
   prompts for shell scripts.
 
 ### Reference
 
 - [Configuration Reference](Configuration-Reference) — every
-  `keel.toml` key.
+  `ampelos.toml` key.
 - [Commands Reference](Commands-Reference) — every CLI
   subcommand.
 
 ### Resources
 
-- [Examples](Examples) — runnable keel projects under
+- [Examples](Examples) — runnable ampelos projects under
   `examples/`.
-- [Troubleshooting](Troubleshooting) — `keel doctor`, common
+- [Troubleshooting](Troubleshooting) — `ampelos doctor`, common
   pitfalls.
 
 ### Project

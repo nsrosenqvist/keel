@@ -7,7 +7,7 @@ docs. Already comfortable? Jump to
 
 ## 1. Two ways to define commands
 
-Declaratively in `keel.toml`:
+Declaratively in `ampelos.toml`:
 
 ```toml
 [command.up]
@@ -15,10 +15,10 @@ desc = "Start the stack"
 run  = "docker compose up -d"
 ```
 
-Or as a shell script under `.keel/commands/`:
+Or as a shell script under `.ampelos/commands/`:
 
 ```sh
-# .keel/commands/seed
+# .ampelos/commands/seed
 #!/usr/bin/env bash
 # @desc: Seed the database with development data
 # @in: app
@@ -27,7 +27,7 @@ php artisan migrate:fresh
 php artisan db:seed
 ```
 
-Both show up in `keel list`, both are runnable as `keel <name>`.
+Both show up in `ampelos list`, both are runnable as `ampelos <name>`.
 Use whichever shape matches the command's complexity. See
 [Recipes and Scripts](Recipes-and-Scripts).
 
@@ -40,7 +40,7 @@ status preflight. Absent → host. `tty = true` allocates a pseudo-TTY.
 [command.test]
 in           = "app"
 run          = "composer test"
-forward_args = true        # keel test --filter Login → composer test --filter Login
+forward_args = true        # ampelos test --filter Login → composer test --filter Login
 ```
 
 Backend selection is `[runtime].backend` — compose, docker,
@@ -56,18 +56,18 @@ container collisions:
 dotenv = ".env"            # auto-write resolved env to .env
 
 [env]
-APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
-DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+DB_PORT  = { base = "5432", offset = "AMPELOS_WORKTREE_OFFSET" }
 ```
 
-`KEEL_WORKTREE_OFFSET` is computed deterministically from the
+`AMPELOS_WORKTREE_OFFSET` is computed deterministically from the
 worktree slug, so each checkout gets a stable, distinct integer
 that drifts ports / `COMPOSE_PROJECT_NAME` / anything else
 needing isolation. See [Worktrees](Worktrees).
 
 ## 4. Git hooks, pre-commit-compatible
 
-Native keel hooks plus `.pre-commit-config.yaml` repos coexist
+Native ampelos hooks plus `.pre-commit-config.yaml` repos coexist
 behind the same shim:
 
 ```toml
@@ -76,19 +76,19 @@ pre-commit = ["check:format", "check:lint"]
 ```
 
 ```sh
-keel hooks install
+ampelos hooks install
 ```
 
 External repos in `.pre-commit-config.yaml` are cloned into
-`.keel/cache/hooks/<rev>/` and run natively — no `pre-commit`
+`.ampelos/cache/hooks/<rev>/` and run natively — no `pre-commit`
 binary required. See [Hooks](Hooks).
 
-## 5. First-time setup with `keel install`
+## 5. First-time setup with `ampelos install`
 
-Drop ordered shell files into `.keel/install/`:
+Drop ordered shell files into `.ampelos/install/`:
 
 ```
-.keel/install/
+.ampelos/install/
   01-copy-env
   02-install-deps
   03-migrate
@@ -98,14 +98,14 @@ Drop ordered shell files into `.keel/install/`:
 Run them:
 
 ```sh
-keel install
+ampelos install
 ```
 
 Each step runs in order, with a line-redraw progress UI. Failures
 prompt **"Resume from `<step>`?"** on the next run. Marking a step
 `# @optional: yes` lets it fail without halting the rest;
 `# @interactive: yes` hands the terminal to the step so
-[`keel lib *`](Shell-Library) prompts work. See
+[`ampelos lib *`](Shell-Library) prompts work. See
 [Install Flow](Install-Flow).
 
 ## 6. Agent instructions from upstream repos
@@ -121,19 +121,19 @@ rev  = "v1.0.0"
 ```
 
 ```sh
-keel agents install        # pull pinned upstream
-keel agents update         # re-resolve revs
-keel agents status         # per-source rev + per-file drift
+ampelos agents install        # pull pinned upstream
+ampelos agents update         # re-resolve revs
+ampelos agents status         # per-source rev + per-file drift
 ```
 
-Whole-file ownership: keel tracks every file it writes by
+Whole-file ownership: ampelos tracks every file it writes by
 SHA-256 and never touches local sibling files. See
 [Agents](Agents).
 
 ## 7. Open the dashboard
 
 ```sh
-keel
+ampelos
 ```
 
 A sidebar of recipes / scripts / services, an output pane,
@@ -145,7 +145,7 @@ See [TUI](TUI).
 ## 8. Watch mode
 
 ```sh
-keel watch test
+ampelos watch test
 ```
 
 Re-runs the recipe on filesystem change with a 300 ms debounce. See
@@ -154,9 +154,9 @@ Re-runs the recipe on filesystem change with a 300 ms debounce. See
 ## 9. Shell prompts in any script
 
 ```sh
-EMAIL=$(keel lib ask "Admin email")
-keel lib confirm "Seed the DB?" --default yes && php artisan db:seed
-SVC=$(keel lib select "Service" app db redis)
+EMAIL=$(ampelos lib ask "Admin email")
+ampelos lib confirm "Seed the DB?" --default yes && php artisan db:seed
+SVC=$(ampelos lib select "Service" app db redis)
 ```
 
 Prompts to stderr, answer to stdout, `--default` for non-tty / CI.

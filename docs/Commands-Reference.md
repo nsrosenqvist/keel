@@ -1,7 +1,7 @@
 # Commands Reference
 
-Every `keel <subcommand>` and its flags. Source of truth:
-[`src/cli/app.rs`](https://github.com/nsrosenqvist/keel/blob/main/src/cli/app.rs).
+Every `ampelos <subcommand>` and its flags. Source of truth:
+[`src/cli/app.rs`](https://github.com/nsrosenqvist/ampelos/blob/main/src/cli/app.rs).
 Anything not matched by an explicit subcommand falls through to
 recipe / script resolution, then to compose passthrough — see
 [Recipes and Scripts](Recipes-and-Scripts).
@@ -14,23 +14,23 @@ recipe / script resolution, then to compose passthrough — see
 | `--explain` | Print the resolution path without executing. |
 | `--profile <NAME>` | Activate a recipe profile (`[command.*.profile.<name>]`). |
 
-## `keel` (no subcommand)
+## `ampelos` (no subcommand)
 
 Bare invocation opens the [TUI dashboard](TUI). With a name and
 args, resolves the name as: built-in → recipe → script → compose
 passthrough → service exec → unknown.
 
-## `keel list` / `keel ls`
+## `ampelos list` / `ampelos ls`
 
 Print every recipe and script as a table (name, kind, container,
 description).
 
-## `keel which <name>`
+## `ampelos which <name>`
 
 Show how `<name>` would resolve (recipe / script / compose / service /
 unknown). Same logic as `--explain`, no execution.
 
-## `keel env [--write PATH]`
+## `ampelos env [--write PATH]`
 
 Print the resolved project environment (`[env]` + dotenv layering +
 worktree-derived values). With `--write PATH`, writes the same
@@ -38,15 +38,15 @@ content into `PATH` as a marker-delimited managed block — used by
 the auto-write hook in `[worktrees].dotenv` and by post-checkout /
 post-merge git hooks.
 
-## `keel doctor`
+## `ampelos doctor`
 
 Validate config + backend availability + env files + non-container
 service status. Exits non-zero on any failure. See
 [Troubleshooting](Troubleshooting).
 
-## `keel init [--template <NAME>]`
+## `ampelos init [--template <NAME>]`
 
-Generate a starter `keel.toml` at the project root. Refuses to
+Generate a starter `ampelos.toml` at the project root. Refuses to
 overwrite an existing file.
 
 Without `--template`, runs a registry of ecosystem detectors against
@@ -58,16 +58,16 @@ detectors own `[runtime]` and `[devcontainer]`, language detectors
 contribute commented `[command.*]` suggestions. When two ecosystems
 suggest the same command name, both are emitted under a "Multiple
 ecosystems suggest …" header. See
-[Getting Started](Getting-Started#2-generate-a-starter-keeltoml) for
+[Getting Started](Getting-Started#2-generate-a-starter-ampelostoml) for
 the full detection table.
 
 With `--template <NAME>`, bypass auto-detection and start from a
 hand-curated scaffold. Valid names: `laravel`, `rails`, `node`,
 `rust`.
 
-## `keel install [<step>] [flags]`
+## `ampelos install [<step>] [flags]`
 
-Run the install plan (`.keel/install/*` + `[install].steps`). See
+Run the install plan (`.ampelos/install/*` + `[install].steps`). See
 [Install Flow](Install-Flow). With a positional `<step>`, runs
 that step alone.
 
@@ -79,12 +79,12 @@ that step alone.
 | `--list` | Plan + last-known status per step. |
 | `--update-hooks` | Force-refresh the external hook cache. |
 
-## `keel ui`
+## `ampelos ui`
 
-Open the [TUI dashboard](TUI) explicitly (same as bare `keel`
+Open the [TUI dashboard](TUI) explicitly (same as bare `ampelos`
 with no args).
 
-## `keel shell [--service <name>]`
+## `ampelos shell [--service <name>]`
 
 Drop into an interactive shell.
 
@@ -95,17 +95,17 @@ Drop into an interactive shell.
 
 See [Devcontainer](Devcontainer).
 
-## `keel hooks <action>`
+## `ampelos hooks <action>`
 
 | Action | Notes |
 |---|---|
 | `install [--stages s1,s2]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit`. |
-| `uninstall [--stages s1,s2]` | Remove keel-managed shims; default: every known stage. |
+| `uninstall [--stages s1,s2]` | Remove ampelos-managed shims; default: every known stage. |
 | `run <stage>` | Run hooks for `<stage>`. Used by the installed shims. |
 
 See [Hooks](Hooks).
 
-## `keel agents <action>`
+## `ampelos agents <action>`
 
 | Action | Notes |
 |---|---|
@@ -116,7 +116,7 @@ See [Hooks](Hooks).
 
 See [Agents](Agents).
 
-## `keel watch <recipe> [args...] [flags]`
+## `ampelos watch <recipe> [args...] [flags]`
 
 Re-run `<recipe>` whenever watched files change.
 
@@ -127,17 +127,17 @@ Re-run `<recipe>` whenever watched files change.
 
 See [Watch](Watch).
 
-## `keel worktree <action>`
+## `ampelos worktree <action>`
 
 | Action | Notes |
 |---|---|
 | `status` | Current worktree's slug, offset, derived env. |
 | `list` | Every git worktree + computed offset, with collision warnings. |
-| `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.keel/local.toml`. |
+| `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.ampelos/local.toml`. |
 
 See [Worktrees](Worktrees).
 
-## `keel lib <action>`
+## `ampelos lib <action>`
 
 Interactive prompt helpers callable from any shell script. Prompt to
 stderr, answer to stdout. Non-tty invocations honour `--default`.
@@ -151,7 +151,7 @@ See [Shell Library](Shell-Library).
 | `select <prompt> <choices...> [--multi] [--default <IDX>] [--from <FILE>]` | Pick one or many. |
 | `filter <prompt> <choices...> [--from <FILE>]` | Fuzzy picker. |
 
-## `keel completions <shell>`
+## `ampelos completions <shell>`
 
 Emit a shell-completion script. `<shell>` is one of `bash`, `zsh`,
 `fish`, `elvish`, `powershell`. Pipe to your shell's completion

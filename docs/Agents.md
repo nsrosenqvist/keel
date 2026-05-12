@@ -2,17 +2,17 @@
 
 If your team keeps a shared set of agent instructions and skills
 (`CLAUDE.md`, `AGENTS.md`, `.claude/skills/*.md`, …) in a git repo
-somewhere, `keel agents` syncs them into the current project. You
-subscribe to an upstream by pointing at its repo + revision; keel
+somewhere, `ampelos agents` syncs them into the current project. You
+subscribe to an upstream by pointing at its repo + revision; ampelos
 clones it, copies the files it owns, and tracks them in
-`.keel/agents.state.json` so it can update them cleanly later.
+`.ampelos/agents.state.json` so it can update them cleanly later.
 
-Same spirit as `keel hooks`: declarative config, local cache, no
+Same spirit as `ampelos hooks`: declarative config, local cache, no
 third-party tool in the loop.
 
 ## Quickstart
 
-**1. Point at an upstream** in `keel.toml`:
+**1. Point at an upstream** in `ampelos.toml`:
 
 ```toml
 [[agents.sources]]
@@ -24,21 +24,21 @@ rev  = "v1.4.0"
 **2. Apply:**
 
 ```sh
-keel agents install
+ampelos agents install
 ```
 
-keel clones the upstream into `.keel/cache/agents/`, reads its
-`keel-agents.toml`, and writes whatever files it declares
+ampelos clones the upstream into `.ampelos/cache/agents/`, reads its
+`ampelos-agents.toml`, and writes whatever files it declares
 (`CLAUDE.md`, `.claude/skills/*.md`, etc.) to your project. Safe
 to re-run — it's idempotent.
 
 **3. Verify:**
 
 ```sh
-keel agents status
+ampelos agents status
 ```
 
-That's the whole loop. From now on, `keel install` includes a
+That's the whole loop. From now on, `ampelos install` includes a
 synthetic `apply-agents` step too, so fresh clones get agent
 files materialised automatically.
 
@@ -46,17 +46,17 @@ files materialised automatically.
 
 Three rules cover almost every situation.
 
-- **Upstream owns the bytes.** Every file keel writes is a
+- **Upstream owns the bytes.** Every file ampelos writes is a
   byte-for-byte copy from the upstream repo. If you want to
   customise something, put it in a *sibling* file — e.g. add
-  `CLAUDE.local.md` next to a keel-owned `CLAUDE.md`. keel never
+  `CLAUDE.local.md` next to a ampelos-owned `CLAUDE.md`. ampelos never
   touches files it didn't write.
-- **State is the source of truth.** `.keel/agents.state.json`
-  (per-checkout, gitignored) records every file keel wrote with a
+- **State is the source of truth.** `.ampelos/agents.state.json`
+  (per-checkout, gitignored) records every file ampelos wrote with a
   sha256. That's how it knows what to update, what's been
   hand-edited (drift), and what's now an orphan.
 - **One pipeline for everything.** `install`, `update`, `diff`, and
-  the synthetic step inside `keel install` all run the same apply
+  the synthetic step inside `ampelos install` all run the same apply
   pipeline with different flags. No separate "set up" / "tear
   down" semantics to keep straight.
 
@@ -72,7 +72,7 @@ dest   = "AGENTS.md"
 action = "skip"
 ```
 
-Next `keel agents install` won't write it. If keel had written it
+Next `ampelos agents install` won't write it. If ampelos had written it
 before, it's removed as an orphan.
 
 ### Move a file somewhere else
@@ -89,27 +89,27 @@ local version (at the original path).
 ### Pull in updates
 
 ```sh
-keel agents update                     # all sources
-keel agents update --source baseline   # just one
+ampelos agents update                     # all sources
+ampelos agents update --source baseline   # just one
 ```
 
 If your `rev` is a pinned SHA or semver tag (`v1.4.0`), bump it in
-`keel.toml` first. Floating refs like `main` auto-refetch on every
+`ampelos.toml` first. Floating refs like `main` auto-refetch on every
 `update` — no bump needed.
 
 ### See what's been edited
 
 ```sh
-keel agents status
+ampelos agents status
 ```
 
-Reports per-source revisions and any *drift* — keel-owned files
-whose disk content no longer matches what keel last wrote. Drift
+Reports per-source revisions and any *drift* — ampelos-owned files
+whose disk content no longer matches what ampelos last wrote. Drift
 is left alone by default (you might be testing a change). To
 re-overwrite from upstream:
 
 ```sh
-keel agents install --force-overwrite-drift
+ampelos agents install --force-overwrite-drift
 ```
 
 ### Add a second upstream
@@ -120,23 +120,23 @@ same file, the **later-declared one wins**; the losers show up in
 
 ### Stop using a source
 
-Delete its `[[agents.sources]]` block from `keel.toml` and run
-`keel agents install`. Every file the removed source owned is
+Delete its `[[agents.sources]]` block from `ampelos.toml` and run
+`ampelos agents install`. Every file the removed source owned is
 deleted as an orphan; empty `.claude/skills/` subdirs are pruned
 (but `.claude/` itself is kept).
 
 ### Preview a change first
 
 ```sh
-keel agents install --dry-run
-keel agents diff
+ampelos agents install --dry-run
+ampelos agents diff
 ```
 
 Both show the actions a real apply would take, neither writes.
 
 ## Authoring an upstream
 
-If you maintain the org-wide agents repo, drop a `keel-agents.toml`
+If you maintain the org-wide agents repo, drop a `ampelos-agents.toml`
 at its root:
 
 ```toml
@@ -157,18 +157,18 @@ glob = "**/*.md"          # optional; defaults to "**/*"
 
 `mode = "once"` is for seed files the project takes ownership of
 after first install (a starter `AGENTS.md` is the canonical case).
-keel won't overwrite a `once` file and won't warn on drift against
+ampelos won't overwrite a `once` file and won't warn on drift against
 it, but does remove it if the mapping disappears.
 
 A starter layout lives at
-[`examples/agents-upstream/`](https://github.com/nsrosenqvist/keel/tree/main/examples/agents-upstream).
+[`examples/agents-upstream/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/agents-upstream).
 
 ## Configuration reference
 
 ```toml
 [agents]
-install_with_setup = true                 # default; runs apply during `keel install`
-manifest_path      = "keel-agents.toml"   # default upstream filename
+install_with_setup = true                 # default; runs apply during `ampelos install`
+manifest_path      = "ampelos-agents.toml"   # default upstream filename
 
 [[agents.sources]]
 name    = "baseline"
@@ -192,39 +192,39 @@ pre-merge) — i.e. the path you actually see in your tree.
 
 | Command | Notes |
 |---|---|
-| `keel agents install` | Apply pinned upstream sources. Idempotent. |
-| `keel agents install --force` | Re-clone every source, ignore cache. |
-| `keel agents install --dry-run` | Plan without writing. |
-| `keel agents install --force-overwrite-drift` | Overwrite hand-edited keel-owned files. |
-| `keel agents update [--source NAME]...` | Re-resolve revs and re-apply. Floating refs auto-refetch. |
-| `keel agents status [--strict]` | Per-source rev + per-file drift. `--strict` exits 1 on drift. |
-| `keel agents diff` | Print the actions a fresh apply would take. |
+| `ampelos agents install` | Apply pinned upstream sources. Idempotent. |
+| `ampelos agents install --force` | Re-clone every source, ignore cache. |
+| `ampelos agents install --dry-run` | Plan without writing. |
+| `ampelos agents install --force-overwrite-drift` | Overwrite hand-edited ampelos-owned files. |
+| `ampelos agents update [--source NAME]...` | Re-resolve revs and re-apply. Floating refs auto-refetch. |
+| `ampelos agents status [--strict]` | Per-source rev + per-file drift. `--strict` exits 1 on drift. |
+| `ampelos agents diff` | Print the actions a fresh apply would take. |
 
 ## Edge cases worth knowing
 
 **Local-shadow conflicts.** If a hand-written file already sits at
 a path an upstream wants to write (e.g. your `.claude/skills/foo.md`
-collides with a newly-added upstream `foo.md`), `keel agents
+collides with a newly-added upstream `foo.md`), `ampelos agents
 install` errors with a rename suggestion (`foo.local.md`). The
-rule keeps the resolution explicit: keel never silently overwrites
+rule keeps the resolution explicit: ampelos never silently overwrites
 a file it didn't author.
 
 **Cross-source collisions** are resolved by **declaration order**
-in `keel.toml` — the later source wins. `status` lists the
+in `ampelos.toml` — the later source wins. `status` lists the
 overshadowed sources so you can disambiguate explicitly with an
 override if you want.
 
 **Floating refs** are anything that isn't a 7–40 char hex SHA or a
 semver-shaped tag (`v1.2.3`, `1.2.3-rc.1`). Branch names like
 `main`, `develop`, `HEAD`, or ambiguous strings like a bare `v1`
-count as floating, and `keel agents update` re-fetches them every
+count as floating, and `ampelos agents update` re-fetches them every
 time (the cache is bypassed for those sources only). Pin to a SHA
 or semver tag if you want reproducible installs.
 
 **Drift vs. orphans.**
 
 - *Drift* — file in state, on disk, content differs from what
-  keel wrote. Left alone by default; `--force-overwrite-drift`
+  ampelos wrote. Left alone by default; `--force-overwrite-drift`
   restores from upstream.
 - *Orphan* — file in state but the current resolved set no longer
   claims it (source removed, mapping skipped, upstream renamed).

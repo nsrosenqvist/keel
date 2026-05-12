@@ -1,33 +1,33 @@
 # Getting Started
 
-This page takes you from "no keel" to "first recipe + first
+This page takes you from "no ampelos" to "first recipe + first
 hook + open dashboard" in under five minutes. After that, the
 [Quick Tour](Quick-Tour) shows the rest of the surface.
 
 ## 1. Install
 
-keel is a single Rust binary. Three install paths:
+ampelos is a single Rust binary. Three install paths:
 
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew install nsrosenqvist/keel/keel
+brew install nsrosenqvist/ampelos/ampelos
 ```
 
 ### From a clone (any platform)
 
 ```sh
-git clone https://github.com/nsrosenqvist/keel
-cd keel
+git clone https://github.com/nsrosenqvist/ampelos
+cd ampelos
 cargo install --path .
 ```
 
-The binary is named `keel` and lands in `~/.cargo/bin/`.
+The binary is named `ampelos` and lands in `~/.cargo/bin/`.
 
 ### Once published to crates.io
 
 ```sh
-cargo install keel
+cargo install ampelos
 ```
 
 (Not yet on crates.io. Track the project README for the publish
@@ -36,18 +36,18 @@ announcement.)
 ### Verify
 
 ```sh
-keel --version
+ampelos --version
 ```
 
-## 2. Generate a starter `keel.toml`
+## 2. Generate a starter `ampelos.toml`
 
 Inside any project directory:
 
 ```sh
-keel init
+ampelos init
 ```
 
-This drops a `keel.toml` at the project root and walks a registry of
+This drops a `ampelos.toml` at the project root and walks a registry of
 ecosystem detectors against the directory. Each detector contributes
 to the generated file:
 
@@ -74,7 +74,7 @@ hand-curated stack scaffold instead (`laravel`, `rails`, `node`,
 
 ## 3. Define your first recipe
 
-Edit `keel.toml` to add a recipe for a command you actually run:
+Edit `ampelos.toml` to add a recipe for a command you actually run:
 
 ```toml
 [command.up]
@@ -94,16 +94,16 @@ tty  = true
 Run them:
 
 ```sh
-keel up
-keel shell
+ampelos up
+ampelos shell
 ```
 
-`keel list` (or `keel ls`) shows every recipe and script, with
+`ampelos list` (or `ampelos ls`) shows every recipe and script, with
 their descriptions.
 
 ## 4. Install your first git hook
 
-Add `[hooks]` to `keel.toml`:
+Add `[hooks]` to `ampelos.toml`:
 
 ```toml
 [command.check]
@@ -123,10 +123,10 @@ pre-commit = ["check"]
 Then:
 
 ```sh
-keel hooks install
+ampelos hooks install
 ```
 
-This writes `.git/hooks/pre-commit` as a shim that runs `keel
+This writes `.git/hooks/pre-commit` as a shim that runs `ampelos
 hooks run pre-commit`. Try it: `git commit` triggers `check`
 automatically. See [Hooks](Hooks) for the full model
 (including `.pre-commit-config.yaml` compatibility).
@@ -134,10 +134,10 @@ automatically. See [Hooks](Hooks) for the full model
 ## 5. Open the dashboard
 
 ```sh
-keel
+ampelos
 ```
 
-Bare `keel` opens the [TUI](TUI): a sidebar of every recipe,
+Bare `ampelos` opens the [TUI](TUI): a sidebar of every recipe,
 script, and service; an output pane for whatever's selected; service
 lifecycle keymaps; a built-in [diff view](Diff-View) (`G`); a
 [worktree switcher](Worktrees#tui-worktree-switcher-w) (`W`).
@@ -148,8 +148,8 @@ lifecycle keymaps; a built-in [diff view](Diff-View) (`G`); a
   through every major feature.
 - **Schema reference** →
   [Configuration Reference](Configuration-Reference) for
-  every `keel.toml` key.
+  every `ampelos.toml` key.
 - **Real projects** → [Examples](Examples) — runnable
   configurations under `examples/`.
-- **Stuck?** → [Troubleshooting](Troubleshooting) — `keel
+- **Stuck?** → [Troubleshooting](Troubleshooting) — `ampelos
   doctor` and common pitfalls.
