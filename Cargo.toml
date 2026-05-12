@@ -1,19 +1,19 @@
 [package]
-name = "keel"
+name = "ampelos"
 description = "Dev-loop conductor: one config for Docker Compose, scripts, hooks, and agents"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Niklas Rosenqvist"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/nsrosenqvist/keel"
-homepage = "https://keel.rs"
+repository = "https://github.com/nsrosenqvist/ampelos"
+homepage = "https://ampelos.dev"
 readme = "README.md"
 keywords = ["dev-loop", "docker-compose", "tui", "cli", "wrapper"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "keel"
+name = "ampelos"
 path = "src/main.rs"
 
 [dependencies]

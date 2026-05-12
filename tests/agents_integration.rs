@@ -2,8 +2,8 @@
 //! filesystem-path upstream that we mutate between runs to exercise
 //! every code path (write / update / drift / orphan / once-mode).
 
-use keel::agents::{AgentsError, AgentsState, ApplyOptions, FileMode, apply};
-use keel::config::{
+use ampelos::agents::{AgentsError, AgentsState, ApplyOptions, FileMode, apply};
+use ampelos::config::{
     AgentsConfig, MappingOverride, MappingOverrideKind, ResolvedOverride, SourceSpec,
 };
 use std::path::Path;
