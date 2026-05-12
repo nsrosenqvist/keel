@@ -8,15 +8,15 @@
 
 use crate::tui::app::App;
 use crate::tui::ui::{
-    SELECTION_BG, SELECTION_FG, SIDEBAR_RATIO, accent_of, kv, panel_block, panel_block_titled,
-    service_indicator_style, split_info_output,
+    SIDEBAR_RATIO, accent_of, kv, panel_block, panel_block_titled, service_indicator_style,
+    split_info_output,
 };
 use crate::tui::views::terminals::state::{TerminalsRow, TmuxWindow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState, Padding, Paragraph};
+use ratatui::widgets::{ListItem, Padding, Paragraph};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(false) = app.terminals().tmux_available {
@@ -57,98 +57,45 @@ fn render_tmux_missing(accent: Color, frame: &mut Frame, area: Rect) {
 }
 
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
+    use crate::tui::shared::sidebar_layout::{
+        JoinPosition, SidebarGroup, render_grouped_sidebar,
+    };
+
     let rows = app.terminals_rows();
     let selected = app.terminals().selected.min(rows.len().saturating_sub(1));
-
-    // Split the sidebar into two stacked groups: services on top,
-    // terminals + sentinel below. Group sizing mirrors the control
-    // center's per-group constraints.
-    let services_count = rows
-        .iter()
-        .filter(|r| matches!(r, TerminalsRow::Service(_)))
-        .count();
-    let terminals_total = rows.len() - services_count;
-    let constraints: Vec<Constraint> = if services_count > 0 {
-        vec![
-            Constraint::Length((services_count as u16).saturating_add(2)),
-            Constraint::Min((terminals_total as u16).saturating_add(2)),
-        ]
-    } else {
-        vec![Constraint::Min(1)]
-    };
-    let areas = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(area);
-
     let accent = accent_of(app);
-    // Selection chrome: muted dark grey background with white text.
-    // Shared across views so the "this is the selected row"
-    // affordance reads consistently. The view's accent appears in
-    // the row's foreground content (e.g. group titles) — keeping
-    // the highlight neutral lets it not compete for attention.
-    let highlight = Style::default()
-        .fg(SELECTION_FG)
-        .bg(SELECTION_BG)
-        .add_modifier(Modifier::BOLD);
 
-    // Services group
-    if services_count > 0 {
-        let mut svc_items: Vec<ListItem> = Vec::new();
-        let mut svc_selected: Option<usize> = None;
-        for (local_idx, (global_idx, row)) in rows
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| matches!(r, TerminalsRow::Service(_)))
-            .enumerate()
-        {
-            let TerminalsRow::Service(name) = row else {
-                continue;
-            };
-            if global_idx == selected {
-                svc_selected = Some(local_idx);
-            }
-            let glyph_style = service_indicator_style(app, name);
-            svc_items.push(ListItem::new(Line::from(vec![
-                Span::styled("● ", glyph_style),
-                Span::raw(name.clone()),
-            ])));
-        }
-        let title = Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                "services",
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" ({services_count}) "),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]);
-        let list = List::new(svc_items)
-            .block(panel_block_titled(title))
-            .highlight_style(highlight)
-            .highlight_spacing(HighlightSpacing::Always);
-        let mut state = ListState::default();
-        state.select(svc_selected);
-        frame.render_stateful_widget(list, areas[0], &mut state);
-    }
-
-    // Terminals + sentinel group
+    // Bucket the global rows into services-on-top + windows+sentinel
+    // below. The flat-index order matches `terminals_rows()` so a
+    // global index → rect lookup is a straight Vec subscript.
+    let mut svc_items: Vec<ListItem> = Vec::new();
+    let mut svc_selected: Option<usize> = None;
     let mut term_items: Vec<ListItem> = Vec::new();
     let mut term_selected: Option<usize> = None;
     for (global_idx, row) in rows.iter().enumerate() {
         match row {
-            TerminalsRow::Service(_) => continue,
-            TerminalsRow::Window(w) => {
+            TerminalsRow::Service(name) => {
+                let local_idx = svc_items.len();
                 if global_idx == selected {
-                    term_selected = Some(term_items.len());
+                    svc_selected = Some(local_idx);
+                }
+                let glyph_style = service_indicator_style(app, name);
+                svc_items.push(ListItem::new(Line::from(vec![
+                    Span::styled("● ", glyph_style),
+                    Span::raw(name.clone()),
+                ])));
+            }
+            TerminalsRow::Window(w) => {
+                let local_idx = term_items.len();
+                if global_idx == selected {
+                    term_selected = Some(local_idx);
                 }
                 term_items.push(ListItem::new(window_row_line(w)));
             }
             TerminalsRow::NewSentinel => {
+                let local_idx = term_items.len();
                 if global_idx == selected {
-                    term_selected = Some(term_items.len());
+                    term_selected = Some(local_idx);
                 }
                 term_items.push(ListItem::new(Line::from(Span::styled(
                     "+ new shell",
@@ -157,69 +104,36 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
             }
         }
     }
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            "terminals",
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" ({}) ", terminals_total - 1),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
-    let area_for_terms = if services_count > 0 {
-        areas[1]
-    } else {
-        areas[0]
-    };
-    let list = List::new(term_items)
-        .block(panel_block_titled(title))
-        .highlight_style(highlight)
-        .highlight_spacing(HighlightSpacing::Always);
-    let mut state = ListState::default();
-    state.select(term_selected);
-    frame.render_stateful_widget(list, area_for_terms, &mut state);
 
-    // Per-row rects keyed by the global index into `app.terminals_rows()`.
-    // Services occupy the top group; windows + sentinel occupy the
-    // bottom group (or the only group when no services exist).
-    let mut rects = app.terminals().row_rects.borrow_mut();
-    rects.clear();
-    rects.resize(rows.len(), Rect::default());
-    let svc_area = if services_count > 0 {
-        Some(areas[0])
-    } else {
-        None
-    };
-    let mut svc_local = 0usize;
-    let mut term_local = 0usize;
-    for (global_idx, row) in rows.iter().enumerate() {
-        let (group_area, local_idx) = match row {
-            TerminalsRow::Service(_) => {
-                let Some(a) = svc_area else { continue };
-                let l = svc_local;
-                svc_local += 1;
-                (a, l)
-            }
-            TerminalsRow::Window(_) | TerminalsRow::NewSentinel => {
-                let l = term_local;
-                term_local += 1;
-                (area_for_terms, l)
-            }
-        };
-        let inner_y = group_area.y.saturating_add(1);
-        let inner_h = group_area.height.saturating_sub(2);
-        if (local_idx as u16) >= inner_h {
-            continue;
-        }
-        rects[global_idx] = Rect {
-            x: group_area.x.saturating_add(1),
-            y: inner_y + local_idx as u16,
-            width: group_area.width.saturating_sub(2),
-            height: 1,
-        };
+    let mut groups: Vec<SidebarGroup<'_>> = Vec::new();
+    let mut joins: Vec<JoinPosition> = Vec::new();
+    if !svc_items.is_empty() {
+        groups.push(SidebarGroup {
+            label: "services",
+            items: svc_items,
+            selected_local: svc_selected,
+        });
+        joins.push(JoinPosition::Standalone);
     }
+    // The "terminals" group always renders even when empty — the
+    // `+ new shell` sentinel is in `rows`, so `term_items` always
+    // has at least one entry. We still guard with `is_empty()` for
+    // robustness against future row-list changes.
+    if !term_items.is_empty() {
+        // Subtract 1 for the synthetic `+ new shell` sentinel so the
+        // count reflects user-created windows.
+        let label = "terminals";
+        let _ = label; // suppress lint when items are empty
+        groups.push(SidebarGroup {
+            label,
+            items: term_items,
+            selected_local: term_selected,
+        });
+        joins.push(JoinPosition::Standalone);
+    }
+
+    let mut rects = app.terminals().row_rects.borrow_mut();
+    render_grouped_sidebar(frame, area, &groups, &joins, accent, &mut rects, None);
 }
 
 /// Render one window row in the terminals sidebar. Tmux's

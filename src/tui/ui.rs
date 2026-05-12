@@ -231,8 +231,44 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
 // ─────────────────────── sidebar ───────────────────────
 
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
-    let groups = build_groups(app);
-    if groups.is_empty() {
+    use crate::tui::shared::sidebar_layout::{
+        JoinPosition, SidebarGroup, render_grouped_sidebar,
+    };
+
+    // Bucket items by kind into the four named groups. Recipes and
+    // scripts share a single "commands" group — to most users they're
+    // the same thing (a runnable command), and the distinction is
+    // still visible where it matters (kind tag in the palette and
+    // detail pane). Sidebar order preserves the iteration order of
+    // `app.items()` within the commands group, which is recipes
+    // (alphabetical) then scripts (alphabetical).
+    let mut runtime: Vec<&Item> = Vec::new();
+    let mut services: Vec<&Item> = Vec::new();
+    let mut watchers: Vec<&Item> = Vec::new();
+    let mut commands: Vec<&Item> = Vec::new();
+    for item in app.items() {
+        match item.kind {
+            ItemKind::Runtime => runtime.push(item),
+            ItemKind::Service => services.push(item),
+            ItemKind::Watcher => watchers.push(item),
+            ItemKind::Recipe | ItemKind::Script => commands.push(item),
+        }
+    }
+    let mut buckets: Vec<(&'static str, Vec<&Item>)> = Vec::new();
+    if !runtime.is_empty() {
+        buckets.push(("runtime", runtime));
+    }
+    if !services.is_empty() {
+        buckets.push(("services", services));
+    }
+    if !watchers.is_empty() {
+        buckets.push(("watchers", watchers));
+    }
+    if !commands.is_empty() {
+        buckets.push(("commands", commands));
+    }
+
+    if buckets.is_empty() {
         let block = panel_block(" commands ", accent_of(app));
         let body = Paragraph::new(Line::from(Span::styled(
             "  (no items)",
@@ -243,7 +279,32 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Mark adjacent container + services groups so they render as one
+    // Build shared SidebarGroups with pre-rendered list items + the
+    // local-selected index within each bucket. The flat-index order
+    // matches `app.items()` (build_items is the canonical order), so
+    // the global selection maps to one bucket's local index.
+    let global_idx = app.selected_index();
+    let mut groups: Vec<SidebarGroup<'_>> = Vec::with_capacity(buckets.len());
+    let mut cursor = 0usize;
+    for (label, items) in &buckets {
+        let local_selected = if global_idx >= cursor && global_idx < cursor + items.len() {
+            Some(global_idx - cursor)
+        } else {
+            None
+        };
+        let list_items: Vec<ListItem> = items
+            .iter()
+            .map(|item| ListItem::new(sidebar_item_line(app, item)))
+            .collect();
+        groups.push(SidebarGroup {
+            label,
+            items: list_items,
+            selected_local: local_selected,
+        });
+        cursor += items.len();
+    }
+
+    // Mark adjacent runtime + services groups so they render as one
     // joined block (shared horizontal seam) — they're related enough
     // (lifecycle of the workspace's runtime processes) to read as one
     // grouped panel rather than two separate ones.
@@ -255,233 +316,35 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
         }
     }
 
-    // Standalone groups use `items + 2` rows (top + bottom border).
-    // JoinedTop omits its bottom border — the seam is owned by the
-    // JoinedBottom group below it — so it only needs `items + 1`.
-    // The last group absorbs the slack so we don't overflow.
-    let last = groups.len() - 1;
-    let constraints: Vec<Constraint> = groups
-        .iter()
-        .enumerate()
-        .map(|(i, g)| {
-            let size = (g.len() as u16).saturating_add(joins[i].frame_rows());
-            if i == last {
-                Constraint::Min(size)
-            } else {
-                Constraint::Length(size)
-            }
-        })
-        .collect();
-    let areas = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(area);
-
-    let global_idx = app.selected_index();
-    // Refresh sidebar rect tracking. Each item maps 1:1 to a global
-    // index in `app.items()` because `build_groups` preserves the
-    // items() ordering (runtime → services → watchers → commands).
     let mut rects = app.sidebar_item_rects.borrow_mut();
-    rects.clear();
-    rects.resize(app.items().len(), Rect::default());
-    let mut cursor = 0;
-    for ((group, group_area), join) in groups.iter().zip(areas.iter()).zip(joins.iter()) {
-        let local_selected = if global_idx >= cursor && global_idx < cursor + group.len() {
-            Some(global_idx - cursor)
-        } else {
-            None
-        };
-        render_group(app, group, *group_area, local_selected, *join, frame);
-        // Inner content rows of the block — both Top and Standalone
-        // have a top border (1 row), and Bottom inherits a top border
-        // too; the geometry of "first content row at area.y + 1" is
-        // uniform across join positions.
-        let inner_x = group_area.x.saturating_add(1);
-        let inner_y = group_area.y.saturating_add(1);
-        let inner_w = group_area.width.saturating_sub(2);
-        let inner_h_raw = match join {
-            JoinPosition::Standalone | JoinPosition::Bottom => group_area.height.saturating_sub(2),
-            // Top half has no bottom border — its full content area
-            // is height - 1 rows.
-            JoinPosition::Top => group_area.height.saturating_sub(1),
-        };
-        for (local_i, _item) in group.items.iter().enumerate() {
-            if (local_i as u16) >= inner_h_raw {
-                // Group's panel is too short to show this item; leave
-                // its rect as Default (zero-area → never hit-tested).
-                continue;
-            }
-            rects[cursor + local_i] = Rect {
-                x: inner_x,
-                y: inner_y + local_i as u16,
-                width: inner_w,
-                height: 1,
-            };
-        }
-        cursor += group.len();
-    }
+    render_grouped_sidebar(
+        frame,
+        area,
+        &groups,
+        &joins,
+        accent_of(app),
+        &mut rects,
+        Some("▶ "),
+    );
 }
 
-struct SidebarGroup<'a> {
-    label: &'static str,
-    items: Vec<&'a Item>,
-}
-
-impl<'a> SidebarGroup<'a> {
-    fn len(&self) -> usize {
-        self.items.len()
+/// One control-center sidebar row: kind glyph + name + optional
+/// backend badge for non-compose services.
+fn sidebar_item_line<'a>(app: &App, item: &'a Item) -> Line<'a> {
+    let glyph = glyph_for(item.kind);
+    let glyph_style = item_indicator_style(app, item);
+    let mut spans = vec![
+        Span::styled(format!("{glyph} "), glyph_style),
+        Span::raw(item.name.clone()),
+    ];
+    if let Some(badge) = service_backend_badge(app, item) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            badge,
+            Style::default().fg(Color::DarkGray).dim(),
+        ));
     }
-}
-
-/// Whether a sidebar group renders as its own bordered block or as
-/// one half of a joined pair (container + services). The pair shares
-/// a single horizontal seam — the top half drops its bottom border,
-/// and the bottom half's top corners are redrawn as `├` / `┤` so the
-/// two read as a single block divided by a divider line.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum JoinPosition {
-    Standalone,
-    Top,
-    Bottom,
-}
-
-impl JoinPosition {
-    fn borders(self) -> Borders {
-        match self {
-            JoinPosition::Standalone | JoinPosition::Bottom => Borders::ALL,
-            JoinPosition::Top => Borders::TOP | Borders::LEFT | Borders::RIGHT,
-        }
-    }
-
-    /// Number of non-content rows the block consumes. Top has no
-    /// bottom border, so the seam belongs to the Bottom half.
-    fn frame_rows(self) -> u16 {
-        match self {
-            JoinPosition::Top => 1,
-            _ => 2,
-        }
-    }
-}
-
-fn build_groups(app: &App) -> Vec<SidebarGroup<'_>> {
-    // Recipes and scripts share a single "commands" group in the
-    // sidebar — to most users they're the same thing (a runnable
-    // command), and the distinction is still visible where it matters
-    // (kind tag in the palette and detail pane). Sidebar order
-    // preserves the iteration order of `app.items()` within the
-    // commands group, which is recipes (alphabetical) then scripts
-    // (alphabetical) — natural enough for browsing.
-    let mut runtime = Vec::new();
-    let mut services = Vec::new();
-    let mut watchers = Vec::new();
-    let mut commands = Vec::new();
-    for item in app.items() {
-        match item.kind {
-            ItemKind::Runtime => runtime.push(item),
-            ItemKind::Service => services.push(item),
-            ItemKind::Watcher => watchers.push(item),
-            ItemKind::Recipe | ItemKind::Script => commands.push(item),
-        }
-    }
-    let mut out = Vec::new();
-    if !runtime.is_empty() {
-        out.push(SidebarGroup {
-            label: "runtime",
-            items: runtime,
-        });
-    }
-    if !services.is_empty() {
-        out.push(SidebarGroup {
-            label: "services",
-            items: services,
-        });
-    }
-    if !watchers.is_empty() {
-        out.push(SidebarGroup {
-            label: "watchers",
-            items: watchers,
-        });
-    }
-    if !commands.is_empty() {
-        out.push(SidebarGroup {
-            label: "commands",
-            items: commands,
-        });
-    }
-    out
-}
-
-fn render_group(
-    app: &App,
-    group: &SidebarGroup<'_>,
-    area: Rect,
-    selected: Option<usize>,
-    join: JoinPosition,
-    frame: &mut Frame,
-) {
-    let accent = accent_of(app);
-    let title_line = Line::from(vec![
-        Span::raw(" "),
-        Span::styled(
-            group.label,
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" ({}) ", group.items.len()),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
-    let block = panel_block_titled(title_line).borders(join.borders());
-
-    let list_items: Vec<ListItem> = group
-        .items
-        .iter()
-        .map(|item| {
-            let glyph = glyph_for(item.kind);
-            let glyph_style = item_indicator_style(app, item);
-            let mut spans = vec![
-                Span::styled(format!("{glyph} "), glyph_style),
-                Span::raw(item.name.clone()),
-            ];
-            if let Some(badge) = service_backend_badge(app, item) {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled(
-                    badge,
-                    Style::default().fg(Color::DarkGray).dim(),
-                ));
-            }
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
-
-    let list = List::new(list_items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(SELECTION_FG)
-                .bg(SELECTION_BG)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ")
-        // Reserve the gutter for the indicator on every row so
-        // unselected items align with the selected one. Without this,
-        // changing selection horizontally shifts the rest of the list.
-        .highlight_spacing(HighlightSpacing::Always);
-
-    let mut state = ListState::default();
-    state.select(selected);
-    frame.render_stateful_widget(list, area, &mut state);
-
-    // For the lower half of a joined pair, replace the rounded top
-    // corners (╭ ╮) drawn by the block with tee connectors (├ ┤) so
-    // the seam reads as a divider inside one block rather than the
-    // top edge of a second block sitting below the first.
-    if join == JoinPosition::Bottom && area.width >= 2 && area.height >= 1 {
-        let style = Style::default().fg(Color::DarkGray);
-        let buf = frame.buffer_mut();
-        buf.set_string(area.x, area.y, "├", style);
-        buf.set_string(area.x + area.width - 1, area.y, "┤", style);
-    }
+    Line::from(spans)
 }
 
 /// Returns a tiny tag for service rows whose backend isn't compose,
