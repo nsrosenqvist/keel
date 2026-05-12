@@ -8,7 +8,7 @@ stack runs the way your project runs it — the tool bends, not
 the project.
 
 - **Site:** [keel.rs](https://keel.rs)
-- **Status:** pre-alpha. End-to-end usable on Linux and macOS
+- **Status:** alpha. End-to-end usable on Linux and macOS
   for the features documented here.
 
 ## 60 seconds with keel

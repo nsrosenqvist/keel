@@ -6,9 +6,15 @@ hook + open dashboard" in under five minutes. After that, the
 
 ## 1. Install
 
-keel is a single Rust binary. Two install paths:
+keel is a single Rust binary. Three install paths:
 
-### From a clone
+### Homebrew (macOS / Linux)
+
+```sh
+brew install nsrosenqvist/keel/keel
+```
+
+### From a clone (any platform)
 
 ```sh
 git clone https://github.com/nsrosenqvist/keel
@@ -24,8 +30,8 @@ The binary is named `keel` and lands in `~/.cargo/bin/`.
 cargo install keel
 ```
 
-(Pre-alpha; not yet on crates.io. Track the project README for the
-publish announcement.)
+(Not yet on crates.io. Track the project README for the publish
+announcement.)
 
 ### Verify
 

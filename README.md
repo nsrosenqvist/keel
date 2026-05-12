@@ -14,22 +14,27 @@ subset, sync agent instructions from upstream repos, and
 supervise the whole stack from a built-in TUI.
 
 - **Site:** [keel.rs](https://keel.rs)
-- **Status:** pre-alpha. End-to-end usable on Linux and macOS
+- **Status:** alpha. End-to-end usable on Linux and macOS
   for the features documented in the wiki.
 
 ## Install
 
-From source today (any platform):
+Homebrew (macOS / Linux):
 
 ```sh
-cargo install --path .          # from a clone
+brew install nsrosenqvist/keel/keel
 ```
 
-Once the first stable release is cut:
+From a clone (any platform):
 
 ```sh
-brew install nsrosenqvist/keel/keel   # macOS / Linux
-cargo install keel                    # from crates.io
+cargo install --path .
+```
+
+Once published to crates.io:
+
+```sh
+cargo install keel
 ```
 
 The binary is named `keel`.
