@@ -174,6 +174,37 @@ pub struct KillWindow {
     pub index: u32,
 }
 
+/// A queued one-shot side effect for the event loop to act on
+/// between ticks. Handlers push these via [`App::queue`]; the loop
+/// drains them via [`App::drain_commands`] and dispatches each by
+/// variant. Replaces the four parallel `pending_*` fields the App
+/// used to carry — adding a new async side effect is now one
+/// variant + one match arm instead of one field + one accessor +
+/// one drain check.
+#[derive(Debug)]
+pub enum Command {
+    /// Hot-reload into another worktree. The event loop returns
+    /// `DriveOutcome::SwitchWorktree` and the outer CLI loop tears
+    /// down + rebuilds the App against the new project root.
+    SwitchWorktree(PathBuf),
+    /// Drop into a tmux session/window. The event loop leaves the
+    /// alternate screen, runs `tmux attach`, and re-enters when the
+    /// user detaches.
+    AttachTmux(AttachRequest),
+    /// Run `tmux kill-window` against `(session, index)`. The
+    /// terminals view refreshes its window list afterwards.
+    KillTmuxWindow(KillWindow),
+    /// Suspend the TUI, run `lazygit` foreground, and resume when
+    /// the user q's out.
+    OpenLazygit,
+    /// Write `\x07` to stdout so the outer terminal emulator
+    /// triggers its configured bell action (audible beep, OS
+    /// notification, dock badge). Edge-armed by
+    /// [`crate::tui::views::terminals::state::TerminalsView::set_windows`]
+    /// when a watched window's `has_bell` flips false→true.
+    EmitBell,
+}
+
 /// Recompute `filtered` from the current `branch_input`. Empty
 /// query → every branch in original order; non-empty → case-
 /// insensitive substring match (good enough for v1; can swap in
@@ -302,10 +333,10 @@ pub struct App {
     /// mode, `Some(Modal::X)` ↔ X mode. Eliminates a class of
     /// mode/state desync bugs.
     modal: Option<Modal>,
-    /// Path the event loop should hot-reload into. When set, `drive`
-    /// returns `DriveOutcome::SwitchWorktree(path)` and the outer
-    /// loop tears the App down and rebuilds it.
-    pub pending_switch: Option<PathBuf>,
+    /// Queued one-shot side effects (worktree switch, tmux attach,
+    /// lazygit handoff, kill window, BEL emit). Drained by the
+    /// event loop in `drive` via [`Self::drain_commands`].
+    commands: Vec<Command>,
     /// Cached project root so the switcher can prefill its path
     /// input with the current parent dir.
     project_root: PathBuf,
@@ -320,18 +351,6 @@ pub struct App {
     /// the user first opens the view; the session name + tmux probe
     /// happen on first switch).
     terminals: TerminalsView,
-    /// Pending attach request from the Terminals view. The event
-    /// loop drains this between ticks: drops the events reader,
-    /// leaves alternate screen, runs tmux attach, re-enters.
-    pub pending_attach: Option<AttachRequest>,
-    /// Pending tmux window kill — drained between ticks so the
-    /// event loop can shell out (`tmux kill-window`) without
-    /// holding a borrow on App while the action runs.
-    pending_kill_window: Option<KillWindow>,
-    /// Pending lazygit handoff — set by the diff view's `L` keybind,
-    /// drained between ticks so the event loop can suspend the TUI,
-    /// run lazygit foreground, and resume.
-    pub pending_lazygit: bool,
     /// Diff view state. Lazily populated on first switch / refresh.
     diff: DiffView,
     /// Diagnostic messages flushed to stderr after the TUI exits.
@@ -389,14 +408,11 @@ impl App {
             watchers: BTreeMap::new(),
             flash_message: None,
             modal: None,
-            pending_switch: None,
+            commands: Vec::new(),
             project_root: PathBuf::from("."),
             branch: None,
             view: View::ControlCenter,
             terminals,
-            pending_attach: None,
-            pending_kill_window: None,
-            pending_lazygit: false,
             diff: DiffView::default(),
             diagnostics: Vec::new(),
             boot: BootChannels::default(),
@@ -983,7 +999,7 @@ impl App {
         }
         let row = s.entries[s.selected].clone();
         if !row.is_current {
-            self.pending_switch = Some(row.path);
+            self.queue(Command::SwitchWorktree(row.path));
         }
         self.close_switcher();
         SwitcherConfirm::Switched
@@ -1161,7 +1177,7 @@ impl App {
     pub fn switcher_form_finish(&mut self, result: Result<PathBuf, String>) {
         match result {
             Ok(path) => {
-                self.pending_switch = Some(path);
+                self.queue(Command::SwitchWorktree(path));
                 self.close_switcher();
             }
             Err(msg) => {
@@ -1170,13 +1186,6 @@ impl App {
                 }
             }
         }
-    }
-
-    /// Take the queued worktree switch path, if any. Called by the
-    /// event loop after `drive` returns; the path drives a full App
-    /// rebuild against the new project root.
-    pub fn take_pending_switch(&mut self) -> Option<PathBuf> {
-        self.pending_switch.take()
     }
 
     pub fn terminals(&self) -> &TerminalsView {
@@ -1208,14 +1217,19 @@ impl App {
     }
 
     /// Replace the cached tmux window list and clamp selection to
-    /// the new row count. Thin wrapper around
-    /// [`TerminalsView::set_windows`] that supplies the row total
-    /// (services + windows + sentinel) the view itself can't know.
+    /// the new row count. Wraps [`TerminalsView::set_windows`] with
+    /// the row total (services + windows + sentinel) the view itself
+    /// can't know, and translates the view's bell-edge flag into a
+    /// queued [`Command::EmitBell`] so the event loop can write the
+    /// BEL after the next render.
     pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
         let non_service_windows = windows.iter().filter(|w| !w.name.starts_with("svc:")).count();
         // services count + window rows + 1 sentinel
         let total_after = self.services.len() + non_service_windows + 1;
         self.terminals.set_windows(windows, total_after);
+        if self.terminals.take_pending_bell() {
+            self.queue(Command::EmitBell);
+        }
     }
 
     /// Drop any tmux snapshots the worker queued while the user was
@@ -1278,14 +1292,14 @@ impl App {
             }
             TerminalsRow::Window(window) => {
                 let session = self.terminals.session_name.clone();
-                self.pending_attach = Some(AttachRequest {
+                self.queue(Command::AttachTmux(AttachRequest {
                     session,
                     window: window.index.to_string(),
                     create_with: None,
                     ensure: None,
                     window_name: None,
                     window_options: Vec::new(),
-                });
+                }));
             }
             TerminalsRow::NewSentinel => {
                 self.queue_new_shell();
@@ -1340,14 +1354,14 @@ impl App {
         // overwrites the placeholder name once `$SHELL` starts —
         // unless `window_name` is set, which is the devcontainer
         // path's defence against everything becoming "docker".
-        self.pending_attach = Some(AttachRequest {
+        self.queue(Command::AttachTmux(AttachRequest {
             session,
             window: "keel-new".to_string(),
             create_with,
             ensure,
             window_name,
             window_options,
-        });
+        }));
     }
 
     /// Open a confirmation modal for killing the selected window.
@@ -1375,14 +1389,6 @@ impl App {
                 name,
             },
         }));
-    }
-
-    pub fn take_pending_kill_window(&mut self) -> Option<KillWindow> {
-        self.pending_kill_window.take()
-    }
-
-    pub fn take_pending_attach(&mut self) -> Option<AttachRequest> {
-        self.pending_attach.take()
     }
 
     /// Queue an attach into the named compose service and jump to
@@ -1423,14 +1429,14 @@ impl App {
         let create_with = Some(format!(
             "docker compose exec -it {service} sh -c 'exec ${{SHELL:-/bin/sh}}'"
         ));
-        self.pending_attach = Some(AttachRequest {
+        self.queue(Command::AttachTmux(AttachRequest {
             session,
             window,
             create_with,
             ensure: None,
             window_name: None,
             window_options: Vec::new(),
-        });
+        }));
         self.view = View::Terminals;
         Ok(())
     }
@@ -1445,6 +1451,20 @@ impl App {
 
     pub fn drain_diagnostics(&mut self) -> Vec<String> {
         std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Queue a one-shot side effect for the event loop to drain
+    /// between ticks. Handlers call this from synchronous code paths
+    /// that can't await — the loop owns the async work.
+    pub fn queue(&mut self, cmd: Command) {
+        self.commands.push(cmd);
+    }
+
+    /// Hand the queued commands to the event loop. Called once per
+    /// tick from [`crate::tui::terminal::drive`]; the loop matches
+    /// each variant and runs the corresponding side effect.
+    pub fn drain_commands(&mut self) -> Vec<Command> {
+        std::mem::take(&mut self.commands)
     }
 
     /// Show a transient status banner. Most action paths flash on
@@ -1473,14 +1493,8 @@ impl App {
         &mut self.diff
     }
 
-    /// Drain a one-shot lazygit-handoff request. The event loop
-    /// checks this between ticks (same pattern as `pending_attach`).
-    pub fn take_pending_lazygit(&mut self) -> bool {
-        std::mem::take(&mut self.pending_lazygit)
-    }
-
     pub fn request_lazygit(&mut self) {
-        self.pending_lazygit = true;
+        self.queue(Command::OpenLazygit);
     }
 
     pub fn confirm_resolve(&mut self, accept: bool) -> Option<LaunchRejection> {
@@ -1513,7 +1527,7 @@ impl App {
                 self.force_relaunch_selected().err()
             }
             ConfirmAction::KillTmuxWindow { session, index, .. } => {
-                self.pending_kill_window = Some(KillWindow { session, index });
+                self.queue(Command::KillTmuxWindow(KillWindow { session, index }));
                 None
             }
         }
@@ -2104,6 +2118,37 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
 
+    /// Drain the command queue and return the first queued
+    /// [`Command::AttachTmux`] payload (or `None`). Test-only
+    /// convenience so callers don't have to write the match every
+    /// time.
+    fn drained_attach(app: &mut App) -> Option<AttachRequest> {
+        app.drain_commands().into_iter().find_map(|c| match c {
+            Command::AttachTmux(r) => Some(r),
+            _ => None,
+        })
+    }
+
+    fn drained_switch(app: &mut App) -> Option<PathBuf> {
+        app.drain_commands().into_iter().find_map(|c| match c {
+            Command::SwitchWorktree(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    fn drained_kill_window(app: &mut App) -> Option<KillWindow> {
+        app.drain_commands().into_iter().find_map(|c| match c {
+            Command::KillTmuxWindow(k) => Some(k),
+            _ => None,
+        })
+    }
+
+    fn drained_emit_bell(app: &mut App) -> bool {
+        app.drain_commands()
+            .into_iter()
+            .any(|c| matches!(c, Command::EmitBell))
+    }
+
     /// Test cfg with no container backend, so the synthetic container
     /// row doesn't pollute item-count / index assertions for tests
     /// whose subject is unrelated.
@@ -2339,7 +2384,7 @@ mod tests {
         app.open_worktree_switcher(rows());
         let outcome = app.switcher_confirm();
         assert_eq!(outcome, SwitcherConfirm::Switched);
-        assert!(app.pending_switch.is_none());
+        assert!(drained_switch(&mut app).is_none());
         assert_eq!(app.mode(), Mode::Normal);
     }
 
@@ -2351,7 +2396,7 @@ mod tests {
         let outcome = app.switcher_confirm();
         assert_eq!(outcome, SwitcherConfirm::Switched);
         assert_eq!(
-            app.take_pending_switch(),
+            drained_switch(&mut app),
             Some(PathBuf::from("/repo-feature"))
         );
     }
@@ -2394,7 +2439,7 @@ mod tests {
         app.switcher_confirm();
         app.open_create_form(Vec::new(), None);
         app.switcher_form_finish(Ok(PathBuf::from("/repo-new")));
-        assert_eq!(app.take_pending_switch(), Some(PathBuf::from("/repo-new")));
+        assert_eq!(drained_switch(&mut app), Some(PathBuf::from("/repo-new")));
         assert_eq!(app.mode(), Mode::Normal);
     }
 
@@ -2500,7 +2545,7 @@ mod tests {
             has_bell: false,
             workspace: None,
         }]);
-        assert!(!app.terminals_mut().take_pending_bell());
+        assert!(!drained_emit_bell(&mut app));
         // Bell flips on.
         app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
             index: 0,
@@ -2509,9 +2554,9 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(app.terminals_mut().take_pending_bell(), "fresh bell should arm emit");
+        assert!(drained_emit_bell(&mut app), "fresh bell should arm emit");
         // take_pending_bell clears the flag.
-        assert!(!app.terminals_mut().take_pending_bell());
+        assert!(!drained_emit_bell(&mut app));
     }
 
     /// A window whose bell stays set across snapshots should NOT
@@ -2527,7 +2572,7 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(app.terminals_mut().take_pending_bell(), "first observation arms");
+        assert!(drained_emit_bell(&mut app), "first observation arms");
         app.terminals_set_windows(vec![crate::tui::app::TmuxWindow {
             index: 0,
             name: "zsh".into(),
@@ -2535,7 +2580,7 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(!app.terminals_mut().take_pending_bell(), "still-set bell should not re-arm");
+        assert!(!drained_emit_bell(&mut app), "still-set bell should not re-arm");
     }
 
     /// `silence_next_bell` resyncs the baseline without arming —
@@ -2562,7 +2607,7 @@ mod tests {
             workspace: None,
         }]);
         assert!(
-            !app.terminals_mut().take_pending_bell(),
+            !drained_emit_bell(&mut app),
             "silence flag should suppress this one emit"
         );
         // Subsequent transitions arm again. Clear, then re-fire.
@@ -2581,7 +2626,7 @@ mod tests {
             workspace: None,
         }]);
         assert!(
-            app.terminals_mut().take_pending_bell(),
+            drained_emit_bell(&mut app),
             "silence is single-shot — next transition should arm"
         );
     }
@@ -2591,7 +2636,7 @@ mod tests {
         let mut app = App::new(cfg());
         // Single row (sentinel). selected = 0.
         app.terminals_confirm();
-        let req = app.take_pending_attach().unwrap();
+        let req = drained_attach(&mut app).unwrap();
         assert_eq!(req.window, "keel-new");
         assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
     }
@@ -2608,7 +2653,7 @@ mod tests {
         }]);
         app.terminals.selected = 0;
         app.terminals_confirm();
-        let req = app.take_pending_attach().unwrap();
+        let req = drained_attach(&mut app).unwrap();
         assert_eq!(req.window, "3");
         assert!(req.create_with.is_none());
     }
@@ -2621,12 +2666,12 @@ mod tests {
         // so regressing one would catch the other in tests.
         let mut from_shortcut = App::new(cfg());
         from_shortcut.queue_new_shell();
-        let req_shortcut = from_shortcut.take_pending_attach().unwrap();
+        let req_shortcut = drained_attach(&mut from_shortcut).unwrap();
 
         let mut from_sentinel = App::new(cfg());
         // Single sentinel row at index 0 in the empty cfg.
         from_sentinel.terminals_confirm();
-        let req_sentinel = from_sentinel.take_pending_attach().unwrap();
+        let req_sentinel = drained_attach(&mut from_sentinel).unwrap();
 
         assert_eq!(req_shortcut.session, req_sentinel.session);
         assert_eq!(req_shortcut.window, req_sentinel.window);
@@ -2650,7 +2695,7 @@ mod tests {
         app.terminals.selected = 0;
         app.terminals_kill_selected();
         assert_eq!(app.mode(), Mode::Confirm);
-        assert!(app.take_pending_kill_window().is_none());
+        assert!(drained_kill_window(&mut app).is_none());
         let dialog = app.confirm_dialog().unwrap();
         assert!(dialog.title.contains("zsh"));
         assert!(dialog.yes_focused);
@@ -2670,7 +2715,7 @@ mod tests {
         app.terminals_kill_selected();
         let rejection = app.confirm_resolve(true);
         assert!(rejection.is_none());
-        let kill = app.take_pending_kill_window().unwrap();
+        let kill = drained_kill_window(&mut app).unwrap();
         assert_eq!(kill.index, 0);
     }
 
@@ -2687,7 +2732,7 @@ mod tests {
         app.terminals.selected = 0;
         app.terminals_kill_selected();
         app.confirm_resolve(false);
-        assert!(app.take_pending_kill_window().is_none());
+        assert!(drained_kill_window(&mut app).is_none());
     }
 
     #[test]
@@ -2723,7 +2768,7 @@ mod tests {
         let mut app = App::new(cfg());
         app.queue_service_attach("app").unwrap();
         assert_eq!(app.view(), View::Terminals);
-        let req = app.take_pending_attach().unwrap();
+        let req = drained_attach(&mut app).unwrap();
         assert_eq!(req.window, "svc:app");
         assert!(
             req.create_with
@@ -2752,7 +2797,7 @@ mod tests {
         let err = app.queue_service_attach("postgres").unwrap_err();
         assert!(err.contains("systemd"), "msg: {err}");
         assert_eq!(app.view(), View::ControlCenter);
-        assert!(app.take_pending_attach().is_none());
+        assert!(drained_attach(&mut app).is_none());
     }
 
     #[test]

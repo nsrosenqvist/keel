@@ -6,7 +6,8 @@
 
 use crate::tui::TuiError;
 use crate::tui::app::{
-    App, ClickTarget, DOUBLE_CLICK_WINDOW, LaunchRejection, Mode, View,
+    App, AttachRequest, ClickTarget, Command, DOUBLE_CLICK_WINDOW, KillWindow, LaunchRejection,
+    Mode, View,
 };
 use crate::tui::dialogs::switcher::{BranchSpec, NewWorktreeAction, SwitcherConfirm, WorktreeRow};
 use crate::tui::ui;
@@ -100,7 +101,7 @@ async fn drive(
     app.spawn_service_tails().await;
 
     let mut events = spawn_event_reader();
-    loop {
+    'outer: loop {
         // Pre-render hooks: drain queued output and advance run state.
         // All blocking I/O lives off this path — boot tasks deliver
         // their results via channels (drain_boot_results), the
@@ -115,141 +116,44 @@ async fn drive(
         app.tick_watchers().await;
 
         terminal.draw(|f| ui::render(app, f))?;
-        // Forward fresh tmux bells to the outer terminal so the
-        // user's emulator can run its configured action (audible
-        // beep, OS notification, dock badge — whatever they picked).
-        // Edge-triggered: armed only when a window's `has_bell`
-        // flipped false→true on the most recent worker snapshot, so
-        // a window that already has a pending bell doesn't keep
-        // re-firing every tick. Written after the draw because
-        // ratatui has just released the terminal; `\x07` doesn't
-        // move the cursor, so it's safe between frames.
-        if app.terminals_mut().take_pending_bell() {
-            let mut out = stdout();
-            let _ = out.write_all(b"\x07");
-            let _ = out.flush();
-        }
         if app.should_quit() {
             return Ok(DriveOutcome::Quit);
         }
-        if let Some(path) = app.take_pending_switch() {
-            return Ok(DriveOutcome::SwitchWorktree {
-                path,
-                view: app.view(),
-            });
-        }
-        if let Some(req) = app.take_pending_attach() {
-            // If the attach needs a devcontainer ensure_up, run it
-            // *before* yielding to tmux. A failed ensure_up flashes
-            // an error and drops the attach — better than handing
-            // the user a tmux window that dies the second
-            // `docker exec` realises the container isn't there.
-            if let Some(ensure) = &req.ensure
-                && let Err(e) = ensure.backend.ensure_up().await
-            {
-                app.flash(format!("devcontainer ensure-up failed: {e}"));
-                continue;
-            }
-            // Yield the terminal to tmux. Drop the events reader
-            // first so its blocking poll thread doesn't fight tmux
-            // for input, leave alternate screen / cooked mode, run
-            // tmux attach (it inherits stdin/stdout/stderr from us),
-            // then re-enter the TUI when the user detaches.
-            drop(events);
-            leave_terminal(terminal)?;
-            attach_tmux(&req).await;
-            *terminal = enter_terminal(&terminal_title(app))?;
-            terminal.clear()?;
-            events = spawn_event_reader();
-            // Drain phantom events for a short window. Terminals
-            // respond to tmux's mode-restore queries (DA, color
-            // queries, etc.) with bytes on stdin that crossterm
-            // parses as Events — verified in the wild: ghostty
-            // emitted 76 keypresses including `d`s, which would
-            // happily trigger `terminals_kill_selected` on the
-            // brand-new shell window. Real user keypresses don't
-            // arrive within 150ms of pressing ctrl+b d (their
-            // fingers are still recovering from the chord); the
-            // terminal's response bytes do.
-            //
-            // Set `KEEL_DEBUG_INPUT=1` to log every drained
-            // event — useful when porting to a new terminal that
-            // misbehaves in some other way.
-            let verbose = std::env::var("KEEL_DEBUG_INPUT")
-                .map(|v| !v.is_empty() && v != "0")
-                .unwrap_or(false);
-            let drain_deadline = std::time::Instant::now() + Duration::from_millis(150);
-            let mut drained_count = 0usize;
-            while std::time::Instant::now() < drain_deadline {
-                match tokio::time::timeout(Duration::from_millis(30), events.recv()).await {
-                    Ok(Some(ev)) => {
-                        drained_count += 1;
-                        if verbose {
-                            app.diagnostic(format!("[input]   {ev:?}"));
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(_) => {} // timeout — keep waiting until the deadline
+        // Drain queued commands from handlers. One match arm per
+        // variant — adding a new async side effect is one variant in
+        // `Command` plus one arm here, no new `take_pending_*`
+        // accessor or `if let Some(_) = ...` drain block to wire up.
+        for cmd in app.drain_commands() {
+            match cmd {
+                Command::EmitBell => {
+                    // Edge-triggered: armed only when a window's
+                    // `has_bell` flipped false→true on the most recent
+                    // worker snapshot. Written after the draw because
+                    // ratatui has just released the terminal; `\x07`
+                    // doesn't move the cursor, so it's safe between
+                    // frames.
+                    let mut out = stdout();
+                    let _ = out.write_all(b"\x07");
+                    let _ = out.flush();
+                }
+                Command::SwitchWorktree(path) => {
+                    return Ok(DriveOutcome::SwitchWorktree {
+                        path,
+                        view: app.view(),
+                    });
+                }
+                Command::AttachTmux(req) => {
+                    run_attach(app, req, &mut events, terminal).await?;
+                    continue 'outer;
+                }
+                Command::KillTmuxWindow(kill) => {
+                    run_kill_window(app, kill).await;
+                }
+                Command::OpenLazygit => {
+                    run_lazygit(app, &mut events, terminal).await?;
+                    continue 'outer;
                 }
             }
-            if verbose && drained_count > 0 {
-                app.diagnostic(format!(
-                    "[input] discarded {drained_count} post-detach phantom event(s) — terminal mode-restore artefacts"
-                ));
-            }
-            // Bells that rang during the attach already played
-            // through tmux's `bell-action any` to the outer
-            // terminal — silence the next refresh so coming back to
-            // keel doesn't double-fire the BEL for windows whose
-            // flag is still set. Also discard any tmux snapshots the
-            // worker queued mid-attach: applying them after the
-            // synchronous refresh below would risk a stale
-            // false→true transition for a flag that's since cleared.
-            app.discard_pending_tmux_snapshots();
-            app.terminals_mut().silence_next_bell();
-            // Reload cached window list — new shell created, or
-            // user typed `exit` and the window died.
-            refresh_tmux_windows(app, true).await;
-            // Paint the post-attach state *now* so the user sees
-            // the refreshed terminals view immediately, without
-            // waiting for the next event-driven render.
-            terminal.draw(|f| ui::render(app, f))?;
-            continue;
-        }
-        if let Some(kill) = app.take_pending_kill_window() {
-            let _ = tokio::process::Command::new("tmux")
-                .args([
-                    "kill-window",
-                    "-t",
-                    &format!("{}:{}", kill.session, kill.index),
-                ])
-                .status()
-                .await;
-            // The session might be gone now if we just killed the
-            // last window — that's normal, no flash.
-            refresh_tmux_windows(app, false).await;
-        }
-        if app.take_pending_lazygit() {
-            // Mirror the tmux-attach handoff: drop the events
-            // reader so its blocking poll thread doesn't fight
-            // lazygit for stdin, leave alternate screen / cooked
-            // mode, run lazygit (it inherits stdin/stdout/stderr),
-            // then re-enter the TUI when the user q's out.
-            drop(events);
-            leave_terminal(terminal)?;
-            if let Err(msg) = crate::tui::lazygit::run(app.project_root()).await {
-                app.flash(msg.clone());
-                app.diagnostic(format!("[lazygit] {msg}"));
-            }
-            *terminal = enter_terminal(&terminal_title(app))?;
-            terminal.clear()?;
-            events = spawn_event_reader();
-            // Lazygit may have committed / staged / reset; the
-            // current diff snapshot is no longer authoritative.
-            app.diff_mut().mark_stale();
-            ensure_diff_loaded(app).await;
-            terminal.draw(|f| ui::render(app, f))?;
-            continue;
         }
         tokio::select! {
             biased;
@@ -264,6 +168,140 @@ async fn drive(
     }
 }
 
+/// Handle one queued [`Command::AttachTmux`]: ensure-up the
+/// devcontainer if required (else flash + bail), leave the alternate
+/// screen, run `tmux attach`, drain phantom mode-restore events,
+/// silence the next bell baseline, refresh the window list, and
+/// repaint. Caller should `continue 'outer` after this returns so the
+/// regular event-loop branches restart.
+async fn run_attach(
+    app: &mut App,
+    req: AttachRequest,
+    events: &mut mpsc::UnboundedReceiver<Event>,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+) -> Result<(), TuiError> {
+    // If the attach needs a devcontainer ensure_up, run it
+    // *before* yielding to tmux. A failed ensure_up flashes
+    // an error and drops the attach — better than handing
+    // the user a tmux window that dies the second
+    // `docker exec` realises the container isn't there.
+    if let Some(ensure) = &req.ensure
+        && let Err(e) = ensure.backend.ensure_up().await
+    {
+        app.flash(format!("devcontainer ensure-up failed: {e}"));
+        return Ok(());
+    }
+    // Yield the terminal to tmux. Drop the events reader
+    // first so its blocking poll thread doesn't fight tmux
+    // for input, leave alternate screen / cooked mode, run
+    // tmux attach (it inherits stdin/stdout/stderr from us),
+    // then re-enter the TUI when the user detaches.
+    let old_events = std::mem::replace(events, mpsc::unbounded_channel().1);
+    drop(old_events);
+    leave_terminal(terminal)?;
+    attach_tmux(&req).await;
+    *terminal = enter_terminal(&terminal_title(app))?;
+    terminal.clear()?;
+    *events = spawn_event_reader();
+    // Drain phantom events for a short window. Terminals
+    // respond to tmux's mode-restore queries (DA, color
+    // queries, etc.) with bytes on stdin that crossterm
+    // parses as Events — verified in the wild: ghostty
+    // emitted 76 keypresses including `d`s, which would
+    // happily trigger `terminals_kill_selected` on the
+    // brand-new shell window. Real user keypresses don't
+    // arrive within 150ms of pressing ctrl+b d (their
+    // fingers are still recovering from the chord); the
+    // terminal's response bytes do.
+    //
+    // Set `KEEL_DEBUG_INPUT=1` to log every drained
+    // event — useful when porting to a new terminal that
+    // misbehaves in some other way.
+    let verbose = std::env::var("KEEL_DEBUG_INPUT")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    let drain_deadline = std::time::Instant::now() + Duration::from_millis(150);
+    let mut drained_count = 0usize;
+    while std::time::Instant::now() < drain_deadline {
+        match tokio::time::timeout(Duration::from_millis(30), events.recv()).await {
+            Ok(Some(ev)) => {
+                drained_count += 1;
+                if verbose {
+                    app.diagnostic(format!("[input]   {ev:?}"));
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {} // timeout — keep waiting until the deadline
+        }
+    }
+    if verbose && drained_count > 0 {
+        app.diagnostic(format!(
+            "[input] discarded {drained_count} post-detach phantom event(s) — terminal mode-restore artefacts"
+        ));
+    }
+    // Bells that rang during the attach already played
+    // through tmux's `bell-action any` to the outer
+    // terminal — silence the next refresh so coming back to
+    // keel doesn't double-fire the BEL for windows whose
+    // flag is still set. Also discard any tmux snapshots the
+    // worker queued mid-attach: applying them after the
+    // synchronous refresh below would risk a stale
+    // false→true transition for a flag that's since cleared.
+    app.discard_pending_tmux_snapshots();
+    app.terminals_mut().silence_next_bell();
+    // Reload cached window list — new shell created, or
+    // user typed `exit` and the window died.
+    refresh_tmux_windows(app, true).await;
+    // Paint the post-attach state *now* so the user sees
+    // the refreshed terminals view immediately, without
+    // waiting for the next event-driven render.
+    terminal.draw(|f| ui::render(app, f))?;
+    Ok(())
+}
+
+/// Handle one queued [`Command::KillTmuxWindow`]: shell out to
+/// `tmux kill-window` and refresh the windows list. No flash on a
+/// session that's now gone — that's the normal "killed the last
+/// window" path.
+async fn run_kill_window(app: &mut App, kill: KillWindow) {
+    let _ = tokio::process::Command::new("tmux")
+        .args([
+            "kill-window",
+            "-t",
+            &format!("{}:{}", kill.session, kill.index),
+        ])
+        .status()
+        .await;
+    refresh_tmux_windows(app, false).await;
+}
+
+/// Handle one queued [`Command::OpenLazygit`]: mirror the tmux-attach
+/// handoff (drop the events reader, leave alt screen, run lazygit
+/// inheriting stdio, re-enter), then mark the diff stale and reload
+/// so a commit / stage / reset inside lazygit shows up immediately.
+/// Caller should `continue 'outer` after this returns.
+async fn run_lazygit(
+    app: &mut App,
+    events: &mut mpsc::UnboundedReceiver<Event>,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+) -> Result<(), TuiError> {
+    let old_events = std::mem::replace(events, mpsc::unbounded_channel().1);
+    drop(old_events);
+    leave_terminal(terminal)?;
+    if let Err(msg) = crate::tui::lazygit::run(app.project_root()).await {
+        app.flash(msg.clone());
+        app.diagnostic(format!("[lazygit] {msg}"));
+    }
+    *terminal = enter_terminal(&terminal_title(app))?;
+    terminal.clear()?;
+    *events = spawn_event_reader();
+    // Lazygit may have committed / staged / reset; the
+    // current diff snapshot is no longer authoritative.
+    app.diff_mut().mark_stale();
+    ensure_diff_loaded(app).await;
+    terminal.draw(|f| ui::render(app, f))?;
+    Ok(())
+}
 
 pub(crate) async fn handle_event(app: &mut App, event: Event) {
     match event {
