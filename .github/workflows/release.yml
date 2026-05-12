@@ -153,11 +153,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish ampelos to crates.io
-        # The version in Cargo.toml was patched by the build job.
-        # `cargo publish` is idempotent only insofar as it refuses to
-        # re-publish an existing version; a manual re-run after a
-        # successful publish will fail loudly, which is what we want.
-        run: cargo publish
+        # The version in Cargo.toml was patched by the build job and
+        # downloaded over the checked-out tree, leaving the working
+        # copy dirty — hence --allow-dirty. `cargo publish` is
+        # idempotent only insofar as it refuses to re-publish an
+        # existing version; a manual re-run after a successful publish
+        # will fail loudly, which is what we want.
+        run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
