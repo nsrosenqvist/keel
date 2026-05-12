@@ -1,7 +1,7 @@
 //! Render for the Terminals view.
 //!
 //! Entry point: [`render`]. Falls back to a "tmux missing" splash
-//! when the probe at [`crate::tui::views::terminals::tmux::ensure_tmux_probed`]
+//! when the probe at [`crate::tui::app::App::request_tmux_probe`]
 //! came back negative. Otherwise it splits the area into the
 //! sidebar + info / preview right column, mirroring the control
 //! center's geometry.

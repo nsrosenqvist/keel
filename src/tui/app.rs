@@ -205,6 +205,24 @@ pub enum Command {
     EmitBell,
 }
 
+/// Inbound message delivered from a background tokio task back to
+/// the App's render loop. Phase 10 of the architectural refactor:
+/// the App used to expose `async fn`s that held `&mut self` across
+/// `.await` points, blocking the render loop on slow I/O (tmux
+/// probe, diff preload, …). The conversion is: spawn the async work
+/// on its own task, post a `Message` back here, and have a
+/// synchronous handler on App apply it during the next render-loop
+/// drain. Handlers stay pure (`(state, event) -> state'`); the loop
+/// never sees a `&mut App` borrow held across an await.
+#[derive(Debug)]
+pub enum Message {
+    /// `tmux -V` probe result — `true` when tmux is on PATH, `false`
+    /// when missing or the probe failed. Posted by
+    /// [`Self::request_tmux_probe`]; applied by
+    /// [`TerminalsView::set_tmux_available`].
+    TmuxProbeResult(bool),
+}
+
 /// Recompute `filtered` from the current `branch_input`. Empty
 /// query → every branch in original order; non-empty → case-
 /// insensitive substring match (good enough for v1; can swap in
@@ -337,6 +355,13 @@ pub struct App {
     /// lazygit handoff, kill window, BEL emit). Drained by the
     /// event loop in `drive` via [`Self::drain_commands`].
     commands: Vec<Command>,
+    /// Inbox for background-task results. The sender half clones
+    /// freely (every spawned task gets one); the App owns the
+    /// receiver and drains it via [`Self::drain_messages`] once per
+    /// render-loop tick. Lets handlers stay synchronous —
+    /// "I/O happens elsewhere, the result lands here later."
+    message_tx: mpsc::UnboundedSender<Message>,
+    message_rx: mpsc::UnboundedReceiver<Message>,
     /// Cached project root so the switcher can prefill its path
     /// input with the current parent dir.
     project_root: PathBuf,
@@ -394,6 +419,7 @@ impl App {
         let items = build_items(&config);
         let services = collect_service_panes(&config);
         let terminals = TerminalsView::default_for(&config);
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
         Self {
             config,
             items,
@@ -409,6 +435,8 @@ impl App {
             flash_message: None,
             modal: None,
             commands: Vec::new(),
+            message_tx,
+            message_rx,
             project_root: PathBuf::from("."),
             branch: None,
             view: View::ControlCenter,
@@ -1465,6 +1493,55 @@ impl App {
     /// each variant and runs the corresponding side effect.
     pub fn drain_commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.commands)
+    }
+
+    /// Clone the message sender. Handed to spawned tokio tasks so
+    /// their results can be posted back without holding a borrow on
+    /// App across the await.
+    pub fn message_tx(&self) -> mpsc::UnboundedSender<Message> {
+        self.message_tx.clone()
+    }
+
+    /// Drain pending inbox messages into App state. Non-blocking;
+    /// called once per render-loop tick from the pre-render drain.
+    /// Each variant has a sync handler so the loop never awaits
+    /// here.
+    pub fn drain_messages(&mut self) {
+        while let Ok(msg) = self.message_rx.try_recv() {
+            self.apply_message(msg);
+        }
+    }
+
+    fn apply_message(&mut self, msg: Message) {
+        match msg {
+            Message::TmuxProbeResult(ok) => {
+                self.terminals.set_tmux_available(ok);
+            }
+        }
+    }
+
+    /// Spawn a background tmux availability probe. The result lands
+    /// on the message inbox; [`Self::drain_messages`] applies it via
+    /// [`Message::TmuxProbeResult`]. No-op when the probe has
+    /// already produced a result (the view's `tmux_available` is
+    /// `Some(_)`).
+    pub fn request_tmux_probe(&self) {
+        if self.terminals.tmux_available.is_some() {
+            return;
+        }
+        let tx = self.message_tx();
+        tokio::spawn(async move {
+            let ok = tokio::process::Command::new("tmux")
+                .arg("-V")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null())
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let _ = tx.send(Message::TmuxProbeResult(ok));
+        });
     }
 
     /// Show a transient status banner. Most action paths flash on

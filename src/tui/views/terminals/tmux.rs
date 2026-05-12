@@ -375,26 +375,6 @@ pub(crate) async fn refresh_tmux_windows(app: &mut App, expecting_session: bool)
     }
 }
 
-/// One-shot tmux availability probe. Records the result on
-/// [`crate::tui::views::terminals::state::TerminalsView`] so the
-/// rest of the TUI can decide whether the terminals view is
-/// reachable. No-op after the first call (the probe is cached).
-pub(crate) async fn ensure_tmux_probed(app: &mut App) {
-    if app.terminals().tmux_available.is_some() {
-        return;
-    }
-    let ok = tokio::process::Command::new("tmux")
-        .arg("-V")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .stdin(std::process::Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-    app.terminals_mut().set_tmux_available(ok);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

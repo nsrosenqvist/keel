@@ -12,7 +12,7 @@ use crate::tui::app::{
 use crate::tui::dialogs::switcher::{BranchSpec, NewWorktreeAction, SwitcherConfirm, WorktreeRow};
 use crate::tui::ui;
 use crate::tui::views::diff::git::ensure_diff_loaded;
-use crate::tui::views::terminals::tmux::{attach_tmux, ensure_tmux_probed, refresh_tmux_windows};
+use crate::tui::views::terminals::tmux::{attach_tmux, refresh_tmux_windows};
 use crossterm::{
     event::{
         DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -57,7 +57,7 @@ pub async fn run_event_loop(
     // paint.
     match initial_view {
         View::Terminals => {
-            ensure_tmux_probed(app).await;
+            app.request_tmux_probe();
             refresh_tmux_windows(app, false).await;
         }
         View::Diff => {
@@ -110,6 +110,7 @@ async fn drive(
         // non-blocking poll.
         app.drain_boot_results();
         app.drain_worker_snapshots();
+        app.drain_messages();
         app.drain_runs();
         app.poll_runs().await;
         app.drain_services();
@@ -596,7 +597,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     match code {
         KeyCode::Char('T') => {
             app.switch_view(View::Terminals);
-            ensure_tmux_probed(app).await;
+            app.request_tmux_probe();
             // Don't expect a session yet — the user may not have
             // attached to anything during this keel session.
             refresh_tmux_windows(app, false).await;
@@ -748,7 +749,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
 ///   watcher           → no-op (watchers fire on file change)
 async fn activate_control_center_selection(app: &mut App) {
     if let Some(service) = app.selected_service().map(|s| s.name.clone()) {
-        ensure_tmux_probed(app).await;
+        app.request_tmux_probe();
         if app.terminals().tmux_available == Some(false) {
             app.flash("tmux not installed — install it to attach");
         } else if let Err(msg) = app.queue_service_attach(&service) {
