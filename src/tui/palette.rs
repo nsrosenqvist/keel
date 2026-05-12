@@ -8,7 +8,7 @@
 //! respective modules. The terminal layer mutates a [`Palette`] in
 //! response to key events; the renderer reads from it.
 
-use crate::tui::views::control_center::state::{Item, ItemKind};
+use crate::tui::views::control_center::state::Item;
 use nucleo_matcher::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
@@ -47,7 +47,7 @@ impl Palette {
         let candidates = items
             .iter()
             .enumerate()
-            .filter(|(_, item)| matches!(item.kind, ItemKind::Recipe | ItemKind::Script))
+            .filter(|(_, item)| item.kind.is_launchable())
             .map(|(idx, item)| (idx, item.name.clone()))
             .collect();
         let mut palette = Self {
@@ -111,7 +111,7 @@ impl Palette {
         self.candidates = items
             .iter()
             .enumerate()
-            .filter(|(_, item)| matches!(item.kind, ItemKind::Recipe | ItemKind::Script))
+            .filter(|(_, item)| item.kind.is_launchable())
             .map(|(idx, item)| (idx, item.name.clone()))
             .collect();
         self.recompute();
@@ -198,6 +198,7 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::views::control_center::state::ItemKind;
 
     fn items() -> Vec<Item> {
         vec![

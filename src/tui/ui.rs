@@ -331,7 +331,7 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
 /// One control-center sidebar row: kind glyph + name + optional
 /// backend badge for non-compose services.
 fn sidebar_item_line<'a>(app: &App, item: &'a Item) -> Line<'a> {
-    let glyph = glyph_for(item.kind);
+    let glyph = item.kind.glyph();
     let glyph_style = item_indicator_style(app, item);
     let mut spans = vec![
         Span::styled(format!("{glyph} "), glyph_style),
@@ -363,19 +363,6 @@ fn service_backend_badge(app: &App, item: &Item) -> Option<&'static str> {
         return Some("custom");
     }
     None
-}
-
-fn glyph_for(kind: ItemKind) -> &'static str {
-    match kind {
-        // Container reuses the service dot — same "is this thing
-        // alive" mental model.
-        ItemKind::Runtime | ItemKind::Service => "●",
-        ItemKind::Watcher => "◇",
-        // Same glyph for recipes and scripts — they share the
-        // "commands" sidebar group. Kind is still distinguishable in
-        // the detail pane and palette tags.
-        ItemKind::Recipe | ItemKind::Script => "▸",
-    }
 }
 
 fn item_indicator_style(app: &App, item: &Item) -> Style {
@@ -484,7 +471,7 @@ fn info_panel_title(item: &Item, accent: Color) -> Line<'static> {
         ),
         Span::raw("  "),
         Span::styled(
-            kind_label(item.kind),
+            item.kind.label(),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
@@ -687,15 +674,6 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-fn kind_label(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Runtime => "runtime",
-        ItemKind::Service => "service",
-        ItemKind::Watcher => "watcher",
-        ItemKind::Recipe => "recipe",
-        ItemKind::Script => "script",
-    }
-}
 
 pub(crate) fn kv(key: &str, value: &str) -> Line<'static> {
     Line::from(vec![
@@ -1069,7 +1047,7 @@ fn render_palette(app: &App, palette: &Palette, accent: Color, frame: &mut Frame
         .take(end - start)
         .map(|(idx, m)| {
             let item = &app.items()[m.item_index];
-            let kind = kind_label(item.kind);
+            let kind = item.kind.label();
             let row_style = if idx == selected {
                 Style::default()
                     .fg(SELECTION_FG)

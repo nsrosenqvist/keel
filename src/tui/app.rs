@@ -2014,32 +2014,6 @@ impl App {
         }
     }
 
-    /// Auto-discover services from the backend and add ones not already
-    /// declared in `[[ui.pane]]`. Idempotent. Called once at startup,
-    /// before [`Self::spawn_service_tails`].
-    pub async fn discover_services(&mut self) {
-        let Some(backend) = self.backend.as_ref().map(Arc::clone) else {
-            return;
-        };
-        let Ok(discovered) = backend.list_services().await else {
-            return;
-        };
-        let mut added = false;
-        for name in discovered {
-            if self.services.contains_key(&name) {
-                continue;
-            }
-            self.services
-                .insert(name.clone(), ServicePane::new(name.clone()));
-            added = true;
-        }
-        if added {
-            // Rebuild items so the new services land in the sidebar's
-            // services group, preserving ordering for the rest.
-            self.items = build_items_from(&self.config, &self.services, &self.watchers);
-        }
-    }
-
     /// Spawn watcher panes from `[[ui.pane]] type = "watcher"`. Spawn
     /// failures (bad globs, notify init failures) are logged and the
     /// pane is omitted; the rest of the dashboard still works.
