@@ -2,9 +2,6 @@
 
 use crate::tui::app::{App, ClickTarget};
 use crate::tui::terminal::{WHEEL_LINES, hit_test, rect_contains, resolve_click};
-use crate::tui::views::diff::git::{
-    ensure_diff_for_selected, ensure_diff_loaded, ensure_read_for_selected,
-};
 use crate::tui::views::diff::state::{BodyMode, DiffFocus};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -39,7 +36,7 @@ pub async fn handle_mouse(app: &mut App, me: MouseEvent) {
                 // Mirror the keyboard path: trigger the lazy load so
                 // the body actually shows the clicked file's diff
                 // instead of sitting on "loading diff…".
-                ensure_diff_for_selected(app).await;
+                app.request_diff_for_selected();
                 // Resolve so a future double-click on the same row
                 // could activate (no semantic activation today, but
                 // the bookkeeping is uniform with other surfaces).
@@ -64,13 +61,13 @@ pub async fn handle_mouse(app: &mut App, me: MouseEvent) {
             for _ in 0..WHEEL_LINES {
                 app.diff_mut().select_next();
             }
-            ensure_diff_for_selected(app).await;
+            app.request_diff_for_selected();
         }
         MouseEventKind::ScrollUp if over_files => {
             for _ in 0..WHEEL_LINES {
                 app.diff_mut().select_prev();
             }
-            ensure_diff_for_selected(app).await;
+            app.request_diff_for_selected();
         }
         _ => {}
     }
@@ -89,7 +86,7 @@ pub async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char('r') => {
             app.diff_mut().mark_stale();
-            ensure_diff_loaded(app).await;
+            app.request_diff_reload();
             return;
         }
         KeyCode::Tab | KeyCode::BackTab => {
@@ -103,7 +100,7 @@ pub async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('v') => {
             app.diff_mut().toggle_body_mode();
             if app.diff().body_mode() == BodyMode::Read {
-                ensure_read_for_selected(app).await;
+                app.request_read_for_selected();
             }
             return;
         }
@@ -139,11 +136,11 @@ pub async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         DiffFocus::Files => match code {
             KeyCode::Down | KeyCode::Char('j') => {
                 app.diff_mut().select_next();
-                ensure_diff_for_selected(app).await;
+                app.request_diff_for_selected();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 app.diff_mut().select_prev();
-                ensure_diff_for_selected(app).await;
+                app.request_diff_for_selected();
             }
             KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                 app.diff_mut().set_focus(DiffFocus::Body);

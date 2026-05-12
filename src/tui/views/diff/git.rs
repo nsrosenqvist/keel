@@ -1,44 +1,23 @@
-//! Git shell-outs + parsers + orchestration for the Diff view.
+//! Git shell-outs + parsers for the Diff view.
 //!
 //! Everything keel knows about git at the process level for the diff
 //! view lives here: the file-list query (`name-status` + `numstat` +
 //! `ls-files --others` merged in parallel), per-file diff loaders,
-//! read-mode loaders, the porcelain-fallback for repos with no
-//! resolvable trunk, and the orchestration glue
-//! (`ensure_diff_loaded` et al.) that feeds the resulting data onto
-//! `DiffView`.
+//! read-mode loaders, and the porcelain-fallback for repos with no
+//! resolvable trunk. The orchestration that wires these into
+//! `DiffView` state runs through the actor-model entry points on
+//! `App` (`request_diff_reload`, `request_diff_for_selected`,
+//! `request_read_for_selected`) so handlers don't hold `&mut App`
+//! across the await.
 //!
 //! Parsers are `pub(crate)` so the integration tests in `terminal.rs`
 //! that exercise them can keep their existing assertions; everything
-//! else is module-private.
+//! else is module-private or `pub(crate)` for spawned-task entry.
 
-use crate::tui::app::App;
 use crate::tui::views::diff::state::{
-    BodyMode, DiffFile, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
+    DiffFile, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
 };
 use std::path::Path;
-
-/// Resolve the trunk branch (config override → remote default →
-/// local fallback), its merge-base with HEAD, the current branch
-/// name, and the 7-char short anchor SHA — then store all four on
-/// the app. Cheap enough to redo on every diff refresh — the trunk
-/// can move forward (`git pull origin main`) and we want subsequent
-/// diffs to anchor against the new merge-base.
-pub(crate) async fn refresh_diff_anchor(app: &mut App) {
-    let project_root = app.project_root().to_path_buf();
-    let configured = app.config().diff.base.clone();
-    let trunk = crate::runtime::detect_trunk(&project_root, configured.as_deref()).await;
-    let anchor = match trunk.as_deref() {
-        Some(t) => crate::runtime::merge_base(&project_root, t).await,
-        None => None,
-    };
-    let branch = current_branch(&project_root).await;
-    let anchor_short = anchor
-        .as_deref()
-        .map(|sha| sha.chars().take(7).collect::<String>());
-    app.diff_mut()
-        .set_anchor(trunk, anchor, branch, anchor_short);
-}
 
 /// Resolve the current branch name (`git rev-parse --abbrev-ref HEAD`).
 /// Returns None when detached or the command fails — the banner just
@@ -59,80 +38,6 @@ pub async fn current_branch(project_root: &Path) -> Option<String> {
     } else {
         Some(s)
     }
-}
-
-/// Populate the diff file list if it hasn't been loaded yet, and
-/// ensure the selected file's diff body is cached. Cheap on
-/// subsequent calls thanks to the per-file cache.
-pub(crate) async fn ensure_diff_loaded(app: &mut App) {
-    // If the boot preload is still in flight, prefer awaiting it over
-    // firing duplicate git commands. On a manual refresh (`r` / post-
-    // lazygit) the boot rx is already drained, so this returns
-    // immediately.
-    app.await_diff_preload().await;
-    if !app.diff().loaded {
-        // Refresh anchor on every reload so a freshly-pulled trunk
-        // shifts the comparison forward instead of staying pinned to
-        // the merge-base we resolved at startup.
-        refresh_diff_anchor(app).await;
-        let project_root = app.project_root().to_path_buf();
-        let anchor = app.diff().anchor.clone();
-        match load_diff_files(&project_root, anchor.as_deref()).await {
-            Ok(files) => app.diff_mut().set_files(files),
-            Err(msg) => app.diff_mut().set_error(msg),
-        }
-    }
-    ensure_diff_for_selected(app).await;
-}
-
-pub(crate) async fn ensure_diff_for_selected(app: &mut App) {
-    let Some(file) = app.diff().selected_file().cloned() else {
-        return;
-    };
-    if app.diff().cache_for(&file.path).is_none() {
-        let project_root = app.project_root().to_path_buf();
-        let anchor = app.diff().anchor.clone();
-        let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
-        app.diff_mut().set_cache(file.path.clone(), lines);
-    }
-    // If the user is currently viewing read mode, also populate the
-    // read cache so a selection change doesn't show a "loading…"
-    // placeholder. Diff-mode selection doesn't pre-fetch read.
-    if app.diff().body_mode() == BodyMode::Read {
-        ensure_read_for_selected(app).await;
-    }
-}
-
-/// Populate the read cache for the currently-selected file if it
-/// isn't already cached. Called on toggle into read mode and on
-/// selection change while in read mode. Annotates the read lines
-/// with diff classification (Added / Modified / deletion
-/// separators) so the renderer can tint changed regions — needs
-/// the diff cache to be populated first.
-pub(crate) async fn ensure_read_for_selected(app: &mut App) {
-    let Some(file) = app.diff().selected_file().cloned() else {
-        return;
-    };
-    if app.diff().read_cache_for(&file.path).is_some() {
-        return;
-    }
-    // Make sure the diff cache is populated so we can annotate. In
-    // the typical toggle path the diff is already cached, but
-    // `[/]` no-ops and direct-into-read jumps shouldn't lose the
-    // annotation.
-    if app.diff().cache_for(&file.path).is_none() {
-        let project_root = app.project_root().to_path_buf();
-        let anchor = app.diff().anchor.clone();
-        let lines = load_diff_for_file(&project_root, &file, anchor.as_deref()).await;
-        app.diff_mut().set_cache(file.path.clone(), lines);
-    }
-    let project_root = app.project_root().to_path_buf();
-    let anchor = app.diff().anchor.clone();
-    let mut lines = load_read_for_file(&project_root, &file, anchor.as_deref()).await;
-    if let Some(diff_lines) = app.diff().cache_for(&file.path) {
-        lines = annotate_read_with_diff(lines, diff_lines);
-    }
-    app.diff_mut().set_read_cache(file.path.clone(), lines);
 }
 
 /// Build the changed-file list. With `anchor` set, we want
@@ -433,7 +338,7 @@ pub(crate) fn parse_status_porcelain(input: &str) -> Vec<DiffFile> {
     out
 }
 
-async fn load_diff_for_file(
+pub(crate) async fn load_diff_for_file(
     project_root: &Path,
     file: &DiffFile,
     anchor: Option<&str>,
@@ -657,7 +562,7 @@ pub(crate) fn annotate_read_with_diff(read: Vec<ReadLine>, diff: &[DiffLine]) ->
 /// present files; `git show <anchor>:<path>` for deleted files;
 /// placeholder for binary blobs. I/O errors collapse to a single
 /// error line so the renderer doesn't need a branch.
-async fn load_read_for_file(
+pub(crate) async fn load_read_for_file(
     project_root: &Path,
     file: &DiffFile,
     anchor: Option<&str>,

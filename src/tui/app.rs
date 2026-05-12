@@ -17,7 +17,7 @@ use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
 use crate::tui::services::ServicePane;
 use crate::tui::views::control_center::state::{Item, ItemKind};
-use crate::tui::views::diff::state::{DiffFile, DiffView};
+use crate::tui::views::diff::state::{BodyMode, DiffFile, DiffLine, DiffView, ReadLine};
 use crate::tui::views::terminals::state::{TerminalsRow, TerminalsView, TmuxWindow};
 use crate::tui::watchers::{WatcherError, WatcherPane};
 use ratatui::layout::Rect;
@@ -218,9 +218,26 @@ pub enum Command {
 pub enum Message {
     /// `tmux -V` probe result — `true` when tmux is on PATH, `false`
     /// when missing or the probe failed. Posted by
-    /// [`Self::request_tmux_probe`]; applied by
-    /// [`TerminalsView::set_tmux_available`].
+    /// [`App::request_tmux_probe`]; applied by
+    /// [`crate::tui::views::terminals::state::TerminalsView::set_tmux_available`].
     TmuxProbeResult(bool),
+    /// Result of a top-level diff reload (anchor refresh + file
+    /// list). Posted by [`App::request_diff_reload`]; applied by
+    /// folding into [`crate::tui::views::diff::state::DiffView`]
+    /// and kicking off the per-file body load for the selected file.
+    DiffReloaded(DiffPreload),
+    /// Result of a per-file diff body load. Posted by
+    /// [`App::request_diff_for_selected`].
+    DiffFileLoaded {
+        path: String,
+        lines: Vec<DiffLine>,
+    },
+    /// Result of a per-file read body load. Posted by
+    /// [`App::request_read_for_selected`].
+    ReadFileLoaded {
+        path: String,
+        lines: Vec<ReadLine>,
+    },
 }
 
 /// Recompute `filtered` from the current `branch_input`. Empty
@@ -271,11 +288,11 @@ fn sync_path_from_branch(form: &mut NewWorktreeForm) {
 }
 
 
-/// Resolved diff preload state, computed off the boot path by
-/// [`App::spawn_boot_tasks`] and applied to [`DiffView`] by
-/// [`App::drain_boot_results`] (or [`App::await_diff_preload`] when
-/// the initial view is Diff). The fields mirror the assignments the
-/// old synchronous `preload_diff_status` used to make.
+/// Resolved diff state from a background load: top-level reload
+/// triggered by `r` (or first-entry into the diff view) and the
+/// boot-task preload both produce one of these. Folded into
+/// [`DiffView`] by [`App::apply_diff_preload`].
+#[derive(Debug)]
 pub struct DiffPreload {
     pub trunk: Option<String>,
     pub anchor: Option<String>,
@@ -1517,6 +1534,37 @@ impl App {
             Message::TmuxProbeResult(ok) => {
                 self.terminals.set_tmux_available(ok);
             }
+            Message::DiffReloaded(preload) => {
+                self.apply_diff_preload(preload);
+                // Cascade: now that the file list is fresh, kick off a
+                // per-file body load for the selected file (unless its
+                // cache already has it from a prior session). Same
+                // shape as the old `ensure_diff_for_selected` tail of
+                // `ensure_diff_loaded`.
+                self.request_diff_for_selected();
+            }
+            Message::DiffFileLoaded { path, lines } => {
+                self.diff.set_cache(path, lines);
+                // If the user has flipped to read mode in the
+                // meantime, kick off the read load too. Annotation
+                // needs the diff cache to be populated first; both
+                // race in parallel without sequencing.
+                if self.diff.body_mode == BodyMode::Read {
+                    self.request_read_for_selected();
+                }
+            }
+            Message::ReadFileLoaded { path, lines } => {
+                // Annotate against the diff cache before storing —
+                // matches the pre-actor flow where
+                // `ensure_read_for_selected` ran annotate inline.
+                let annotated = match self.diff.cache_for(&path) {
+                    Some(diff_lines) => {
+                        crate::tui::views::diff::git::annotate_read_with_diff(lines, diff_lines)
+                    }
+                    None => lines,
+                };
+                self.diff.set_read_cache(path, annotated);
+            }
         }
     }
 
@@ -1541,6 +1589,112 @@ impl App {
                 .map(|s| s.success())
                 .unwrap_or(false);
             let _ = tx.send(Message::TmuxProbeResult(ok));
+        });
+    }
+
+    /// Spawn a background top-level diff reload (anchor refresh +
+    /// `git diff --name-status` + numstat + ls-files-others).
+    /// Result lands on the inbox as [`Message::DiffReloaded`];
+    /// `apply_message` folds it onto `DiffView` and cascades a
+    /// per-file body load for the selected file.
+    ///
+    /// Spawns even when a boot preload is still in flight — the
+    /// later result wins (insertion order into the channel). For
+    /// user-pressed `r` that's the desired behavior; for first-entry
+    /// the boot preload usually lands first anyway.
+    pub fn request_diff_reload(&self) {
+        let tx = self.message_tx();
+        let project_root = self.project_root.clone();
+        let configured_base = self.config.diff.base.clone();
+        let lazygit_available = self.diff.lazygit_available;
+        tokio::spawn(async move {
+            let trunk =
+                crate::runtime::detect_trunk(&project_root, configured_base.as_deref()).await;
+            let anchor = match trunk.as_deref() {
+                Some(t) => crate::runtime::merge_base(&project_root, t).await,
+                None => None,
+            };
+            let branch = crate::tui::views::diff::git::current_branch(&project_root).await;
+            let anchor_short = anchor
+                .as_deref()
+                .map(|sha| sha.chars().take(7).collect::<String>());
+            let files = crate::tui::views::diff::git::load_diff_files(
+                &project_root,
+                anchor.as_deref(),
+            )
+            .await;
+            let _ = tx.send(Message::DiffReloaded(DiffPreload {
+                trunk,
+                anchor,
+                anchor_short,
+                branch,
+                lazygit_available,
+                files,
+            }));
+        });
+    }
+
+    /// Spawn a background per-file diff body load for the currently-
+    /// selected file. No-op when the cache already has the file's
+    /// diff body, or when no file is selected. The result lands as
+    /// [`Message::DiffFileLoaded`].
+    pub fn request_diff_for_selected(&self) {
+        let Some(file) = self.diff.selected_file().cloned() else {
+            return;
+        };
+        if self.diff.cache_for(&file.path).is_some() {
+            return;
+        }
+        let tx = self.message_tx();
+        let project_root = self.project_root.clone();
+        let anchor = self.diff.anchor.clone();
+        tokio::spawn(async move {
+            let lines = crate::tui::views::diff::git::load_diff_for_file(
+                &project_root,
+                &file,
+                anchor.as_deref(),
+            )
+            .await;
+            let _ = tx.send(Message::DiffFileLoaded {
+                path: file.path,
+                lines,
+            });
+        });
+    }
+
+    /// Spawn a background per-file read-mode body load for the
+    /// currently-selected file. No-op when the read cache already
+    /// has the file. The result lands as [`Message::ReadFileLoaded`]
+    /// and is annotated against the diff cache before storing.
+    pub fn request_read_for_selected(&self) {
+        let Some(file) = self.diff.selected_file().cloned() else {
+            return;
+        };
+        if self.diff.read_cache_for(&file.path).is_some() {
+            return;
+        }
+        // If the diff cache for this file isn't populated yet, kick
+        // that off too — the read annotator needs it. The two loads
+        // race in parallel; whichever finishes second triggers the
+        // annotation (`apply_message` for ReadFileLoaded checks
+        // `diff.cache_for(...)` at that moment).
+        if self.diff.cache_for(&file.path).is_none() {
+            self.request_diff_for_selected();
+        }
+        let tx = self.message_tx();
+        let project_root = self.project_root.clone();
+        let anchor = self.diff.anchor.clone();
+        tokio::spawn(async move {
+            let lines = crate::tui::views::diff::git::load_read_for_file(
+                &project_root,
+                &file,
+                anchor.as_deref(),
+            )
+            .await;
+            let _ = tx.send(Message::ReadFileLoaded {
+                path: file.path,
+                lines,
+            });
         });
     }
 
@@ -1915,19 +2069,6 @@ impl App {
             if added {
                 self.items = build_items_from(&self.config, &self.services, &self.watchers);
             }
-        }
-    }
-
-    /// Block until the diff preload finishes (or fails). Used by the
-    /// diff-view entry path so a manual diff refresh / `g` keybind /
-    /// `--view diff` startup doesn't fire duplicate git commands when
-    /// the boot preload is in flight. No-op once drained.
-    pub async fn await_diff_preload(&mut self) {
-        let Some(rx) = self.boot.diff_rx.take() else {
-            return;
-        };
-        if let Ok(preload) = rx.await {
-            self.apply_diff_preload(preload);
         }
     }
 

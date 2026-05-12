@@ -11,7 +11,6 @@ use crate::tui::app::{
 };
 use crate::tui::dialogs::switcher::{BranchSpec, NewWorktreeAction, SwitcherConfirm, WorktreeRow};
 use crate::tui::ui;
-use crate::tui::views::diff::git::ensure_diff_loaded;
 use crate::tui::views::terminals::tmux::{attach_tmux, refresh_tmux_windows};
 use crossterm::{
     event::{
@@ -61,7 +60,7 @@ pub async fn run_event_loop(
             refresh_tmux_windows(app, false).await;
         }
         View::Diff => {
-            ensure_diff_loaded(app).await;
+            app.request_diff_reload();
         }
         View::ControlCenter => {}
     }
@@ -299,7 +298,7 @@ async fn run_lazygit(
     // Lazygit may have committed / staged / reset; the
     // current diff snapshot is no longer authoritative.
     app.diff_mut().mark_stale();
-    ensure_diff_loaded(app).await;
+    app.request_diff_reload();
     terminal.draw(|f| ui::render(app, f))?;
     Ok(())
 }
@@ -605,7 +604,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         }
         KeyCode::Char('G') => {
             app.switch_view(View::Diff);
-            ensure_diff_loaded(app).await;
+            app.request_diff_reload();
             return;
         }
         KeyCode::Char('C') if app.view() != View::ControlCenter => {
