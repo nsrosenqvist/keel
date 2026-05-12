@@ -1,28 +1,17 @@
 # Worktrees
 
-keel detects the current git checkout and gives each one a
-deterministic identity (slug + integer offset). Recipes use the
-offset to vary ports and other per-checkout values, so two worktrees
-of the same project can run side-by-side without collisions.
+If you use `git worktree add` to keep more than one branch of the
+same project checked out at once, you've probably hit the
+port-collision problem: both stacks try to bind `8080`, both
+docker-compose projects share the same containers, both produce
+the same `COMPOSE_PROJECT_NAME`. `keel` solves this by detecting
+the current checkout and giving each one a deterministic
+**offset** you can subtract from port numbers and use to scope
+container names.
 
-## Identity
+## Quickstart
 
-The slug derives from, in order:
-
-1. The current branch name.
-2. The linked-worktree directory basename (`git worktree add`'s
-   target dir).
-3. `det-<7-char SHA>` for detached HEAD.
-4. Empty string for non-git directories.
-
-Slugification: `[^a-z0-9-]` → `-`, runs collapsed, leading/trailing
-dashes trimmed.
-
-The offset is `[worktrees.assign][slug]` if pinned, otherwise
-`fnv1a_32("<seed>|<slug>") % modulus`. Default modulus is 1000; seed
-defaults to `[project].name`. Empty slug → offset 0.
-
-## `[env]` arithmetic
+**1. Make a port worktree-aware:**
 
 ```toml
 [env]
@@ -30,22 +19,169 @@ APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
 DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
 ```
 
-Resolves to `base.parse::<i64>() + existing[offset].parse::<i64>()`.
-Missing offset var → falls back to `base`. Non-integer base → error.
-Use this instead of shell math in `from_command`.
+**2. Check it in two worktrees:**
 
-See [Environments](Environments) for the rest of the env
-resolution model.
+```sh
+# main checkout
+$ keel env | grep APP_PORT
+APP_PORT=8080
 
-## Loading order
+# in a parallel `git worktree add ../proj-feat feature/login`
+$ keel env | grep APP_PORT
+APP_PORT=8087
+```
+
+The number after `8080` is the worktree's offset. Different
+branch → different slug → different offset → different port.
+
+**3. (Optional) Switch between them in the TUI:**
+
+```sh
+keel        # opens the dashboard
+W           # opens the worktree switcher modal
+```
+
+## Mental model
+
+- **Each worktree has a slug.** Derived from the branch name (or
+  the worktree directory basename, or a short SHA for detached
+  HEAD). It's how keel identifies "which checkout am I in."
+- **Each slug has an offset.** Either pinned in
+  `[worktrees.assign]` or hashed from the slug + a per-project
+  seed. Default modulus is 1000, so offsets live in 0..999.
+- **You consume the offset.** Read `KEEL_WORKTREE_OFFSET`
+  directly, or — more often — use the `base + offset` shape in
+  `[env]` so derived values fall out automatically.
+- **Compose stacks isolate too.** When
+  `[worktrees].isolate_compose = true` (the default),
+  `COMPOSE_PROJECT_NAME` is set to `<project>-<slug>` so each
+  worktree gets its own containers, networks, and volumes.
+
+## Common tasks
+
+### Compute a per-worktree port
+
+```toml
+[env]
+APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+```
+
+`base.parse::<i64>() + KEEL_WORKTREE_OFFSET.parse::<i64>()`. Pair
+it with a compose file that reads `${APP_PORT}` and the host
+binding is unique per checkout.
+
+### Pin a specific offset to a specific branch
+
+If you want `main` to always be offset `0` and `production` also
+`0` (because you never run them together), but `feature/x` to be
+`7`:
+
+```sh
+keel worktree assign main 0
+keel worktree assign production 0
+keel worktree assign feature/x 7
+```
+
+Or directly in `keel.toml`:
+
+```toml
+[worktrees.assign]
+main         = 0
+production   = 0
+"feature/x"  = 7
+```
+
+`keel worktree assign --local` writes to `.keel/local.toml`
+instead — useful for personal overrides you don't want to share
+with the team.
+
+### Switch between worktrees inside the TUI
+
+`W` in the dashboard opens a modal:
+
+- Lists every git worktree under the repo.
+- Hot-reloads keel into the chosen one without restarting.
+- The "+ new worktree" entry opens a branch-first picker — type
+  to filter local + remote branches, pick one to attach an
+  existing checkout, or take the **"create branch '<input>' off
+  HEAD"** sentinel for `git worktree add -b`.
+
+The path field auto-fills as `<parent>/<slug>` but Tab into it
+for a manual override.
+
+### See what's resolved
+
+```sh
+keel worktree status    # current slug, offset, isolation, env values
+keel worktree list      # every worktree's offset, with collision warnings
+```
+
+`list` flags two slugs that hash to the same offset — when that
+happens, pin one of them with `assign`.
+
+### Share env with tools outside keel
+
+`KEEL_WORKTREE_OFFSET` and the `base + offset` result are only
+visible inside keel's process tree. To make them available to
+`docker compose up` (run directly), IDE launchers, etc.:
+
+```toml
+[worktrees]
+dotenv = ".env"
+```
+
+Every `keel <anything>` invocation rewrites the managed block in
+`.env`. Idempotent: when the content already matches, the file's
+mtime stays put, so file watchers and `git status` don't churn.
+
+`keel hooks install` (without an explicit `--stages` list) also
+auto-adds `post-checkout` and `post-merge` shims so `.env` stays
+fresh after a branch switch even when the developer skips keel.
+
+### Per-worktree config overrides
+
+Drop overrides into `.keel/worktrees/<slug>.toml` to apply only
+in that checkout:
+
+```toml
+# .keel/worktrees/feature-x.toml
+[env]
+FEATURE_FLAG_NEW_UI = { value = "1" }
+```
+
+These layer between `keel.toml` and the injected
+`KEEL_WORKTREE_*` vars. See [loading order](#loading-order) below.
+
+## Reference
+
+### Slug derivation
+
+In order, first match wins:
+
+1. The current branch name.
+2. The linked-worktree directory basename (`git worktree add`'s
+   target dir).
+3. `det-<7-char SHA>` for detached HEAD.
+4. Empty string for non-git directories.
+
+Slugification: `[^a-z0-9-]` → `-`, runs collapsed, leading /
+trailing dashes trimmed.
+
+### Offset assignment
+
+`[worktrees.assign][slug]` if pinned, otherwise
+`fnv1a_32("<seed>|<slug>") % modulus`. Default modulus is `1000`;
+seed defaults to `[project].name`. Empty slug → offset `0`.
+
+### Loading order
 
 Per-worktree config layering, later wins:
 
 ```
 1. Built-in defaults
 2. keel.toml
-3. .keel/local.toml                  (per-developer overrides)
-4. .keel/worktrees/<slug>.toml       (per-worktree overrides)
+3. .keel/local.toml                   (per-developer overrides)
+4. .keel/worktrees/<slug>.toml        (per-worktree overrides)
 5. KEEL_WORKTREE_SLUG / _OFFSET injected
 6. COMPOSE_PROJECT_NAME injected (if isolate_compose, slug non-empty,
    user hasn't already set it)
@@ -54,10 +190,27 @@ Per-worktree config layering, later wins:
 
 Per-worktree overlays live in the *current working directory's*
 `.keel/worktrees/<slug>.toml`. Each git worktree has its own
-working tree, so each maintains its own overlay file (or share via
-symlink).
+working tree, so each maintains its own overlay file (or share
+via symlink).
 
-## CLI
+### Compose isolation
+
+`[worktrees].isolate_compose = true` (the default) sets
+`COMPOSE_PROJECT_NAME = <project>-<slug>` so each worktree's
+docker-compose stack is independent — separate containers,
+networks, and volumes. Skipped when the user has already set
+`COMPOSE_PROJECT_NAME` themselves, so an explicit override always
+wins.
+
+### Built-in env variables (injected ahead of `[env]`)
+
+| Key | Source |
+|---|---|
+| `KEEL_WORKTREE_SLUG` | Slug derivation, above. |
+| `KEEL_WORKTREE_OFFSET` | Pinned or hashed. |
+| `COMPOSE_PROJECT_NAME` | `<project>-<slug>` when `isolate_compose`. |
+
+## Command reference
 
 | Command | Notes |
 |---|---|
@@ -69,71 +222,11 @@ symlink).
 (team-wide; commit it to share). With `--local`, writes to
 `.keel/local.toml` (per-developer, this checkout only).
 
-```toml
-[worktrees.assign]
-main       = 0
-production = 0
-"feature/x" = 7
-```
-
-## Compose isolation
-
-`[worktrees].isolate_compose = true` (the default) sets
-`COMPOSE_PROJECT_NAME = <project>-<slug>` so each worktree's docker
-compose stack is independent — separate containers, networks, and
-volumes per checkout. Skipped when the user has already set
-`COMPOSE_PROJECT_NAME` themselves, so an explicit override always
-wins.
-
-## Materialising worktree env into `.env`
-
-The `[env]` arithmetic is only visible inside keel's process tree.
-Tools invoked outside keel (`docker compose up` directly,
-IDE-launched servers, `bin/rails s`, `npm run dev`, …) read `.env`
-and don't see the worktree-derived values.
-
-The simplest fix is one config line:
-
-```toml
-[worktrees]
-dotenv = ".env"
-```
-
-When set, two things happen:
-
-1. **Auto-write on every keel invocation.** The resolved `[env]`
-   plus the three worktree-derived built-ins
-   (`KEEL_WORKTREE_SLUG`, `_OFFSET`, `COMPOSE_PROJECT_NAME`) land
-   in the file as a marker-delimited block. The write is idempotent
-   — when the contents already match, the file isn't touched (mtime
-   stays put), so file watchers and `git status` don't see spurious
-   churn.
-2. **`keel hooks install` auto-includes `post-checkout` and
-   `post-merge`.** That keeps the file fresh after a branch switch
-   even when the developer goes on to run `docker compose up`
-   directly without involving keel.
-
-User content above and below the managed block is preserved; the
-block itself is replaced in place on each write. Path is
-project-root-relative unless absolute.
-
-For the explicit / one-shot form, `keel env --write [PATH]` writes
-the same block ad-hoc — useful in CI scripts or when you don't want
-the every-invocation auto-write.
-
-## TUI: worktree switcher (`W`)
-
-The TUI's `W` keymap opens a worktree-switcher modal: list every
-checkout under the repo, hot-reload keel into a different worktree
-without restarting. The "+ new worktree" entry opens a branch-first
-picker — type to filter local + remote branches, pick one to attach,
-or take the "create branch '<input>' off HEAD" sentinel for `git
-worktree add -b`. The path field auto-fills as `<parent>/<slug>` but
-Tab into it for a manual override.
-
 ## See also
 
-- [Environments](Environments) for env resolution details.
-- [Hooks](Hooks) for the post-checkout / post-merge wiring.
-- [TUI](TUI) for the worktree switcher modal.
+- [Environments](Environments) — `base + offset` lives there;
+  this page covers the offset source.
+- [Hooks](Hooks) — `post-checkout` / `post-merge` auto-wiring for
+  the dotenv writer.
+- [TUI](TUI) — the `W` worktree switcher modal.
 - [Configuration Reference: `[worktrees]`](Configuration-Reference#worktrees).

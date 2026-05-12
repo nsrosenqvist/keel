@@ -1,72 +1,84 @@
 # Hooks
 
-keel owns a small git-hook installer plus a native runner that
-understands `.pre-commit-config.yaml`. No dependency on the
-`pre-commit` binary; keel runs supported hook languages itself,
-errors loudly on the rest.
+`keel hooks` runs checks at git lifecycle points — typically
+formatters and linters before a commit, tests before a push.
+Same effect as the `pre-commit` Python tool, but built in: no
+extra binary to install, no virtualenvs created in your tree,
+and every hook can route into a service container or
+devcontainer the same way recipes do.
 
-## Two hook sources
+## Quickstart
 
-keel recognises hooks from two places, both run by the same shim:
+**1. Pick what to run** in `keel.toml`:
 
-1. **`[hooks.<stage>]` in `keel.toml`** — native keel hooks.
-   Each value is a list of recipe / script names.
-
-   ```toml
-   [hooks]
-   pre-commit = ["check:format", "check:lint"]
-   pre-push   = ["test"]
-   ```
-
-2. **`.pre-commit-config.yaml`** at the project root — standard
-   pre-commit-format file, parsed by keel directly. Both
-   `repo: local` and external repos work as long as their
-   `language` resolves to `system` or `script`.
-
-## Installing the shims
-
-```sh
-keel hooks install               # default: pre-commit
-keel hooks install --stages pre-commit,pre-push,post-merge
+```toml
+[hooks]
+pre-commit = ["check:format", "check:lint"]
+pre-push   = ["test"]
 ```
 
-Each stage gets a `.git/hooks/<stage>` shim:
+The strings are recipe / script names — anything `keel <name>`
+runs, a hook can run. (`check:format` and `check:lint` here are
+ordinary `[command.*]` recipes elsewhere in your `keel.toml`.)
+
+**2. Install the git shims:**
 
 ```sh
-#!/usr/bin/env sh
-# managed by keel
-exec keel hooks run <stage> "$@"
+keel hooks install
 ```
 
-Existing non-keel hooks at the same path are left alone — the
-installer refuses to overwrite a foreign hook (with a clear error)
-to avoid clobbering a custom git-hook setup. If you've moved an old
-hook out of the way, re-running `keel hooks install` writes the
-shim cleanly.
+This writes `.git/hooks/pre-commit` and `pre-push` that delegate
+to `keel hooks run <stage>`. Foreign hooks at the same paths are
+left alone (with a clear error) so you don't lose a hand-written
+setup.
 
-`keel hooks uninstall [--stages ...]` removes only keel-managed
-shims (identified by the marker comment).
+**3. Commit. The hook fires.** If a step exits non-zero the
+commit is aborted, same as plain git.
 
-## Implicit stages
+To run a stage manually for debugging:
 
-When `[worktrees].dotenv = "..."` is set, `keel hooks install`
-without an explicit `--stages` list also installs `post-checkout`
-and `post-merge` shims so the dotenv writer keeps the file fresh
-across branch switches even when the developer skips keel. See
-[Worktrees](Worktrees#materialising-worktree-env-into-env).
+```sh
+keel hooks run pre-commit
+```
 
-## External pre-commit repos
+## Mental model
 
-External repos in `.pre-commit-config.yaml` are cloned into
-`.keel/cache/hooks/<slug(url)-rev>/` by `src/hooks/cache.rs`
-(via the shared
-[`keel::cache`](https://github.com/nsrosenqvist/keel/tree/main/src/cache)
-crate). The runner reads `.pre-commit-hooks.yaml` inside the clone
-to find each hook's `entry` and `language`, merges with the user's
-`HookSpec`, and runs it natively.
+- **Two sources, one runner.** keel looks at `[hooks.<stage>]` in
+  `keel.toml` *and* at `.pre-commit-config.yaml` if it exists.
+  Both are evaluated for the firing stage and run sequentially;
+  the first non-zero exit halts.
+- **Every hook's `entry` runs verbatim.** keel doesn't manage
+  toolchains the way the `pre-commit` binary does. If your
+  `.pre-commit-config.yaml` says `entry: ruff`, keel runs `ruff`
+  — make sure it's on `PATH` (typically as part of `keel install`).
+  The `language:` field is parsed and remembered but never gates
+  execution.
+- **Hooks route like recipes.** A hook with `in: "<service>"`
+  execs inside that container service. Otherwise — when
+  `[devcontainer] enabled = true` — it runs inside the
+  devcontainer. Otherwise, on the host.
+
+## Common tasks
+
+### Block commits unless format + lint pass
+
+```toml
+[command.check]
+run = ["check:format", "check:lint"]
+
+[hooks]
+pre-commit = ["check"]
+```
+
+A single recipe wraps the checks; the hook just calls it.
+
+### Use an existing `.pre-commit-config.yaml`
+
+If your repo already has one, keel reads it as-is — both
+`repo: local` hooks and external repos (`repo: https://...`)
+work:
 
 ```yaml
-# .pre-commit-config.yaml
 repos:
   - repo: local
     hooks:
@@ -83,59 +95,133 @@ repos:
       - id: end-of-file-fixer
 ```
 
-`keel install --update-hooks` force-refreshes the cache (clears
-the entry, re-clones at the same rev). Useful when an upstream
-moves a tag.
+External repos are cloned into `.keel/cache/hooks/<slug-rev>/` on
+first use and reused thereafter. `keel install --update-hooks`
+force-refreshes the cache.
 
-## What languages run natively
+### Run a hook inside a service container
 
-keel runs hooks whose effective language is `system` or `script`:
+Add `in: <service>` to any hook in `.pre-commit-config.yaml`
+(keel extension; plain pre-commit ignores it):
 
-- **`system`** — the `entry` is invoked as-is via the shell. The
-  tool must already be on `PATH`.
-- **`script`** — the `entry` resolves to a script file inside the
-  cached repo (or the project for `repo: local`); keel exec's it
-  directly.
-
-Anything else (`python`, `node`, `ruby`, `golang`, …) errors at
-install / run time with a clear message:
-
-```
-hook `flake8` uses language `python`; keel runs only `system` /
-`script` hooks. Use a wrapper script with `language: script`, or a
-tool already on PATH with `language: system`.
+```yaml
+- repo: local
+  hooks:
+    - id: phpstan
+      name: phpstan
+      language: system
+      entry: vendor/bin/phpstan analyse
+      in: app                    # exec inside the `app` compose service
+      pass_filenames: false
 ```
 
-`repo: meta` (pre-commit's built-in hooks like `check-hooks-apply`,
-`identity`) errors the same way — those aren't implemented in
-keel.
+For native `[hooks.<stage>]` entries, routing comes from each
+referenced recipe's own `in =` field — no separate switch needed.
 
-## Running hooks manually
-
-`keel hooks run <stage>` is what the installed shim invokes; you
-can run it directly to debug:
+### Hook a different stage
 
 ```sh
-keel hooks run pre-commit             # uses staged files
-keel hooks run pre-push origin main   # forwards stage args
+keel hooks install --stages pre-commit,pre-push,commit-msg,post-merge
 ```
 
-Output streams to your terminal; non-zero exit on the first failing
-hook unless `always_run = true` opts a hook out of staged-file
-filtering.
+Any of git's standard stages works. `keel hooks uninstall
+[--stages ...]` removes only keel-managed shims (identified by
+a marker comment).
 
-## Resolution model
+### Use `language: python` / `node` / etc.
 
-For a given stage, keel runs:
+Declare them as you would in pre-commit:
 
-1. Every `[hooks.<stage>]` entry from `keel.toml`, in order, via
-   the recipe runner.
-2. Every `.pre-commit-config.yaml` hook whose stages include
-   `<stage>` (or whose `default_stages` does), in declaration order.
+```yaml
+- repo: local
+  hooks:
+    - id: ruff
+      language: python
+      entry: ruff
+      files: \.py$
+```
 
-Both lists run sequentially; the first non-zero exit halts the
-shim. Set `always_run = true` on a hook to make it run regardless
-of which files are staged.
+keel runs `ruff` directly. Make sure it's installed — for
+example, by adding an install step:
+
+```sh
+# .keel/install/40-tools.sh
+#!/usr/bin/env bash
+# @desc: Dev tooling
+pip install --user ruff
+```
+
+The same applies inside a service container — install the tool
+in the image.
+
+### Auto-refresh `.env` after a branch switch
+
+Setting `[worktrees].dotenv = ".env"` makes `keel hooks install`
+auto-include `post-checkout` and `post-merge` shims (no need to
+list them explicitly) so the dotenv file stays fresh when a
+developer skips keel and runs `docker compose up` directly. See
+[Worktrees](Worktrees#materialising-worktree-env-into-env).
+
+## Where hooks run
+
+For each hook, precedence is:
+
+1. **`in: "<service>"`** on the hook → exec inside that container
+   service via the configured `[runtime].backend`.
+2. **`[devcontainer] enabled = true`** → hooks without `in` run
+   inside the project's devcontainer.
+3. **Otherwise** → host spawn, with cwd set to the git repo root.
+
+`in` is a keel extension to `.pre-commit-config.yaml` — plain
+`pre-commit` ignores it, so the same config works for either
+tool.
+
+## Resolution order
+
+For a given stage, hooks run in this order, first non-zero exit
+halts:
+
+1. Every `[hooks.<stage>]` entry from `keel.toml`, in declaration
+   order, via the recipe runner.
+2. Every `.pre-commit-config.yaml` hook whose `stages` includes
+   `<stage>` (or whose `default_stages` does), in declaration
+   order.
+
+Set `always_run = true` on a hook to make it run regardless of
+which files are staged.
+
+## Configuration reference
+
+### `keel.toml`
+
+```toml
+[hooks]
+pre-commit = ["check:format", "check:lint"]
+pre-push   = ["test"]
+post-merge = ["refresh-deps"]
+```
+
+Each key is a stage name; each value is a list of recipe / script
+names. Routing comes from the referenced recipe's own `in =`.
+
+### `.pre-commit-config.yaml`
+
+Standard pre-commit format, plus the keel-only `in:` extension
+on hook entries. Every hook's `entry` is parsed with
+`shell_words` and spawned directly; `language:` is advisory.
+
+The one shape keel still rejects is `repo: meta` (pre-commit's
+built-in `check-hooks-apply` / `identity` etc.) — there's no
+`entry` to dispatch.
+
+## Command reference
+
+| Command | Notes |
+|---|---|
+| `keel hooks install [--stages ...]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit` (plus `post-checkout`/`post-merge` if `[worktrees].dotenv` is set). |
+| `keel hooks uninstall [--stages ...]` | Remove only keel-managed shims. |
+| `keel hooks run <stage> [args...]` | What the shim invokes. Run directly to debug. |
+| `keel install --update-hooks` | Force-refresh cached external pre-commit repos. |
 
 ## See also
 

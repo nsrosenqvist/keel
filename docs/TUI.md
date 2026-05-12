@@ -1,40 +1,168 @@
 # TUI
 
-Bare `keel` (or `keel ui` explicitly) opens the embedded
-dashboard: a browseable view of every recipe and script, plus
-service status panes, output streaming, and a built-in branch-diff
-view.
+Run `keel` with no arguments to open the dashboard: every recipe,
+script, and service in one sidebar, with output streaming in the
+main pane. Most of the time you won't configure anything — services
+auto-appear, recipes show up by name, the standard keymaps just
+work.
 
-## Layout
+## Quickstart
 
-- **Sidebar** — every recipe, script, and service. Recipes / scripts
-  are listed by name with their `desc`; services show their lifecycle
-  state (Running / Stopped) and a backend tag (`compose`, `systemd`,
+```sh
+keel
+```
+
+You'll see a sidebar with three groups: services discovered from
+`docker compose`, recipes declared in `[command.*]`, and scripts
+under `.keel/commands/`.
+
+- **`↑` / `↓`** — move the selection.
+- **`Enter`** — run a recipe / focus a service.
+- **`G`** — open the branch [Diff View](Diff-View).
+- **`W`** — switch worktrees.
+- **`q`** — quit.
+
+That's enough to use it. The rest of this page covers
+customisation and the keys you'll reach for as you go.
+
+## Mental model
+
+- **Sidebar = your work. Main pane = its output.** Selecting a
+  recipe and pressing Enter launches it; output streams in the
+  same main pane, color-preserved. Selecting a service shows its
+  logs and lifecycle state.
+- **Keymaps are uniform across backends.** A compose service, a
+  systemd unit, and a custom service all respond to the same
+  `r` / `s` / `S` keys.
+- **Auto-discovery is the default; explicit panes are escape
+  hatches.** You only add `[[ui.pane]]` blocks when you want
+  pinned ordering, a numeric shortcut, or a watcher pane.
+
+## Common tasks
+
+### Run a recipe
+
+`Enter` on its sidebar row. Output streams; press `Enter` again
+to re-run after it finishes.
+
+### Manage a service
+
+Select it in the sidebar and press a lifecycle key:
+
+| Key | Action |
+|---|---|
+| `r` | Start (or restart, depending on context). |
+| `R` | Force restart. |
+| `s` | Stop. |
+| `S` | Stop and remove (compose only). |
+| `U` | Up (compose only). |
+| `D` | Down (compose only). |
+
+Same keys for `[[services.systemd]]` and `[[services.custom]]`
+backends — see [Non-Container Services](Non-Container-Services).
+
+### See what's changed in your branch
+
+`G` opens the [Diff View](Diff-View) — every file that differs
+from your trunk's merge-base, with hunk navigation and edit /
+lazygit handoff.
+
+### Switch worktrees without restarting
+
+`W` opens the worktree-switcher modal:
+
+- Lists every checkout under the repo. Pick one to hot-reload
+  keel into it.
+- "+ new worktree" opens a branch-first picker — type to filter
+  local + remote branches, pick one to attach, or take the
+  **"create branch '<input>' off HEAD"** sentinel for
+  `git worktree add -b`.
+
+The path field auto-fills as `<parent>/<slug>`; Tab into it for
+a manual override. See [Worktrees](Worktrees).
+
+### Pin a recipe to a single-key shortcut
+
+```toml
+[[ui.pane]]
+type = "command"
+name = "test"
+key  = "t"
+```
+
+`t` runs `test` from anywhere in the dashboard.
+
+### Re-run a recipe on file changes
+
+```toml
+[[ui.pane]]
+type        = "command"
+name        = "test"
+restart_on  = ["src/**", "tests/**"]
+```
+
+Same engine as `keel watch` — see [Watch](Watch).
+
+### Add a long-running watcher pane
+
+```toml
+[[ui.pane]]
+type        = "watcher"
+glob        = ["src/**"]
+on_change   = "test"
+debounce_ms = 500
+```
+
+The pane lives in the sidebar; the configured recipe fires on
+matching changes.
+
+### Open your editor from the TUI
+
+- **`E`** (global) — open the worktree root. For IDEs that take
+  a directory (VS Code, Cursor, JetBrains).
+- **`e`** in the diff view (files focus) — open the selected
+  file.
+
+The editor is resolved at startup: `[editor].command` →
+`$VISUAL` → `$EDITOR` → `vim`. See
+[editor reference](#editor-integration) below to pin one or
+override its launch mode.
+
+### Hand off to lazygit
+
+`L` in the diff view: keel leaves the alternate screen, runs
+lazygit in the foreground, and re-enters when you `q` out. Diff
+is reloaded automatically. No-op (with a status-bar hint) when
+lazygit isn't on `PATH`.
+
+## Reference
+
+### Layout
+
+- **Sidebar** — every recipe, script, and service. Recipes /
+  scripts show name + `desc`; services show lifecycle state
+  (Running / Stopped) and a backend tag (`compose`, `systemd`,
   `custom`).
-- **Main pane** — output for whatever's selected. Selecting a
-  recipe and pressing **Enter** launches it; output streams in the
-  same pane, color-preserved.
-- **Top bar** — project name, current worktree slug + offset, active
-  pane shortcut.
+- **Main pane** — output for whatever's selected.
+- **Top bar** — project name, current worktree slug + offset,
+  active pane shortcut.
 - **Footer** — keymap hints relevant to the focused view.
 
-## Auto-discovery
+### Auto-discovery
 
-At startup, keel asks the active container backend for its service
-list (`docker compose config --services`). Every name shows up as a
-service row in alphabetical order. Most projects need nothing else —
-service rows just appear.
+At startup, keel asks the active backend for its service list
+(`docker compose config --services` on compose). Every name
+becomes a sidebar row in alphabetical order. No config required.
 
-## Explicit panes (`[[ui.pane]]`)
+### Explicit panes (`[[ui.pane]]`)
 
-Add explicit `[[ui.pane]]` entries when you want one of:
+Add explicit blocks when you want one of:
 
-- Pinned ordering (declared services come first in declaration
-  order; auto-discovered services follow alphabetically).
+- Pinned ordering — declared services come first in declaration
+  order; auto-discovered ones follow alphabetically.
 - A `key = "1"` shortcut for direct focus.
-- A row that exists *before* compose detection runs (useful on slow
-  setups or when compose detection might fail and you still want the
-  row visible).
+- A row that exists *before* compose detection runs (slow
+  setups, or you want the row visible even if detection fails).
 
 ```toml
 [[ui.pane]]
@@ -55,23 +183,33 @@ on_change   = "test"
 debounce_ms = 500
 ```
 
-`type` is `service`, `command`, or `watcher`. Without one of the
-above reasons, omit the block — auto-discovery does the same job
-and the redundant declarations rot when the docker-compose.yml
+Without one of the above reasons, omit the block — auto-discovery
+does the same job and redundant declarations rot when the compose
 service list changes.
 
-## Keymaps
+### Pane types
 
-### Navigation
+- **`service`** — pinned slot for a service row. Lifecycle keymap
+  applies.
+- **`command`** — pinned slot for a recipe / script. `Enter` or
+  the `key` shortcut runs it. `restart_on = [...]` re-runs on
+  file changes.
+- **`watcher`** — long-running watcher pane. `glob = [...]`
+  selects files, `on_change = "<recipe>"` is the recipe to run,
+  `debounce_ms` is the debounce window (default 300).
+
+### Full keymap
+
+#### Navigation
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move sidebar selection. |
-| `Tab` | Cycle focus (sidebar → main pane → footer). |
+| `Tab` | Cycle focus (sidebar → main → footer). |
 | `Enter` | Run / focus the selected entry. |
 | `q` | Quit. |
 
-### Service lifecycle (uniform across compose / systemd / custom)
+#### Service lifecycle
 
 | Key | Action |
 |---|---|
@@ -82,89 +220,44 @@ service list changes.
 | `U` | Up (compose only). |
 | `D` | Down (compose only). |
 
-### Views
+#### Views
 
 | Key | Action |
 |---|---|
 | `G` | Open the [Diff View](Diff-View). |
 | `W` | Open the worktree switcher modal. |
-| `E` | Open the worktree root in your preferred editor (only when the editor handles directories — see [Editor integration](#editor-integration)). |
+| `E` | Open the worktree root in your editor (when the editor handles directories — see below). |
 
-## Worktree switcher (`W`)
+### Editor integration
 
-Modal lists every checkout under the repo and hot-reloads keel
-into a different worktree without restarting. The "+ new worktree"
-entry opens a branch-first picker:
+Two keybinds launch your preferred editor:
 
-- Type to filter local + remote branches.
-- Pick one to attach an existing checkout.
-- Or take the **"create branch '<input>' off HEAD"** sentinel for
-  `git worktree add -b`.
+- **`E`** (global) — open the worktree root. For IDEs that take
+  a directory.
+- **`e`** in the diff view (files focus) — open the selected
+  file.
 
-The path field auto-fills as `<parent>/<slug(branch)>`; Tab into it
-for a manual override.
+**Resolution**, in order:
 
-See [Worktrees](Worktrees) for the slug + offset model that
-makes per-worktree ports / `COMPOSE_PROJECT_NAME` automatic.
-
-## Pane types
-
-### `service`
-
-Pinned slot for a service row. The lifecycle keymap operates on it.
-`key = "1"` adds a single-key focus shortcut.
-
-### `command`
-
-Pinned slot for a recipe / script. Press `Enter` (or the `key`
-shortcut) to run it. `restart_on = ["src/**", ...]` re-runs on file
-changes — same engine as `keel watch`. See [Watch](Watch).
-
-### `watcher`
-
-A long-running watcher pane. `glob = [...]` selects watched files,
-`on_change = "<recipe>"` is the recipe to run, `debounce_ms` is the
-debounce window (default 300).
-
-## Editor integration
-
-Two keybinds open the user's preferred editor without leaving keel:
-
-- **`E`** (global) — open the worktree root in the editor. Designed
-  for IDEs that take a directory (VS Code, Cursor, JetBrains).
-- **`e`** in the diff view (files focus) — open the selected file.
-
-### Resolution
-
-The editor is resolved once at TUI startup, in this order:
-
-1. `[editor] command = "..."` in `keel.toml` (project-pinned).
+1. `[editor].command = "..."` in `keel.toml` (project-pinned).
 2. `$VISUAL`.
 3. `$EDITOR`.
-4. `vim` as a final fallback.
+4. `vim` (final fallback).
 
-The command string is whitespace-tokenised: `"code --wait"` becomes
-`code` with `--wait` prepended on every launch.
+The command string is whitespace-tokenised: `"code --wait"`
+becomes `code` with `--wait` prepended on every launch.
 
-### Terminal vs GUI
+**Terminal vs GUI.** Terminal editors (vim, nvim, nano, helix, …)
+suspend the TUI and resume on exit. GUI editors (code, cursor,
+gvim, IntelliJ, …) spawn detached — the TUI stays painted. The
+registry classifies known editors automatically.
 
-Terminal editors (vim, nvim, nano, helix, …) suspend the TUI like
-the lazygit handoff and resume on exit. GUI editors (code, cursor,
-gvim, IntelliJ, …) spawn detached — the TUI stays painted.
-
-### Directory support (the global `E`)
-
-Whether `E` (open worktree root) is offered is an independent
-question from terminal-vs-GUI. The registry tags each editor:
-
-- **Opens directories**: vim, nvim, emacs, helix, micro, code,
-  cursor, IntelliJ family, subl, kate, zed, gvim, mvim, … (vim and
-  emacs drop into netrw / dired; IDEs treat the dir as a workspace).
-- **Files only**: nano, kak, mcedit, vi, gedit.
-
-Unknown editors default to files-only. When the gate is closed,
-the legend hides `E` and pressing it anyway flashes an explanation.
-`e` (open file) is unaffected and works for both modes.
+**Directory support (the global `E`).** The registry also tags
+each editor as "opens directories" (vim, nvim, code, cursor,
+IntelliJ, …) or "files only" (nano, kak, mcedit). When the gate
+is closed, `E` is hidden from the legend and pressing it flashes
+an explanation. `e` (open file) is unaffected and works for both
+modes.
 
 Override per project:
 
@@ -175,36 +268,15 @@ terminal         = true   # suspend TUI on launch
 opens_directory  = true   # enable the global E
 ```
 
-Classification uses a built-in registry. For editors keel doesn't
-know, set the launch mode explicitly:
-
-```toml
-[editor]
-command  = "my-custom-editor --gui"
-terminal = false   # force GUI mode; omit to use the registry
-```
-
-Unknown editors with no override default to **terminal mode** (POSIX
-convention for `$EDITOR`).
-
-After a terminal-editor session returns, keel marks the diff stale
-and reloads — file changes you made show up immediately.
-
-## Lazygit handoff
-
-Press **`L`** in the [Diff View](Diff-View) (or set up a different
-trigger) to hand the terminal to `lazygit`. keel leaves the alternate
-screen, runs lazygit foreground, and re-enters when you `q` out.
-Commits / stages / resets done inside lazygit invalidate the cached
-diff — keel reloads automatically.
-
-The `L` keybind is a no-op (with a hint flashed in the status bar)
-when `lazygit` isn't on `PATH`.
+Unknown editors with no override default to **terminal mode**
+(POSIX convention for `$EDITOR`). After a terminal-editor session
+returns, keel marks the diff stale and reloads — file changes
+show up immediately.
 
 ## See also
 
-- [Diff View](Diff-View) for the `G` view's trunk resolution.
-- [Watch](Watch) for the standalone `keel watch` command,
-  which uses the same engine as `restart_on` panes.
-- [Worktrees](Worktrees) for `W` behavior.
+- [Diff View](Diff-View) — `G` view's trunk resolution.
+- [Watch](Watch) — the standalone `keel watch` command uses the
+  same engine as `restart_on` panes.
+- [Worktrees](Worktrees) — what `W` switches between.
 - [Configuration Reference: `[editor]`](Configuration-Reference#editor).

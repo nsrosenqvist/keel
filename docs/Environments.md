@@ -1,56 +1,186 @@
 # Environments
 
-keel resolves the environment a command sees from four sources,
-deep-merged in a documented order. The same model drives recipe
-execution, compose preflight, and the
-`[worktrees].dotenv` writer.
+`keel` controls the environment variables your commands see. It
+loads `.env` files, lets you compute values (e.g. a port that's
+unique per git checkout), and forwards a project-declared subset
+into container exec sessions. The same model drives recipe runs,
+compose preflight, and the optional `.env` writer.
 
-## Layers
+## Quickstart
+
+**1. List your dotenv files** in `keel.toml`:
+
+```toml
+[env_files]
+files = [".env", ".env.local"]
+```
+
+`.env.local` overrides `.env`, both override the inherited shell.
+
+**2. Add a computed value:**
+
+```toml
+[env]
+LOG_LEVEL = { default = "info" }
+APP_PORT  = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
+```
+
+- `default` is used only if no earlier layer set it.
+- `base + offset` picks a per-worktree port so two checkouts can
+  run side-by-side. See [Worktrees](Worktrees).
+- `from_command` runs a shell command and uses its trimmed stdout.
+
+**3. Verify what's resolved:**
+
+```sh
+keel env
+```
+
+Prints every key as `KEY=VALUE` lines.
+
+## Mental model
+
+- **Layers, later wins.** The merge order is fixed: process env →
+  `[env_files]` dotenvs → `[env]` table → recipe `env =`
+  overrides. Once you know what's in each layer, you can predict
+  the result.
+- **Host gets everything; containers get a subset.** A
+  host-executed recipe inherits the whole merged set. A
+  containerised recipe (`in = "<service>"` or under a
+  devcontainer) only gets the **project-declared** keys forwarded
+  via `-e KEY=VAL` — host `PATH`, `HOME`, etc. stay out so they
+  don't override the container's own setup.
+- **Per-key resolution has its own micro-rules.** Inside `[env]`,
+  one key can declare several fallbacks (`value`, `base+offset`,
+  `from_command`, `default`); first match wins. Pre-existing
+  values from earlier layers count too.
+
+## Common tasks
+
+### Load a `.env` file
+
+```toml
+[env_files]
+files = [".env", ".env.local"]
+```
+
+`${VAR}` expansion inside dotenv values resolves against earlier
+layers, so a value in `.env.local` can reference a value from
+`.env`.
+
+### Set a default unless overridden
+
+```toml
+[env]
+LOG_LEVEL = { default = "info" }
+```
+
+If `LOG_LEVEL` is already in the process env or a dotenv, that
+wins. Otherwise `info`.
+
+### Hard-set a value (trumps everything)
+
+```toml
+[env]
+EDITOR = { value = "vim" }
+```
+
+Use `value` when you don't want the user's shell to be able to
+override.
+
+### Compute from a shell command
+
+```toml
+[env]
+DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
+GIT_SHA      = { from_command = "git rev-parse --short HEAD" }
+```
+
+The command runs once per keel invocation; stdout (trimmed) is
+the value. `required = true` errors at preflight if no value
+resolves.
+
+### Vary a port by worktree
+
+```toml
+[env]
+APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
+```
+
+`KEEL_WORKTREE_OFFSET` is injected automatically (see [Worktrees](Worktrees)).
+Two checkouts get different offsets → different ports → no
+collisions when both stacks are up.
+
+### Per-recipe overrides
+
+```toml
+[command.test]
+run = "composer test"
+env = { XDEBUG_MODE = "off", APP_ENV = "testing" }
+```
+
+Recipe `env =` is the last layer. Activated profiles
+(`--profile ci`) can add their own override layer on top.
+
+### Make host shell vars visible inside a container
+
+Container exec strips inherited process env on purpose. To
+forward a host var explicitly, declare it under `[env]`:
+
+```toml
+[env]
+GITHUB_TOKEN = { default = "" }   # default empty string; picks up the shell value if set
+```
+
+This becomes part of the project-declared subset that's forwarded
+with `-e GITHUB_TOKEN=...`.
+
+### Auto-write `.env` for tools outside keel
+
+```toml
+[worktrees]
+dotenv = ".env"
+```
+
+Every `keel <anything>` invocation re-writes the managed block in
+`.env` so `docker compose up` (run directly), IDE launch configs,
+and `bin/rails s` all see the same values. The write is
+idempotent — when the contents already match, the file's mtime
+stays put.
+
+`keel env --write .env` does the same one-shot.
+
+### Inspect the resolved environment
+
+```sh
+keel env                # everything
+keel env | grep '^APP_' # just APP_*
+```
+
+Useful when you've layered three `from_command`s and can't
+remember which one won.
+
+## Reference
+
+### Layer order
 
 In order, later wins:
 
 1. **Inherited process env.** Whatever shell variables keel was
    launched with.
-2. **Dotenv files**, in `[env_files].files` order:
-
-   ```toml
-   [env_files]
-   files = [".env", ".env.local"]
-   ```
-
-   `${VAR}` expansion inside dotenv values resolves against earlier
+2. **Dotenv files**, in `[env_files].files` order. `${VAR}`
+   expansion inside dotenv values resolves against earlier
    layers.
-3. **`[env]` table**, key by key.
-4. **Recipe `env =` overrides** for the recipe currently running.
+3. **`[env]` table**, key by key (see per-key resolution below).
+4. **Recipe `env =` overrides** for the currently running recipe
+   (and any active profile overlay).
 
-## Host execution vs. container exec
+### Per-key resolution under `[env]`
 
-When a recipe runs on the host (no `in = "<service>"`, no devcontainer),
-the child process inherits the full merged set above — process env,
-dotenv files, `[env]`, recipe overrides — so commands like `git` and
-`cargo` find their PATH the way they normally would.
-
-When a recipe runs inside a container — either `in = "<compose-service>"`
-or under an opt-in devcontainer — only the **project-declared** subset
-is forwarded via `-e KEY=VAL`:
-
-- Keys loaded from `[env_files]` dotenv files.
-- Keys defined under `[env]`.
-- The injected `KEEL_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
-- Per-recipe / per-script `env = {...}` overrides.
-
-Inherited process env (host `PATH`, `HOME`, `USER`, `SHELL`, …) is
-intentionally **not** propagated. The container's image defaults and
-the devcontainer spec's own `containerEnv` / `remoteEnv` provide those
-— leaking the host values via `-e PATH=...` overrides the container's
-PATH and breaks command resolution (`exec "sh": not found`). To make
-a host-shell var visible inside a container, declare it explicitly in
-`[env]` (e.g. `MY_TOKEN = { default = "" }` to pick up the existing
-process value, or `from_command = "..."` to derive it).
-
-## `[env]` per-key resolution
-
-Each `[env.<KEY>]` is one of these shapes (spec fields combine):
+Each `[env.<KEY>]` is one of these shapes (fields combine inside
+a single key declaration):
 
 ```toml
 [env]
@@ -60,7 +190,7 @@ DB_URL     = { from_command = "scripts/db-url.sh", required = true }
 EDITOR     = { value = "vim" }
 ```
 
-Resolution order **within one key**, first match wins:
+Resolution within one key, first match wins:
 
 1. `value` — hard-set; trumps everything else.
 2. `base + offset` — integer-typed shorthand.
@@ -70,91 +200,61 @@ Resolution order **within one key**, first match wins:
 4. `from_command` stdout (trimmed).
 5. `default`.
 
-`required = true` with no resolved value errors at preflight time.
+`required = true` with no resolved value errors at preflight.
 
-## Built-in worktree variables
+### Host execution vs container exec
 
-Three keys are always injected into every recipe and dotenv writer:
+Host: child process inherits the full merged set above —
+`PATH`, `HOME`, `cargo` and `git` find what they expect.
+
+Container (`in = "<service>"` or under a devcontainer): only the
+**project-declared** subset is forwarded via `-e KEY=VAL`:
+
+- Keys loaded from `[env_files]` dotenv files.
+- Keys defined under `[env]`.
+- Injected `KEEL_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
+- Per-recipe / per-script `env = {...}` overrides.
+
+Inherited host process env is intentionally **not** propagated —
+leaking the host `PATH` via `-e PATH=...` overrides the
+container's own and breaks command resolution (`exec "sh": not
+found`).
+
+### Built-in worktree variables
+
+Always injected, ahead of `[env]` resolution:
 
 | Key | Source |
 |---|---|
-| `KEEL_WORKTREE_SLUG` | Detected from git checkout. |
-| `KEEL_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed. |
-| `COMPOSE_PROJECT_NAME` | `<project>-<slug>` if `[worktrees].isolate_compose`. |
+| `KEEL_WORKTREE_SLUG` | Detected from the active git checkout. |
+| `KEEL_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed from the slug. |
+| `COMPOSE_PROJECT_NAME` | `<project>-<slug>` when `[worktrees].isolate_compose` is on and the user hasn't set it. |
 
-`base + offset` is the typical consumer:
+### Script-only variables
 
-```toml
-[env]
-APP_PORT = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
-DB_PORT  = { base = "5432", offset = "KEEL_WORKTREE_OFFSET" }
-```
-
-Two checkouts of the same project get different ports automatically.
-See [Worktrees](Worktrees) for the slug-and-offset model in
-full.
-
-## Script-only variables
-
-Two extra env vars are set by the script and install-flow runners,
-**outside** the merge pipeline above. They reach `.keel/commands/`
-scripts and `.keel/install/` steps — not `[command.*]` recipes, not
-the dotenv writer, and not `keel env`:
+Set by the script and install-flow runners, **outside** the merge
+pipeline. Reach `.keel/commands/` scripts and `.keel/install/`
+steps only — not `[command.*]` recipes, not the dotenv writer,
+not `keel env`:
 
 | Key | Source |
 |---|---|
 | `KEEL_PROJECT_DIR` | Host path to the worktree project root. |
 | `KEEL_SCRIPT_DIR`  | Host path to the script file's parent directory. |
 
-Both are host-side paths even when the script runs inside a service
-or devcontainer. Inline install steps get `KEEL_PROJECT_DIR` only —
-there's no script file for `KEEL_SCRIPT_DIR` to point at.
+Both are host-side paths even when the script runs inside a
+service or devcontainer. Inline install steps get
+`KEEL_PROJECT_DIR` only — there's no script file for
+`KEEL_SCRIPT_DIR` to point at.
 
 See [Recipes and Scripts](Recipes-and-Scripts#environment-variables-provided-to-scripts)
 and [Install Flow](Install-Flow#environment-variables) for the
-contracts in full.
-
-## Inspecting the resolved environment
-
-`keel env` prints every resolved key as `KEY=VALUE` lines. Use it
-to sanity-check the merge:
-
-```sh
-keel env | grep '^APP_'
-APP_PORT=8083
-APP_ENV=local
-```
-
-`keel env --write .env` writes the same content into a managed
-block in `.env` — the file's user-owned content above and below the
-markers is preserved.
-
-## Materialising into `.env` automatically
-
-Tools invoked outside keel (`docker compose up` directly, IDE
-launch configs, `bin/rails s`, `npm run dev`, …) read `.env` and
-won't see keel-only values. One config line bridges the gap:
-
-```toml
-[worktrees]
-dotenv = ".env"
-```
-
-When set:
-
-1. Every `keel <anything>` invocation re-writes the managed block
-   in `.env`. Idempotent — when the contents already match, the
-   file's mtime stays put, so file watchers and `git status` don't
-   churn.
-2. `keel hooks install` (without an explicit `--stages` list)
-   auto-includes `post-checkout` and `post-merge` so the file stays
-   fresh after a branch switch even when the developer skips keel.
-
-For a one-shot write outside keel's normal lifecycle, use
-`keel env --write .env` directly — useful in CI scripts.
+script contracts in full.
 
 ## See also
 
-- [Configuration Reference: `[env]`](Configuration-Reference#env-and-env_files)
-- [Worktrees](Worktrees) for the slug + offset model.
-- [Hooks](Hooks) for how the post-checkout / post-merge auto-wiring works.
+- [Worktrees](Worktrees) for the slug + offset model that powers
+  `base + offset`.
+- [Hooks](Hooks) for how the post-checkout / post-merge auto-wiring
+  keeps `.env` fresh.
+- [Configuration Reference: `[env]`](Configuration-Reference#env-and-env_files).
