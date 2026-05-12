@@ -102,7 +102,7 @@ impl WatcherPane {
     }
 
     /// Advance the state machine. Idempotent and non-blocking.
-    pub async fn tick(&mut self, executor: &Executor) {
+    pub fn tick(&mut self, executor: &Executor) {
         // 1. Drain any filesystem events; arm the debounce timer.
         let mut had_event = false;
         while self.rx_events.try_recv().is_ok() {
@@ -125,7 +125,8 @@ impl WatcherPane {
             && handle.is_finished()
         {
             let h = self.completion.take().expect("checked above");
-            match h.await {
+            use futures::FutureExt;
+            match h.now_or_never().expect("is_finished returned true above") {
                 Ok(Ok(code)) => self.last_exit_code = Some(code),
                 Ok(Err(_)) => self.last_exit_code = Some(-1),
                 Err(_) => self.last_exit_code = Some(-1),

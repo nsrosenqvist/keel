@@ -111,9 +111,9 @@ async fn drive(
         app.drain_worker_snapshots();
         app.drain_messages();
         app.drain_runs();
-        app.poll_runs().await;
+        app.poll_runs();
         app.drain_services();
-        app.tick_watchers().await;
+        app.tick_watchers();
 
         terminal.draw(|f| ui::render(app, f))?;
         if app.should_quit() {

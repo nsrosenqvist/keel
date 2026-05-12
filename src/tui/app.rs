@@ -1854,13 +1854,13 @@ impl App {
     /// Each `RunState` short-circuits on already-done. Pokes the
     /// worker when the lifecycle slot transitions to done so service
     /// indicators flip without waiting for the next 2-second tick.
-    pub async fn poll_runs(&mut self) {
+    pub fn poll_runs(&mut self) {
         for run in self.runs.values_mut() {
-            run.poll_completion().await;
+            run.poll_completion();
         }
         if let Some(run) = self.lifecycle_run.as_mut() {
             let was_done = run.is_done();
-            run.poll_completion().await;
+            run.poll_completion();
             if !was_done && run.is_done() {
                 self.poke_worker_status();
             }
@@ -2193,12 +2193,12 @@ impl App {
 
     /// Advance every watcher's state machine. Spawn / drain / complete is
     /// internal to the pane.
-    pub async fn tick_watchers(&mut self) {
+    pub fn tick_watchers(&mut self) {
         let Some(executor) = self.executor.clone() else {
             return;
         };
         for pane in self.watchers.values_mut() {
-            pane.tick(&executor).await;
+            pane.tick(&executor);
         }
     }
 }

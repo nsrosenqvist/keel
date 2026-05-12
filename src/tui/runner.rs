@@ -156,9 +156,11 @@ impl RunState {
         drained
     }
 
-    /// Await completion if the task has finished. No-op if still running
-    /// or already done.
-    pub async fn poll_completion(&mut self) {
+    /// Collect the result if the task has finished. No-op if still
+    /// running or already done. Synchronous: only checks completion
+    /// state and pulls the result via `now_or_never` (safe because we
+    /// gated on `is_finished`).
+    pub fn poll_completion(&mut self) {
         if self.is_done() {
             return;
         }
@@ -169,7 +171,11 @@ impl RunState {
             return;
         }
         let handle = self.completion.take().expect("checked above");
-        match handle.await {
+        use futures::FutureExt;
+        let result = handle
+            .now_or_never()
+            .expect("is_finished returned true above");
+        match result {
             Ok(Ok(code)) => self.exit_code = Some(code),
             Ok(Err(e)) => self.error = Some(format!("{e}")),
             Err(e) => self.error = Some(format!("task panicked: {e}")),
