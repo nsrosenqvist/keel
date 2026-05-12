@@ -4,3 +4,4 @@ pub mod git;
 pub mod input;
 pub mod line_width;
 pub mod state;
+pub mod view;
