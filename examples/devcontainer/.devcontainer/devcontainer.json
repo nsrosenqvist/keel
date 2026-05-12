@@ -1,7 +1,7 @@
 {
-    // Minimal image-only devcontainer. keel supports this form
+    // Minimal image-only devcontainer. ampelos supports this form
     // plus `build: { dockerfile, ... }`; see docs/Devcontainer.md.
-    "name": "keel-devcontainer-example",
+    "name": "ampelos-devcontainer-example",
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
     "workspaceFolder": "/workspaces/devcontainer-example",
     "remoteEnv": {

@@ -1,9 +1,9 @@
 ---
-name: keel-doctor
+name: ampelos-doctor
 description: Run the project doctor and surface any failing checks.
 ---
 
-Run `keel doctor` and report:
+Run `ampelos doctor` and report:
 
 - Backend availability (compose / podman / docker / none)
 - Recipe / script discovery

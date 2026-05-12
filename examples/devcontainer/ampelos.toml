@@ -14,6 +14,6 @@ desc = "Print the container's OS info — runs inside the devcontainer."
 run = "uname -a && cat /etc/os-release | head -3"
 
 [command.shell]
-desc = "Drop into a shell inside the devcontainer (also: `keel shell`)."
+desc = "Drop into a shell inside the devcontainer (also: `ampelos shell`)."
 run = "exec ${SHELL:-/bin/sh}"
 tty = true

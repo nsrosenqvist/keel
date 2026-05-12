@@ -1,4 +1,4 @@
-# Smallest useful keel config. No backend, just host commands.
+# Smallest useful ampelos config. No backend, just host commands.
 
 [project]
 name = "minimal"
@@ -8,7 +8,7 @@ backend = "none"
 
 [command.greet]
 desc = "Say hello"
-run  = "echo hello from keel"
+run  = "echo hello from ampelos"
 
 [command.check]
 desc = "Format + lint + test, in that order"

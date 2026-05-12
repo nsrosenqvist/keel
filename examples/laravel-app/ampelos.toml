@@ -1,4 +1,4 @@
-# keel config that mirrors a typical Laravel + Docker Compose dev loop.
+# ampelos config that mirrors a typical Laravel + Docker Compose dev loop.
 # Models the same surface as a hand-rolled `dev` shell script: up / down,
 # in-container artisan / composer / php, tests with overrides, local-mode
 # with mprocs, code-quality checks, deploy.
@@ -18,17 +18,17 @@ files = [".env", ".env.${APP_ENV}"]
 
 [env]
 # Ports vary per worktree so multiple branches can run side-by-side.
-# Base port + keel's per-worktree integer offset (0 for main, hashed
+# Base port + ampelos's per-worktree integer offset (0 for main, hashed
 # for other branches; pin specific slugs in `[worktrees.assign]`).
-APP_PORT      = { base = "8080", offset = "KEEL_WORKTREE_OFFSET" }
+APP_PORT      = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
 APP_SERVICE   = { default = "app" }
 WWWUSER       = { from_command = "id -u" }
 WWWGROUP      = { from_command = "id -g" }
 
 [worktrees]
 # Materialise the resolved env (worktree-derived ports, compose
-# project name, etc.) into `.env` on every keel invocation, so
-# tools outside keel (raw `docker compose up`, IDE runners,
+# project name, etc.) into `.env` on every ampelos invocation, so
+# tools outside ampelos (raw `docker compose up`, IDE runners,
 # `bin/sail`) see the right values for the active branch.
 dotenv = ".env"
 
@@ -151,25 +151,25 @@ run  = ["check:frontend", "check:backend"]
 
 [hooks]
 pre-commit = ["check"]
-# Note: with `[worktrees] dotenv = ".env"` set above, `keel hooks
+# Note: with `[worktrees] dotenv = ".env"` set above, `ampelos hooks
 # install` (no flags) automatically wires up `post-checkout` and
 # `post-merge` so `.env` stays fresh after branch switches even
 # when you run docker compose directly. No extra recipe needed.
 
 # ----- Install flow -----
 #
-# `keel install` runs the steps under `.keel/install/` in
+# `ampelos install` runs the steps under `.ampelos/install/` in
 # filename order, then installs git-hook shims and pre-fetches any
 # external hook repos referenced by `.pre-commit-config.yaml` into
-# `.keel/cache/hooks/`. Discovered scripts are picked up
+# `.ampelos/cache/hooks/`. Discovered scripts are picked up
 # automatically — listing them under `[install].steps` is only
 # needed to reorder, add `[command.*]` recipes, or interleave
 # inline shell.
 #
 # Three example scripts ship with this project:
 #   01-copy-env          — non-interactive: seed .env from example
-#   02-confirm-seed      — interactive: keel lib confirm, optional
-#   03-pick-php-version  — interactive: keel lib select
+#   02-confirm-seed      — interactive: ampelos lib confirm, optional
+#   03-pick-php-version  — interactive: ampelos lib select
 #
 # A few inline-step examples (commented out) to show the shapes:
 #
@@ -186,7 +186,7 @@ pre-commit = ["check"]
 #
 # [install]
 # install_git_hooks = true              # default — set false to skip
-# gitignore         = ".keel/.gitignore"
+# gitignore         = ".ampelos/.gitignore"
 
 # ----- TUI panes -----
 #
