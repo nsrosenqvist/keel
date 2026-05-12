@@ -44,10 +44,7 @@ pub enum DriveOutcome {
     },
 }
 
-pub async fn run_event_loop(
-    app: &mut App,
-    initial_view: View,
-) -> Result<DriveOutcome, TuiError> {
+pub async fn run_event_loop(app: &mut App, initial_view: View) -> Result<DriveOutcome, TuiError> {
     let title = terminal_title(app);
     let mut terminal = enter_terminal(&title)?;
     // Run the same view-entry hooks the keymap fires when switching
@@ -382,9 +379,7 @@ pub(crate) fn resolve_click(app: &mut App, target: ClickTarget) -> ClickKind {
     let now = std::time::Instant::now();
     let activate = app
         .last_click
-        .map(|(t, prev)| {
-            prev == target && now.duration_since(t) <= DOUBLE_CLICK_WINDOW
-        })
+        .map(|(t, prev)| prev == target && now.duration_since(t) <= DOUBLE_CLICK_WINDOW)
         .unwrap_or(false);
     if activate {
         // Reset so a triple-click doesn't re-activate.
@@ -450,7 +445,6 @@ async fn handle_mouse_control_center(app: &mut App, me: MouseEvent) {
         _ => {}
     }
 }
-
 
 async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
@@ -653,7 +647,6 @@ async fn activate_control_center_selection(app: &mut App) {
 fn selected_is_running(app: &App) -> bool {
     app.selected_run().is_some_and(|r| !r.is_done())
 }
-
 
 /// Build worktree-switcher rows for the current project. The current
 /// worktree (matched by canonicalised path) is flagged so the modal
@@ -1129,7 +1122,6 @@ index abc..def 100644
     // Helpers and tests for the read-mode bg classifier. Each test
     // constructs a small synthetic diff and a flat read-line vec,
     // then asserts the annotated output kinds.
-
 
     fn dl_h(text: &str) -> DiffLine {
         DiffLine {

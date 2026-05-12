@@ -224,9 +224,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
 // ─────────────────────── sidebar ───────────────────────
 
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::tui::shared::sidebar_layout::{
-        JoinPosition, SidebarGroup, render_grouped_sidebar,
-    };
+    use crate::tui::shared::sidebar_layout::{JoinPosition, SidebarGroup, render_grouped_sidebar};
 
     // Bucket items by kind into the four named groups. Recipes and
     // scripts share a single "commands" group — to most users they're
@@ -637,7 +635,6 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-
 pub(crate) fn kv(key: &str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{key:<14}"), Style::default().fg(Color::DarkGray)),
@@ -769,7 +766,12 @@ fn render_captured_line(line: &CapturedLine) -> Line<'static> {
     crate::tui::ansi::ansi_to_line(&line.text, base)
 }
 
-pub(crate) fn render_service_logs(service: &ServicePane, accent: Color, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_service_logs(
+    service: &ServicePane,
+    accent: Color,
+    frame: &mut Frame,
+    area: Rect,
+) {
     let title = output_pane_title(OutputStatus::Service(service), accent);
 
     // Horizontal-only padding — every output pane sits in the same
@@ -959,7 +961,6 @@ pub(crate) fn service_indicator_style(app: &App, service: &str) -> Style {
         None => Style::default().fg(Color::DarkGray),
     }
 }
-
 
 pub(crate) fn centered_rect(area: Rect, percent_x: u16, height: u16) -> Rect {
     let h = height.min(area.height);
@@ -1236,7 +1237,9 @@ mod tests {
         }];
         app.open_worktree_switcher(entries);
         // Move to "+ new worktree" sentinel and confirm.
-        if let Some(s) = app.switcher_mut() { s.select_next(); };
+        if let Some(s) = app.switcher_mut() {
+            s.select_next();
+        };
         app.switcher_confirm();
         // Provide a couple of fake branches.
         app.open_create_form(

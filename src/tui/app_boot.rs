@@ -164,11 +164,7 @@ impl App {
                 }
             }
             if added {
-                self.items = super::build_items_from(
-                    &self.config,
-                    &self.services,
-                    &self.watchers,
-                );
+                self.items = super::build_items_from(&self.config, &self.services, &self.watchers);
                 // Refresh the worker's service set so the auto-
                 // discovered rows start receiving status updates.
                 if let Some(w) = self.worker.as_ref() {
@@ -215,11 +211,7 @@ impl App {
                 self.boot.watcher_rx = None;
             }
             if added {
-                self.items = super::build_items_from(
-                    &self.config,
-                    &self.services,
-                    &self.watchers,
-                );
+                self.items = super::build_items_from(&self.config, &self.services, &self.watchers);
             }
         }
     }
@@ -340,8 +332,7 @@ impl App {
             }
         }
         if added {
-            self.items =
-                super::build_items_from(&self.config, &self.services, &self.watchers);
+            self.items = super::build_items_from(&self.config, &self.services, &self.watchers);
         }
     }
 }

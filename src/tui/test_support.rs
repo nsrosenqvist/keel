@@ -108,7 +108,10 @@ mod tests {
     fn capital_t_switches_to_terminals() {
         let mut app = App::new(cfg());
         assert_eq!(app.view(), View::ControlCenter);
-        apply_event(&mut app, synth_press(KeyCode::Char('T'), KeyModifiers::NONE));
+        apply_event(
+            &mut app,
+            synth_press(KeyCode::Char('T'), KeyModifiers::NONE),
+        );
         assert_eq!(app.view(), View::Terminals);
     }
 
@@ -116,7 +119,10 @@ mod tests {
     #[test]
     fn capital_g_switches_to_diff() {
         let mut app = App::new(cfg());
-        apply_event(&mut app, synth_press(KeyCode::Char('G'), KeyModifiers::NONE));
+        apply_event(
+            &mut app,
+            synth_press(KeyCode::Char('G'), KeyModifiers::NONE),
+        );
         assert_eq!(app.view(), View::Diff);
     }
 
@@ -126,7 +132,10 @@ mod tests {
     #[test]
     fn slash_opens_palette() {
         let mut app = App::new(cfg());
-        apply_event(&mut app, synth_press(KeyCode::Char('/'), KeyModifiers::NONE));
+        apply_event(
+            &mut app,
+            synth_press(KeyCode::Char('/'), KeyModifiers::NONE),
+        );
         assert_eq!(app.mode(), Mode::Palette);
         assert!(app.palette().is_some());
     }
@@ -139,11 +148,13 @@ mod tests {
     #[test]
     fn esc_closes_palette() {
         let mut app = App::new(cfg());
-        apply_event(&mut app, synth_press(KeyCode::Char('/'), KeyModifiers::NONE));
+        apply_event(
+            &mut app,
+            synth_press(KeyCode::Char('/'), KeyModifiers::NONE),
+        );
         assert_eq!(app.mode(), Mode::Palette);
         apply_event(&mut app, synth_press(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.mode(), Mode::Normal);
         assert!(app.palette().is_none());
     }
 }
-

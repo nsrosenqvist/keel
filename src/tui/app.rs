@@ -3,7 +3,7 @@
 //! The model and the controller. Pure functions — no terminal I/O here.
 //!
 //! Boot wiring (spawn/drain of the background tasks) is split into the
-//! sibling [`boot`] submodule for readability.
+//! sibling `boot` submodule for readability.
 
 #[path = "app_boot.rs"]
 mod boot;
@@ -236,23 +236,16 @@ pub enum Message {
     DiffReloaded(DiffPreload),
     /// Result of a per-file diff body load. Posted by
     /// [`App::request_diff_for_selected`].
-    DiffFileLoaded {
-        path: String,
-        lines: Vec<DiffLine>,
-    },
+    DiffFileLoaded { path: String, lines: Vec<DiffLine> },
     /// Result of a per-file read body load. Posted by
     /// [`App::request_read_for_selected`].
-    ReadFileLoaded {
-        path: String,
-        lines: Vec<ReadLine>,
-    },
+    ReadFileLoaded { path: String, lines: Vec<ReadLine> },
 }
-
 
 /// Resolved diff state from a background load: top-level reload
 /// triggered by `r` (or first-entry into the diff view) and the
 /// boot-task preload both produce one of these. Folded into
-/// [`DiffView`] by [`App::apply_diff_preload`].
+/// [`DiffView`] by `App::apply_diff_preload`.
 #[derive(Debug)]
 pub struct DiffPreload {
     pub trunk: Option<String>,
@@ -855,7 +848,6 @@ impl App {
         self.modal = None;
     }
 
-
     /// Resolve the switcher: if the selected row is an existing
     /// worktree, queue a hot-reload to its path and close the modal.
     /// If it's the synthetic "+ new worktree" row, signal the
@@ -1001,7 +993,10 @@ impl App {
     /// queued [`Command::EmitBell`] so the event loop can write the
     /// BEL after the next render.
     pub fn terminals_set_windows(&mut self, windows: Vec<TmuxWindow>) {
-        let non_service_windows = windows.iter().filter(|w| !w.name.starts_with("svc:")).count();
+        let non_service_windows = windows
+            .iter()
+            .filter(|w| !w.name.starts_with("svc:"))
+            .count();
         // services count + window rows + 1 sentinel
         let total_after = self.services.len() + non_service_windows + 1;
         self.terminals.set_windows(windows, total_after);
@@ -1239,7 +1234,7 @@ impl App {
     }
 
     /// Hand the queued commands to the event loop. Called once per
-    /// tick from [`crate::tui::terminal::drive`]; the loop matches
+    /// tick from `crate::tui::terminal::drive`; the loop matches
     /// each variant and runs the corresponding side effect.
     pub fn drain_commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.commands)
@@ -1351,11 +1346,9 @@ impl App {
             let anchor_short = anchor
                 .as_deref()
                 .map(|sha| sha.chars().take(7).collect::<String>());
-            let files = crate::tui::views::diff::git::load_diff_files(
-                &project_root,
-                anchor.as_deref(),
-            )
-            .await;
+            let files =
+                crate::tui::views::diff::git::load_diff_files(&project_root, anchor.as_deref())
+                    .await;
             let _ = tx.send(Message::DiffReloaded(DiffPreload {
                 trunk,
                 anchor,
@@ -1496,7 +1489,6 @@ impl App {
             }
         }
     }
-
 
     /// Advance every watcher's state machine. Spawn / drain / complete is
     /// internal to the pane.
@@ -2079,7 +2071,10 @@ mod tests {
             has_bell: true,
             workspace: None,
         }]);
-        assert!(!drained_emit_bell(&mut app), "still-set bell should not re-arm");
+        assert!(
+            !drained_emit_bell(&mut app),
+            "still-set bell should not re-arm"
+        );
     }
 
     /// `silence_next_bell` resyncs the baseline without arming —
@@ -2387,7 +2382,8 @@ mod tests {
     #[test]
     fn diff_body_h_scroll_by_clamps_at_zero() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         // Seed a cache with a long content line so the upper-bound
         // clamp leaves plenty of room for the test to drive the
         // value past 12 columns. Without lines, max_h_scroll = 0.
@@ -2416,7 +2412,8 @@ mod tests {
     #[test]
     fn diff_body_h_scroll_clamps_at_longest_line() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         // Viewport = 20 cols, content = 30 chars, gutter formula
         // adds 2*1 + 4 = 6 → rendered width = 36 → max_scroll = 16.
         app.diff.body_width.set(20);
@@ -2445,7 +2442,8 @@ mod tests {
     #[test]
     fn diff_toggle_wrap_on_clears_h_scroll_for_active_file() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         // Seed a wide line + tight viewport so the upper-bound clamp
         // leaves enough headroom for the test to pan to 16.
         app.diff.body_width.set(20);
@@ -2479,7 +2477,8 @@ mod tests {
     #[test]
     fn diff_mark_stale_clears_cache() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         app.diff_mut().set_cache("a".into(), vec![]);
         assert!(app.diff().cache_for("a").is_some());
         app.diff_mut().mark_stale();
@@ -2500,7 +2499,8 @@ mod tests {
     #[test]
     fn diff_jump_hunk_skips_to_next_at_marker() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         // Tight viewport so scroll clamping (which keeps the last
         // visible line at the bottom) doesn't pin the offset to 0.
         app.diff.body_height.set(2);
@@ -2570,7 +2570,8 @@ mod tests {
     #[test]
     fn diff_mark_stale_clears_read_cache() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         app.diff_mut().set_read_cache(
             "a".into(),
             vec![ReadLine {
@@ -2588,7 +2589,8 @@ mod tests {
     #[test]
     fn scroll_routes_to_active_mode() {
         let mut app = App::new(cfg());
-        app.diff_mut().set_files(vec![df("a", DiffStatus::Modified)]);
+        app.diff_mut()
+            .set_files(vec![df("a", DiffStatus::Modified)]);
         // Diff-mode content + tight viewport so scroll is unclamped.
         app.diff.body_height.set(1);
         app.diff_mut().set_cache(

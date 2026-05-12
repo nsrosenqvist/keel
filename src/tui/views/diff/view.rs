@@ -5,15 +5,13 @@
 //! diff/read body on the right. Body rendering branches on
 //! [`crate::tui::views::diff::state::BodyMode`] into either the
 //! unified-diff path or the read-full-file path; both share the
-//! line-rendering helpers ([`render_diff_body_line`],
-//! [`render_read_body_line`]) and the bg-padding helper
-//! ([`fill_row_bg`]).
+//! line-rendering helpers (`render_diff_body_line`,
+//! `render_read_body_line`) and the bg-padding helper
+//! (`fill_row_bg`).
 
 use crate::tui::app::App;
 use crate::tui::shared::scroll::Axis;
-use crate::tui::ui::{
-    SELECTION_BG, SELECTION_FG, SIDEBAR_RATIO, accent_of, panel_block_titled,
-};
+use crate::tui::ui::{SELECTION_BG, SELECTION_FG, SIDEBAR_RATIO, accent_of, panel_block_titled};
 use crate::tui::views::diff::line_width::{diff_line_rendered_width, read_line_rendered_width};
 use crate::tui::views::diff::state::{
     BodyMode, DiffFile, DiffFocus, DiffLine, DiffLineKind, DiffStatus, ReadLine, ReadLineKind,
@@ -559,11 +557,7 @@ fn read_line_bg(kind: ReadLineKind) -> Option<Color> {
 /// row tint behind the gutter and source; Separator → synthetic
 /// red row with a "− N lines removed" label centered in the gutter
 /// + body area.
-fn render_read_body_line(
-    line: &ReadLine,
-    gutter_w: usize,
-    pad_to: Option<usize>,
-) -> Line<'static> {
+fn render_read_body_line(line: &ReadLine, gutter_w: usize, pad_to: Option<usize>) -> Line<'static> {
     let bg = read_line_bg(line.kind);
 
     if let ReadLineKind::Separator { removed } = line.kind {
@@ -616,11 +610,7 @@ fn render_read_body_line(
 /// Render one diff line: `<old> <new> <sigil> <code>` with a bg
 /// tint on Added / Removed / Hunk lines and syntect-derived spans
 /// for the inner code.
-fn render_diff_body_line(
-    line: &DiffLine,
-    gutter_w: usize,
-    pad_to: Option<usize>,
-) -> Line<'static> {
+fn render_diff_body_line(line: &DiffLine, gutter_w: usize, pad_to: Option<usize>) -> Line<'static> {
     // Header lines (`diff --git`, `---`, `+++`, `index …`) keep
     // their full text and sit dim — no gutter, no sigil.
     if line.kind == DiffLineKind::Header {

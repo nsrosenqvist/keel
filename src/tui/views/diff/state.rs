@@ -399,7 +399,8 @@ impl DiffView {
         let total = self.active_content_len(&path);
         let viewport = self.body_height.get() as usize;
         let max = total.saturating_sub(viewport.max(1));
-        self.active_scroll_mut().scroll_by(&path, Axis::Vertical, delta, max);
+        self.active_scroll_mut()
+            .scroll_by(&path, Axis::Vertical, delta, max);
     }
 
     pub fn body_scroll_to_top(&mut self) {

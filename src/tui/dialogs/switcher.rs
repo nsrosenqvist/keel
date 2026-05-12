@@ -236,7 +236,6 @@ impl NewWorktreeForm {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewFormField {
     Path,
@@ -321,4 +320,3 @@ impl WorktreeSwitcher {
         }
     }
 }
-

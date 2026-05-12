@@ -57,9 +57,7 @@ fn render_tmux_missing(accent: Color, frame: &mut Frame, area: Rect) {
 }
 
 fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::tui::shared::sidebar_layout::{
-        JoinPosition, SidebarGroup, render_grouped_sidebar,
-    };
+    use crate::tui::shared::sidebar_layout::{JoinPosition, SidebarGroup, render_grouped_sidebar};
 
     let rows = app.terminals_rows();
     let selected = app.terminals().selected.min(rows.len().saturating_sub(1));
@@ -307,12 +305,7 @@ fn build_info_body(app: &App, selected_row: Option<&TerminalsRow>) -> Vec<Line<'
     lines
 }
 
-fn render_preview(
-    preview: Option<&Vec<String>>,
-    accent: Color,
-    frame: &mut Frame,
-    area: Rect,
-) {
+fn render_preview(preview: Option<&Vec<String>>, accent: Color, frame: &mut Frame, area: Rect) {
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled(
