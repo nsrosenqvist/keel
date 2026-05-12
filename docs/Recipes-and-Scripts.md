@@ -94,6 +94,35 @@ Hidden files (`.foo`) and files starting with `_` are skipped. Names
 collide with `[command.*]` keys at config-load time and error
 explicitly.
 
+### Environment variables provided to scripts
+
+Every `.keel/commands/<name>` script runs with two extra env vars
+set by keel, on top of the resolved [Environments](Environments)
+layers:
+
+| Var | Value |
+|---|---|
+| `KEEL_PROJECT_DIR` | Host path to the worktree project root. |
+| `KEEL_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+
+Both are **host-side paths** even when the script runs inside a
+service (`@in:`) or devcontainer — convenient on the host,
+meaningless inside a container unless that path is bind-mounted.
+Script-author `@env:` (or the `env = {...}` table) overrides win,
+so shadowing either is intentional.
+
+Use them instead of `dirname "$0"` boilerplate, e.g. to source a
+sibling helper:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+source "$KEEL_SCRIPT_DIR/_lib.sh"
+```
+
+Recipes (`[command.<name>]`) don't receive these vars — they're a
+scripts-only contract.
+
 ## When to pick which
 
 - **Recipe**: 1–3 commands, no flow control, happy in a TOML cell.

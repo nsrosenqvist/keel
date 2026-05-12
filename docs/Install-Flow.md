@@ -106,6 +106,14 @@ test data, fetching nice-to-have artifacts).
 make pull-fixtures
 ```
 
+## Environment variables
+
+Each install step runs with `KEEL_PROJECT_DIR` set to the host path
+of the worktree project root. Script-source steps also get
+`KEEL_SCRIPT_DIR`, pointing at the parent directory of the step
+file (typically `.keel/install/`). Both sit alongside the resolved
+[Environments](Environments) layers and `@env:` declarations.
+
 ## Renderer
 
 A small line-redraw printer (`src/cli/commands/install/renderer.rs`)
