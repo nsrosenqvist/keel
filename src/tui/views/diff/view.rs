@@ -405,45 +405,43 @@ fn render_body_diff(
         .unwrap_or(0);
     let gutter_w = max_lineno.to_string().len().max(1);
 
-    // In non-wrap mode pad tinted rows to `max(pane_width,
-    // longest_line)`. The pane-width floor extends bg out to the
-    // right edge for short lines; the longest-line ceiling keeps
-    // bg continuous as the user horizontally scrolls past the pane
-    // edge — without it, scrolling reveals plain terminal cells to
-    // the right of short tinted rows. Wrap mode skips padding so
-    // trailing whitespace doesn't push lines onto an extra wrapped
-    // row.
-    let pad_to = if diff.wrap {
-        None
-    } else {
-        let pane = area.width.saturating_sub(4) as usize;
-        let longest = lines
-            .iter()
-            .map(|l| diff_line_rendered_width(l, gutter_w))
-            .max()
-            .unwrap_or(0);
-        Some(pane.max(longest))
-    };
-
     let scroll = diff.diff_scroll.get(&file.path, Axis::Vertical);
     // `body_h_scroll` clamps to 0 when wrap is on — wrap mode
     // has no horizontal axis, and a stale map entry must not bleed
     // into rendering. Cast saturates so a >u16::MAX offset (which
     // would be a bug elsewhere) doesn't wrap around.
     let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
+    let pane_w = area.width.saturating_sub(4) as usize;
     if diff.wrap {
-        // Wrap mode: render every line; let Paragraph handle the
-        // scroll. Slower for huge diffs, fine for typical PRs.
+        // Wrap mode: pre-wrap each rendered Line into pane-width
+        // rows and bg-pad every wrapped row so the Added/Removed
+        // tint extends to the right edge across continuations.
+        // Done by hand because Paragraph's built-in wrap only paints
+        // bg on the actual character cells of each soft-wrapped row.
         let rendered: Vec<Line<'static>> = lines
             .iter()
-            .map(|l| render_diff_body_line(l, gutter_w, pad_to))
+            .flat_map(|l| {
+                let bg = diff_line_bg(l.kind);
+                wrap_line_with_bg(render_diff_body_line(l, gutter_w, None), pane_w, bg)
+            })
             .collect();
         let para = Paragraph::new(rendered)
             .block(block)
-            .wrap(Wrap { trim: false })
             .scroll((scroll as u16, 0));
         frame.render_widget(para, area);
     } else {
+        // In non-wrap mode pad tinted rows to `max(pane_width,
+        // longest_line)`. The pane-width floor extends bg out to
+        // the right edge for short lines; the longest-line ceiling
+        // keeps bg continuous as the user horizontally scrolls past
+        // the pane edge — without it, scrolling reveals plain
+        // terminal cells to the right of short tinted rows.
+        let longest = lines
+            .iter()
+            .map(|l| diff_line_rendered_width(l, gutter_w))
+            .max()
+            .unwrap_or(0);
+        let pad_to = Some(pane_w.max(longest));
         // Non-wrap: pre-slice to viewport so we don't pay for
         // off-screen lines on huge diffs.
         let max = inner_height as usize;
@@ -485,31 +483,28 @@ fn render_body_read(
     let max_lineno = lines.iter().map(|l| l.lineno).max().unwrap_or(0);
     let gutter_w = max_lineno.to_string().len().max(1);
 
-    let pad_to = if diff.wrap {
-        None
+    let scroll = diff.read_scroll.get(&file.path, Axis::Vertical);
+    let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
+    let pane_w = area.width.saturating_sub(4) as usize;
+    if diff.wrap {
+        let rendered: Vec<Line<'static>> = lines
+            .iter()
+            .flat_map(|l| {
+                let bg = read_line_bg(l.kind);
+                wrap_line_with_bg(render_read_body_line(l, gutter_w, None), pane_w, bg)
+            })
+            .collect();
+        let para = Paragraph::new(rendered)
+            .block(block)
+            .scroll((scroll as u16, 0));
+        frame.render_widget(para, area);
     } else {
-        let pane = area.width.saturating_sub(4) as usize;
         let longest = lines
             .iter()
             .map(|l| read_line_rendered_width(l, gutter_w))
             .max()
             .unwrap_or(0);
-        Some(pane.max(longest))
-    };
-
-    let scroll = diff.read_scroll.get(&file.path, Axis::Vertical);
-    let h_scroll: u16 = app.diff().body_h_scroll().min(u16::MAX as usize) as u16;
-    if diff.wrap {
-        let rendered: Vec<Line<'static>> = lines
-            .iter()
-            .map(|l| render_read_body_line(l, gutter_w, pad_to))
-            .collect();
-        let para = Paragraph::new(rendered)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll as u16, 0));
-        frame.render_widget(para, area);
-    } else {
+        let pad_to = Some(pane_w.max(longest));
         let max = inner_height as usize;
         let visible: Vec<Line<'static>> = lines
             .iter()
@@ -539,6 +534,70 @@ fn fill_row_bg(spans: &mut Vec<Span<'static>>, pad_to: Option<usize>, bg: Option
     }
     let pad = " ".repeat(width - used);
     spans.push(Span::styled(pad, Style::default().bg(bg)));
+}
+
+/// Hand-wrap a fully-styled Line into one-or-more Lines of `width`
+/// cells each, padding each wrapped row's tail with bg-tinted
+/// whitespace so the tint extends to the right edge. Used in wrap
+/// mode in place of Paragraph's built-in wrap — ratatui's wrap only
+/// paints bg on the actual character cells of each soft-wrapped
+/// row, which leaves continuation rows visually disconnected from
+/// the tinted first row.
+fn wrap_line_with_bg(line: Line<'static>, width: usize, bg: Option<Color>) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![line];
+    }
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut current: Vec<Span<'static>> = Vec::new();
+    let mut current_w: usize = 0;
+
+    for span in line.spans {
+        if span.content.is_empty() {
+            continue;
+        }
+        let style = span.style;
+        let chars: Vec<char> = span.content.chars().collect();
+        let mut idx = 0;
+        while idx < chars.len() {
+            if current_w == width {
+                rows.push(std::mem::take(&mut current));
+                current_w = 0;
+            }
+            let take = (width - current_w).min(chars.len() - idx);
+            let chunk: String = chars[idx..idx + take].iter().collect();
+            current.push(Span::styled(chunk, style));
+            current_w += take;
+            idx += take;
+        }
+    }
+    if !current.is_empty() || rows.is_empty() {
+        rows.push(current);
+    }
+
+    if let Some(bg_color) = bg {
+        for row in &mut rows {
+            let used: usize = row.iter().map(|s| s.width()).sum();
+            if used < width {
+                row.push(Span::styled(
+                    " ".repeat(width - used),
+                    Style::default().bg(bg_color),
+                ));
+            }
+        }
+    }
+
+    rows.into_iter().map(Line::from).collect()
+}
+
+/// Diff-body row tint. Added → green, Removed → red, all other
+/// kinds → none. Mirrors `read_line_bg` so wrap-mode can compute
+/// the bg externally without re-running the renderer.
+fn diff_line_bg(kind: DiffLineKind) -> Option<Color> {
+    match kind {
+        DiffLineKind::Added => Some(Color::Rgb(20, 38, 24)),
+        DiffLineKind::Removed => Some(Color::Rgb(46, 22, 22)),
+        _ => None,
+    }
 }
 
 /// Read-mode row tint. Added → green, Modified → blue, Separator
@@ -630,11 +689,7 @@ fn render_diff_body_line(line: &DiffLine, gutter_w: usize, pad_to: Option<usize>
         ));
     }
 
-    let bg_tint = match line.kind {
-        DiffLineKind::Added => Some(Color::Rgb(20, 38, 24)),
-        DiffLineKind::Removed => Some(Color::Rgb(46, 22, 22)),
-        _ => None,
-    };
+    let bg_tint = diff_line_bg(line.kind);
     let sigil = match line.kind {
         DiffLineKind::Added => "+",
         DiffLineKind::Removed => "−",
