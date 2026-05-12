@@ -3,11 +3,11 @@
 //! plus per-source overrides applied on top of the upstream manifest.
 //!
 //! This module owns only the wire format and structural validation.
-//! The actual cache + apply pipeline lives in `keel-agents`.
+//! The actual cache + apply pipeline lives in `ampelos-agents`.
 
 use serde::Deserialize;
 
-const DEFAULT_MANIFEST_PATH: &str = "keel-agents.toml";
+const DEFAULT_MANIFEST_PATH: &str = "ampelos-agents.toml";
 
 fn default_manifest_path() -> String {
     DEFAULT_MANIFEST_PATH.to_string()

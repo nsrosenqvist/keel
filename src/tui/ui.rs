@@ -589,7 +589,7 @@ fn script_kv_lines(script: &crate::config::ScriptCommand) -> Vec<Line<'static>> 
     let path_display = script
         .path
         .file_name()
-        .map(|f| format!(".keel/commands/{}", f.to_string_lossy()))
+        .map(|f| format!(".ampelos/commands/{}", f.to_string_lossy()))
         .unwrap_or_else(|| script.path.display().to_string());
     out.push(kv("path", &path_display));
     if script.tty {
@@ -807,7 +807,7 @@ pub(crate) fn render_service_logs(
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "set runtime.backend = \"compose\" in keel.toml",
+                "set runtime.backend = \"compose\" in ampelos.toml",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(

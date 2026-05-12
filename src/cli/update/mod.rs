@@ -311,7 +311,7 @@ fn atomic_replace(target_path: &Path, new_binary: &[u8]) -> Result<(), UpdateErr
         UpdateError::ReplaceError("cannot determine parent directory".to_string())
     })?;
 
-    let tmp_path = parent.join(".keel-update.tmp");
+    let tmp_path = parent.join(".ampelos-update.tmp");
 
     let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
         if e.kind() == io::ErrorKind::PermissionDenied {
@@ -359,7 +359,7 @@ fn check_write_permission(exe_path: &Path) -> Result<(), UpdateError> {
         UpdateError::ReplaceError("cannot determine parent directory".to_string())
     })?;
 
-    let probe_path = parent.join(".keel-write-probe");
+    let probe_path = parent.join(".ampelos-write-probe");
     match fs::File::create(&probe_path) {
         Ok(_) => {
             let _ = fs::remove_file(&probe_path);

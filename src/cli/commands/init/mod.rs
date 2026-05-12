@@ -1,4 +1,4 @@
-//! `ampelos init` — scaffold a starter `keel.toml`.
+//! `ampelos init` — scaffold a starter `ampelos.toml`.
 //!
 //! Non-interactive, idempotent (refuses to overwrite).
 //!
@@ -24,7 +24,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 pub fn run(project_root: &Path, template: Option<Template>) -> Result<()> {
-    let target = project_root.join("keel.toml");
+    let target = project_root.join("ampelos.toml");
     if target.exists() {
         anyhow::bail!("{} already exists; refusing to overwrite", target.display());
     }
@@ -65,7 +65,7 @@ mod tests {
     fn writes_template_when_absent() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), None).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("[project]"));
         assert!(body.contains(&format!(
             "name = \"{}\"",
@@ -76,11 +76,11 @@ mod tests {
     #[test]
     fn refuses_to_overwrite() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("keel.toml"), "existing").unwrap();
+        std::fs::write(dir.path().join("ampelos.toml"), "existing").unwrap();
         let err = run(dir.path(), None).unwrap_err();
         assert!(err.to_string().contains("already exists"));
         assert_eq!(
-            std::fs::read_to_string(dir.path().join("keel.toml")).unwrap(),
+            std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap(),
             "existing"
         );
     }
@@ -91,7 +91,7 @@ mod tests {
         std::fs::write(dir.path().join("docker-compose.yml"), "version: 3").unwrap();
         std::fs::write(dir.path().join(".env"), "FOO=bar").unwrap();
         run(dir.path(), None).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("backend = \"compose\""));
         assert!(body.contains("[env_files]"));
     }
@@ -100,7 +100,7 @@ mod tests {
     fn defaults_to_backend_none() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), None).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("backend = \"none\""));
     }
 
@@ -111,7 +111,7 @@ mod tests {
         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
         std::fs::write(dir.path().join(".env"), "").unwrap();
         run(dir.path(), None).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("backend = \"compose\""));
         assert!(body.contains("[env_files]"));
         assert!(body.contains("# [command.build]"));
@@ -130,7 +130,7 @@ mod tests {
         std::fs::write(dir.path().join("package.json"), "{}").unwrap();
         std::fs::write(dir.path().join("composer.json"), "{}").unwrap();
         run(dir.path(), None).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("Multiple ecosystems suggest `test`"));
         assert_eq!(body.matches("# [command.test]").count(), 2);
         crate::config::parse_str(&body).unwrap();
@@ -140,7 +140,7 @@ mod tests {
     fn template_laravel_writes_richer_config() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), Some(Template::Laravel)).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("[command.artisan]"));
         assert!(body.contains("[command.test.profile.ci]"));
         crate::config::parse_str(&body).unwrap();
@@ -150,7 +150,7 @@ mod tests {
     fn template_node_uses_backend_none() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), Some(Template::Node)).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(body.contains("backend = \"none\""));
         crate::config::parse_str(&body).unwrap();
     }
@@ -159,7 +159,7 @@ mod tests {
     fn template_rust_parses_back() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), Some(Template::Rust)).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         crate::config::parse_str(&body).unwrap();
     }
 
@@ -167,7 +167,7 @@ mod tests {
     fn template_rails_parses_back() {
         let dir = TempDir::new().unwrap();
         run(dir.path(), Some(Template::Rails)).unwrap();
-        let body = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         crate::config::parse_str(&body).unwrap();
     }
 }

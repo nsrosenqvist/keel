@@ -2,7 +2,7 @@
 //! instructions and skills.
 //!
 //! Thin CLI wrapper around `crate::agents::apply` / `detect_drift`.
-//! All policy lives in the `keel-agents` crate; this module
+//! All policy lives in the `ampelos-agents` crate; this module
 //! formats arguments + report output.
 
 use crate::agents::{ApplyOptions, ApplyReport, apply, detect_drift};

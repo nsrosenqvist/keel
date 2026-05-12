@@ -136,7 +136,7 @@ pub trait Backend: Send + Sync {
     /// [`OutputSink`]: ampelos-runtime::OutputSink
     async fn tail_logs(&self, _service: &str) -> Result<Child, BackendError> {
         Err(BackendError::Reported(
-            "no container backend configured (set runtime.backend = \"compose\" in keel.toml)"
+            "no container backend configured (set runtime.backend = \"compose\" in ampelos.toml)"
                 .into(),
         ))
     }

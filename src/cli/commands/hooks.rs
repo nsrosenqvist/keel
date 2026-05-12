@@ -3,7 +3,7 @@
 //! The CLI orchestrates two sources of hook logic, both running on the
 //! same [`Executor`]:
 //!
-//! - Native ampelos hooks declared in `keel.toml` `[hooks.<stage>]` — these
+//! - Native ampelos hooks declared in `ampelos.toml` `[hooks.<stage>]` — these
 //!   run as recipes through the executor's recipe runner, picking up
 //!   each recipe's `in = "<service>"` routing for free.
 //! - `.pre-commit-config.yaml` hooks — parsed by `crate::hooks` and run

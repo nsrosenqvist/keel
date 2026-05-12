@@ -6,7 +6,7 @@
 //! - **slug**: a normalised string derived from the branch name (or
 //!   worktree dir, or short SHA — see [`BaseRef`]).
 //! - **offset**: an integer in `0..modulus`, either pinned via
-//!   `[worktrees.assign]` in keel.toml or computed by hashing
+//!   `[worktrees.assign]` in ampelos.toml or computed by hashing
 //!   `<seed>|<slug>` with FNV-1a.
 //!
 //! Recipes reference these via the env vars [`Env::resolve`] injects:
@@ -143,7 +143,7 @@ async fn detect_base_ref(project_root: &Path) -> BaseRef {
 ///
 /// Order:
 /// 1. Caller-supplied `override_branch` (from `[diff] base = ...`
-///    in `keel.toml`).
+///    in `ampelos.toml`).
 /// 2. `git symbolic-ref refs/remotes/origin/HEAD` — the canonical
 ///    "remote default branch" answer when a remote is configured.
 /// 3. Local-branch fallback: `main`, `master`, `develop`, `trunk`,

@@ -558,7 +558,7 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             } else {
                 let name = app.editor().display_name().to_owned();
                 app.flash(format!(
-                    "E (open worktree) needs an editor that handles directories; {name} doesn't — set [editor] in keel.toml"
+                    "E (open worktree) needs an editor that handles directories; {name} doesn't — set [editor] in ampelos.toml"
                 ));
             }
             return;

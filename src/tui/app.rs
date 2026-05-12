@@ -1576,7 +1576,7 @@ fn runtime_row_label(config: &Config) -> Option<&'static str> {
 
 /// Reconstruct the sidebar item list from live state. The order is
 /// stable: runtime (when configured), services (declared first in
-/// keel.toml order, then any auto-discovered ones), watchers,
+/// ampelos.toml order, then any auto-discovered ones), watchers,
 /// recipes, scripts.
 fn build_items_from(
     config: &Config,
@@ -1597,7 +1597,7 @@ fn build_items_from(
 
     let mut emitted_services: std::collections::BTreeSet<&str> = Default::default();
 
-    // Declared services first, in keel.toml [[ui.pane]] order.
+    // Declared services first, in ampelos.toml [[ui.pane]] order.
     for pane in &config.ui.panes {
         if let UiPane::Service { service, .. } = pane
             && services.contains_key(service)

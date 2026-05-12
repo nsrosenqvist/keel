@@ -1,7 +1,7 @@
 //! Content-addressed git cache for ampelos.
 //!
 //! ampelos owns the cache — it never delegates to a third-party tool.
-//! Every cache lives at `<project>/.keel/cache/<kind>/<key>/`, one
+//! Every cache lives at `<project>/.ampelos/cache/<kind>/<key>/`, one
 //! directory per (url, rev) pair, where `<kind>` is selected by the
 //! caller (hooks, agents, …). Cache contents survive across runs;
 //! callers pass `force = true` to wipe and re-clone.
@@ -9,7 +9,7 @@
 //! Layout per cached repo:
 //!
 //! ```text
-//! .keel/cache/<kind>/<key>/
+//! .ampelos/cache/<kind>/<key>/
 //!   ├── clone/            // git worktree (depth-1 when possible)
 //!   └── meta.json         // resolved SHA + clone metadata
 //! ```
@@ -26,7 +26,7 @@ const CLONE_SUBDIR: &str = "clone";
 const META_FILE: &str = "meta.json";
 
 /// Logical cache namespace. Selects the on-disk directory under
-/// `.keel/cache/`. New variants only need to map to a path segment.
+/// `.ampelos/cache/`. New variants only need to map to a path segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
     Hooks,
@@ -75,7 +75,7 @@ pub struct CacheMeta {
 /// by [`clone_or_reuse`]; callers don't need to pre-create it.
 pub fn cache_root(project_root: &Path, kind: CacheKind) -> PathBuf {
     project_root
-        .join(".keel")
+        .join(".ampelos")
         .join("cache")
         .join(kind.as_segment())
 }

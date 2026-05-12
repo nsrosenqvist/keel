@@ -5,7 +5,7 @@
 //!
 //! - [`config`] parses `.pre-commit-config.yaml` plus the upstream
 //!   `.pre-commit-hooks.yaml` shipped inside external hook repos.
-//! - [`cache`] clones external hook repos into `.keel/cache/hooks/`
+//! - [`cache`] clones external hook repos into `.ampelos/cache/hooks/`
 //!   and remembers the resolved revision sha. ampelos owns this cache
 //!   end-to-end; it never delegates to the `pre-commit` binary.
 //! - [`runner`] runs the hooks for a given stage. Each hook's `entry`
@@ -20,7 +20,7 @@
 //! - [`installer`] writes `.git/hooks/<stage>` shims that delegate to
 //!   `ampelos hooks run <stage> "$@"`.
 //!
-//! Native ampelos hooks (declared in `keel.toml` `[hooks]`) are run by
+//! Native ampelos hooks (declared in `ampelos.toml` `[hooks]`) are run by
 //! the CLI through [`crate::runtime::Executor`], not by this crate — they
 //! reuse the recipe runner. This crate handles the pre-commit ecosystem
 //! and the git-hooks plumbing.

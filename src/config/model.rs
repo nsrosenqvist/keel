@@ -1,4 +1,4 @@
-//! Domain model for `keel.toml`.
+//! Domain model for `ampelos.toml`.
 //!
 //! Types here are value objects: they are constructed from the TOML source,
 //! validated, and then handed (immutable) to the runtime. They expose no
@@ -10,7 +10,7 @@ use crate::config::scripts::ScriptCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// Top-level configuration loaded from a project's `keel.toml`.
+/// Top-level configuration loaded from a project's `ampelos.toml`.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -41,7 +41,7 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiConfig,
 
-    /// Project-defined hooks. `[hooks]` in `keel.toml` is a table whose
+    /// Project-defined hooks. `[hooks]` in `ampelos.toml` is a table whose
     /// keys are stage names (`pre-commit`, `pre-push`, ...) and whose
     /// values are lists of recipe / script names to run for that stage.
     #[serde(default)]
@@ -65,13 +65,13 @@ pub struct Config {
     #[serde(default)]
     pub services: ServicesConfig,
 
-    /// Scripts discovered under `.keel/commands/`. Populated by
+    /// Scripts discovered under `.ampelos/commands/`. Populated by
     /// [`crate::config::loader::load_project`]; never serialized.
     #[serde(skip)]
     pub scripts: BTreeMap<String, ScriptCommand>,
 
     /// Install-time configuration: ordered step plan plus the steps
-    /// discovered under `.keel/install/`. Authors who don't ship an
+    /// discovered under `.ampelos/install/`. Authors who don't ship an
     /// install flow can ignore this entirely — `[install]` defaults to
     /// "no steps, hooks still installed automatically".
     #[serde(default)]
@@ -497,7 +497,7 @@ pub struct Recipe {
     pub desc: Option<String>,
 
     /// What to run. Either a single shell-parsed string or a list of steps.
-    /// Multi-step logic beyond a flat list belongs in `.keel/commands/`.
+    /// Multi-step logic beyond a flat list belongs in `.ampelos/commands/`.
     pub run: Run,
 
     /// Service to exec inside (via the configured backend). Absent → host.

@@ -1,14 +1,14 @@
-//! Turn `[install]` config plus `.keel/install/*` into an ordered,
+//! Turn `[install]` config plus `.ampelos/install/*` into an ordered,
 //! resolved plan the runner can iterate.
 //!
 //! Three resolution rules:
 //!
 //! 1. When `[install].steps` is empty, the plan **is** the discovered
 //!    step list in directory order. Authors who only use shell files
-//!    don't have to touch `keel.toml` to wire them up.
+//!    don't have to touch `ampelos.toml` to wire them up.
 //! 2. When `[install].steps` is set, every named entry must resolve
-//!    against `.keel/install/`, a `[command.*]` recipe, or — by
-//!    explicit opt-in — `.keel/commands/`. Unresolved names are a
+//!    against `.ampelos/install/`, a `[command.*]` recipe, or — by
+//!    explicit opt-in — `.ampelos/commands/`. Unresolved names are a
 //!    fatal config error.
 //! 3. When `install.install_git_hooks` is true (default), a synthetic
 //!    "install-hooks" step is appended. The runner knows how to fulfil
@@ -40,14 +40,14 @@ impl Step {
 pub enum StepSource {
     /// Execute via [`crate::runtime::Executor::run_recipe`].
     Recipe(String),
-    /// Execute a script file under `.keel/install/` directly.
+    /// Execute a script file under `.ampelos/install/` directly.
     Script(InstallStepScript),
     /// Inline `run = "..."` from `[install].steps`.
     Inline(InlineStep),
     /// Built-in: install git-hook shims and prefetch any external hook
     /// repos referenced by `.pre-commit-config.yaml`.
     InstallHooks,
-    /// Built-in: apply agent instructions / skills via `keel-agents`.
+    /// Built-in: apply agent instructions / skills via `ampelos-agents`.
     /// Runs before [`StepSource::InstallHooks`] so any hook-related
     /// docs land in place first.
     ApplyAgents,
@@ -137,12 +137,12 @@ fn resolve_entry(config: &Config, entry: &InstallStepRef) -> Result<Step> {
                     optional: false,
                 });
             }
-            // We deliberately do *not* fall back to `.keel/commands/`
+            // We deliberately do *not* fall back to `.ampelos/commands/`
             // scripts — those are user-facing recipes that show up in
             // `ampelos list`, and we want install authors to be
             // explicit about wiring one into the install flow.
             bail!(
-                "install step `{}` does not match a discovered .keel/install/ file \
+                "install step `{}` does not match a discovered .ampelos/install/ file \
                  or a `[command.*]` recipe. Add the file, declare the recipe, or use \
                  an inline `{{ name = \"...\", run = \"...\" }}` step.",
                 name

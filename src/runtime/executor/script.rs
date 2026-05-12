@@ -1,6 +1,6 @@
 //! Script-run orchestration.
 //!
-//! Mirrors [`super::recipe`] but for `.keel/commands/<name>`
+//! Mirrors [`super::recipe`] but for `.ampelos/commands/<name>`
 //! scripts: the script body is piped over stdin to `<interpreter>
 //! -s -- <args>` (interpreter derived from the shebang), with the
 //! same in-service / in-devcontainer / on-host fan-out the recipe

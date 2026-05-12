@@ -1,4 +1,4 @@
-//! Section-ordered TOML emitter for the auto-detected `keel.toml`.
+//! Section-ordered TOML emitter for the auto-detected `ampelos.toml`.
 //!
 //! The detectors return shapeful fragments; this module is the *only*
 //! place that knows what the output text looks like. Two responsibilities

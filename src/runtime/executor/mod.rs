@@ -485,7 +485,7 @@ mod tests {
     async fn host_script_gets_ampelos_project_and_script_dirs() {
         let backend = Arc::new(MockBackend::new(ServiceStatus::Running));
         let project_dir = tempfile::TempDir::new().unwrap();
-        let scripts_subdir = project_dir.path().join(".keel/commands");
+        let scripts_subdir = project_dir.path().join(".ampelos/commands");
         std::fs::create_dir_all(&scripts_subdir).unwrap();
         let script_path = scripts_subdir.join("probe");
         std::fs::write(

@@ -5,8 +5,8 @@
 **/*.rs.bk
 Cargo.lock.bak
 
-# keel per-developer overrides
-.keel/local.toml
+# ampelos per-developer overrides
+.ampelos/local.toml
 
 # Editor
 .vscode/

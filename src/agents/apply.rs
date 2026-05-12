@@ -484,7 +484,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), AgentsError> {
         })?;
     }
     let tmp = path.with_extension(format!(
-        "{}.keel-tmp",
+        "{}.ampelos-tmp",
         path.extension()
             .map(|e| e.to_string_lossy().into_owned())
             .unwrap_or_default(),

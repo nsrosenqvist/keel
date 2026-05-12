@@ -8,7 +8,7 @@
 //!   computing each one's offset against the current config. Useful for
 //!   spotting hash collisions before they bite.
 //! - `assign <name> <offset>` — write a `[worktrees.assign]` entry into
-//!   `keel.toml` (or `.keel/local.toml` with `--local`). Uses
+//!   `ampelos.toml` (or `.ampelos/local.toml` with `--local`). Uses
 //!   `toml_edit` to preserve formatting and comments.
 
 use crate::config::{Config, EnvSpec};
@@ -141,11 +141,11 @@ pub fn assign(name: &str, offset: u32, local: bool, project_root: &Path) -> Resu
         anyhow::bail!("`{name}` slugifies to an empty string; nothing to pin");
     }
     let target = if local {
-        let dir = project_root.join(".keel");
+        let dir = project_root.join(".ampelos");
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         dir.join("local.toml")
     } else {
-        project_root.join("keel.toml")
+        project_root.join("ampelos.toml")
     };
 
     let raw = if target.exists() {
@@ -215,7 +215,7 @@ mod tests {
     fn assign_writes_new_entry() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
-            dir.path().join("keel.toml"),
+            dir.path().join("ampelos.toml"),
             r#"
 [project]
 name = "x"
@@ -224,7 +224,7 @@ name = "x"
         .unwrap();
 
         assign("feature/x", 7, false, dir.path()).unwrap();
-        let after = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let after = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(after.contains("[worktrees]"));
         assert!(after.contains("[worktrees.assign]"));
         // Slugified key — runtime lookup uses the slug form too.
@@ -236,9 +236,10 @@ name = "x"
     #[test]
     fn assign_local_writes_to_local_toml() {
         let dir = tempfile::TempDir::new().unwrap();
-        // No keel.toml; just write to local.
+        // No ampelos.toml; just write to local.
         assign("main", 0, true, dir.path()).unwrap();
-        let local = std::fs::read_to_string(dir.path().join(".keel").join("local.toml")).unwrap();
+        let local =
+            std::fs::read_to_string(dir.path().join(".ampelos").join("local.toml")).unwrap();
         assert!(local.contains("main = 0"));
     }
 
@@ -246,7 +247,7 @@ name = "x"
     fn assign_updates_existing_entry() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
-            dir.path().join("keel.toml"),
+            dir.path().join("ampelos.toml"),
             r#"
 [worktrees.assign]
 main = 0
@@ -255,7 +256,7 @@ feature-x = 5
         )
         .unwrap();
         assign("feature/x", 9, false, dir.path()).unwrap();
-        let after = std::fs::read_to_string(dir.path().join("keel.toml")).unwrap();
+        let after = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
         assert!(after.contains("feature-x = 9"));
         assert!(after.contains("main = 0"));
     }

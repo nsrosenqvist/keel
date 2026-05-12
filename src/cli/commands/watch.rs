@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 300;
-const IGNORED_SEGMENTS: &[&str] = &["target", ".git", "node_modules", ".keel"];
+const IGNORED_SEGMENTS: &[&str] = &["target", ".git", "node_modules", ".ampelos"];
 
 pub async fn run(
     config: Arc<Config>,

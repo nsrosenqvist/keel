@@ -4,13 +4,13 @@
 //!
 //! Three concerns kept separable:
 //!
-//! - [`manifest`] parses the upstream `keel-agents.toml` that
+//! - [`manifest`] parses the upstream `ampelos-agents.toml` that
 //!   declares which files map to which destinations.
 //! - [`merge`] applies downstream overrides + expands `[[dir]]`
 //!   mappings against the cloned worktree.
 //! - [`mod@apply`] orchestrates cache (via `ampelos::cache`) → manifest →
 //!   merge → drift / collision / shadow checks → file writes,
-//!   maintaining `.keel/agents.state.json` along the way.
+//!   maintaining `.ampelos/agents.state.json` along the way.
 
 pub mod apply;
 pub mod error;

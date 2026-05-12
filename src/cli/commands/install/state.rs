@@ -1,4 +1,4 @@
-//! `.keel/install.state.json` — what's been run, what's still pending.
+//! `.ampelos/install.state.json` — what's been run, what's still pending.
 //!
 //! The state file is a thin record of per-step outcome plus an overall
 //! `started_at`. The runner reads it to decide what `--resume` should
@@ -150,7 +150,7 @@ impl InstallState {
 }
 
 fn state_path(project_root: &Path) -> PathBuf {
-    project_root.join(".keel").join("install.state.json")
+    project_root.join(".ampelos").join("install.state.json")
 }
 
 fn now_ms() -> u64 {
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn version_mismatch_errors() {
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join(".keel")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".ampelos")).unwrap();
         std::fs::write(
             state_path(dir.path()),
             r#"{"version":999,"started_at_ms":0,"steps":[]}"#,

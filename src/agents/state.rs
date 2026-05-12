@@ -1,4 +1,4 @@
-//! `.keel/agents.state.json` — what ampelos owns, what it pinned to,
+//! `.ampelos/agents.state.json` — what ampelos owns, what it pinned to,
 //! what bytes it last wrote. Drives drift detection and orphan
 //! removal across `agents install` / `agents update` runs.
 //!
@@ -124,7 +124,7 @@ impl AgentsState {
 }
 
 fn state_path(project_root: &Path) -> PathBuf {
-    project_root.join(".keel").join(STATE_FILE)
+    project_root.join(".ampelos").join(STATE_FILE)
 }
 
 pub fn epoch_ms() -> u64 {
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn version_mismatch_is_an_error() {
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join(".keel")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".ampelos")).unwrap();
         std::fs::write(
             state_path(dir.path()),
             r#"{"version":999,"applied_at_ms":0,"sources":[],"files":[]}"#,

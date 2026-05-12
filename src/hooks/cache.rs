@@ -12,7 +12,7 @@ use crate::hooks::error::HookError;
 pub use crate::cache::{CacheMeta, CachedRepo};
 
 /// Cache root for hook repos. Equivalent to
-/// `<project>/.keel/cache/hooks/`.
+/// `<project>/.ampelos/cache/hooks/`.
 pub fn cache_root(project_root: &std::path::Path) -> std::path::PathBuf {
     crate::cache::cache_root(project_root, CacheKind::Hooks)
 }

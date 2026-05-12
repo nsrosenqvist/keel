@@ -12,9 +12,9 @@ use crate::config::Config;
 pub enum Resolution<'a> {
     /// Built-in ampelos subcommand (handled by the CLI before reaching here).
     Builtin(&'static str),
-    /// User-defined recipe in `keel.toml`.
+    /// User-defined recipe in `ampelos.toml`.
     Recipe(&'a str),
-    /// Script under `.keel/commands/<name>` (or `<name>.sh`).
+    /// Script under `.ampelos/commands/<name>` (or `<name>.sh`).
     Script(&'a str),
     /// Pass remaining args through to `compose <name> ...`.
     ComposePassthrough(&'a str),

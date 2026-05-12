@@ -2,7 +2,7 @@
 //!
 //! These are hand-curated rich starter configs — independent of the
 //! auto-detection registry. Each function returns a ready-to-edit
-//! `keel.toml` body for a specific stack. New stacks are added by
+//! `ampelos.toml` body for a specific stack. New stacks are added by
 //! extending [`Template`] and adding a matching function.
 
 use clap::ValueEnum;

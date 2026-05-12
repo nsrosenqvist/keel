@@ -1,6 +1,6 @@
 //! Script-based commands.
 //!
-//! Files under `.keel/commands/` become subcommands. Each one carries
+//! Files under `.ampelos/commands/` become subcommands. Each one carries
 //! optional metadata in a "frontmatter" block of `# @key: value` lines that
 //! appear at the top of the file (after an optional shebang).
 //!
@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 ///
 /// The `cwd` / `optional` / `interactive` fields are populated by the
 /// frontmatter parser but are only consulted by the install runner —
-/// `.keel/commands/` execution ignores them. They live on the shared
+/// `.ampelos/commands/` execution ignores them. They live on the shared
 /// struct so authors don't have to remember which keys go where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptCommand {

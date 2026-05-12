@@ -1,4 +1,4 @@
-//! Upstream `keel-agents.toml` manifest types.
+//! Upstream `ampelos-agents.toml` manifest types.
 //!
 //! Each upstream repo declares which of its files map to which paths
 //! in the downstream project, plus an optional `mode` toggle that
@@ -8,7 +8,7 @@ use crate::agents::error::AgentsError;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-/// Wire form of `keel-agents.toml`.
+/// Wire form of `ampelos-agents.toml`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamManifest {
@@ -130,7 +130,7 @@ mod tests {
             src  = "skills/"
             dest = ".claude/skills/"
         "#;
-        let m = parse_manifest(Path::new("keel-agents.toml"), raw).unwrap();
+        let m = parse_manifest(Path::new("ampelos-agents.toml"), raw).unwrap();
         assert_eq!(m.files.len(), 1);
         assert_eq!(m.dirs.len(), 1);
         assert_eq!(m.files[0].mode, FileMode::Replace);

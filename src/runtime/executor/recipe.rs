@@ -23,7 +23,7 @@ impl Executor {
     }
 
     /// Run a script command by name. Mirrors [`Self::run_recipe`] but
-    /// dispatches to a `.keel/commands/<name>` file.
+    /// dispatches to a `.ampelos/commands/<name>` file.
     pub async fn run_script(&self, name: &str, args: &[String]) -> Result<i32, RuntimeError> {
         self.run_script_inner(name.to_string(), args.to_vec(), HashSet::new())
             .await

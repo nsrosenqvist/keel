@@ -26,7 +26,7 @@ pub struct Cli {
     pub explain: bool,
 
     /// Activate a named profile for recipe execution. Profiles are
-    /// declared as `[command.<name>.profile.<profile>]` in keel.toml.
+    /// declared as `[command.<name>.profile.<profile>]` in ampelos.toml.
     #[arg(long, global = true)]
     pub profile: Option<String>,
 
@@ -58,7 +58,7 @@ pub enum Command {
     },
     /// Validate the configuration and report on backend / deps / env files.
     Doctor,
-    /// Scaffold a starter keel.toml in the project root.
+    /// Scaffold a starter ampelos.toml in the project root.
     Init {
         /// Use a specific stack template instead of auto-detection.
         #[arg(long)]
@@ -274,7 +274,7 @@ pub enum WorktreeAction {
         name: String,
         /// Integer offset to assign.
         offset: u32,
-        /// Write to .keel/local.toml (per-developer) instead of keel.toml.
+        /// Write to .ampelos/local.toml (per-developer) instead of ampelos.toml.
         #[arg(long)]
         local: bool,
     },
@@ -285,7 +285,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     // `init` and `completions` run before config load — `init` writes
     // the config that doesn't exist yet; `completions` should never fail
-    // on a broken keel.toml because users may regenerate completions
+    // on a broken ampelos.toml because users may regenerate completions
     // *while fixing* such a file.
     if let Some(Command::Init { template }) = cli.command {
         let project_root = locate_project_root(cli.project.as_deref())?;
@@ -306,11 +306,11 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     let project_root = locate_project_root(cli.project.as_deref())?;
 
-    // Bootstrap pass: load keel.toml + local.toml so we can detect
+    // Bootstrap pass: load ampelos.toml + local.toml so we can detect
     // the worktree identity using the user's `[worktrees]` settings
     // (modulus / seed / pinned assignments). Then load again with the
     // slug applied, so per-worktree overlays at
-    // `.keel/worktrees/<slug>.toml` take effect.
+    // `.ampelos/worktrees/<slug>.toml` take effect.
     let bootstrap_cfg = crate::config::load_project_with_slug(&project_root, None)
         .with_context(|| format!("load project at {}", project_root.display()))?;
     let identity = crate::runtime::Identity::detect(&project_root, &bootstrap_cfg).await;
@@ -532,7 +532,7 @@ fn run_lib_action(action: LibAction) -> Result<i32> {
     }
 }
 
-/// Build the install plan, write the auto-managed `.keel/.gitignore`,
+/// Build the install plan, write the auto-managed `.ampelos/.gitignore`,
 /// handle the resume prompt when state is mid-flight, then hand off to
 /// the install runner.
 async fn dispatch_install(
@@ -543,7 +543,7 @@ async fn dispatch_install(
     let plan = commands::install::plan::resolve(&config, &project_root)?;
 
     // Refresh the gitignore on every invocation. Idempotent; cheap.
-    ensure_ampelos_gitignore(&config, &project_root).context("update .keel/.gitignore")?;
+    ensure_ampelos_gitignore(&config, &project_root).context("update .ampelos/.gitignore")?;
 
     let bypass_prompt =
         args.resume || args.restart || args.dry_run || args.list || args.step.is_some();
@@ -579,8 +579,8 @@ async fn dispatch_install(
     commands::install::run(config, project_root, backend, plan, args).await
 }
 
-/// Write the project-managed `.keel/.gitignore` block. Path is
-/// configurable via `[install].gitignore` (default `.keel/.gitignore`).
+/// Write the project-managed `.ampelos/.gitignore` block. Path is
+/// configurable via `[install].gitignore` (default `.ampelos/.gitignore`).
 fn ensure_ampelos_gitignore(config: &Config, project_root: &Path) -> Result<()> {
     let rel = &config.install.gitignore;
     let p = Path::new(rel);
@@ -589,7 +589,7 @@ fn ensure_ampelos_gitignore(config: &Config, project_root: &Path) -> Result<()> 
     } else {
         project_root.join(p)
     };
-    // The block lives inside `.keel/` by default, so the ignore
+    // The block lives inside `.ampelos/` by default, so the ignore
     // patterns are relative to that directory. Users moving the file
     // elsewhere are responsible for prefixing the patterns themselves.
     let body = "local.toml\nworktrees/\ncache/\ninstall.state.json\nagents.state.json\n";
@@ -699,8 +699,8 @@ fn cmd_which(config: &Config, name: &str) -> Result<()> {
 fn print_explain(name: &str, resolution: &Resolution<'_>) -> Result<()> {
     match resolution {
         Resolution::Builtin(b) => println!("{name} → built-in `{b}`"),
-        Resolution::Recipe(_) => println!("{name} → recipe in keel.toml"),
-        Resolution::Script(_) => println!("{name} → script in .keel/commands/"),
+        Resolution::Recipe(_) => println!("{name} → recipe in ampelos.toml"),
+        Resolution::Script(_) => println!("{name} → script in .ampelos/commands/"),
         Resolution::ComposePassthrough(_) => println!("{name} → docker compose passthrough"),
         Resolution::ServiceExec(_) => println!("{name} → exec into compose service"),
         Resolution::Unknown {
@@ -865,7 +865,7 @@ fn locate_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
     }
     let mut cur = std::env::current_dir()?;
     loop {
-        if cur.join("keel.toml").exists() || cur.join(".keel").is_dir() {
+        if cur.join("ampelos.toml").exists() || cur.join(".ampelos").is_dir() {
             return Ok(cur);
         }
         if !cur.pop() {

@@ -2,7 +2,7 @@
 //!
 //! Several ampelos features write structured content into files the user
 //! also edits — the worktree-derived dotenv block, the auto-generated
-//! `.keel/.gitignore`, and (eventually) anything else that needs to
+//! `.ampelos/.gitignore`, and (eventually) anything else that needs to
 //! coexist with hand-edited lines. This module centralises the markers,
 //! the strip/replace algorithm, and the idempotent write logic so each
 //! feature stops reinventing them.

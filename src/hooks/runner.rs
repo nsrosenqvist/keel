@@ -7,7 +7,7 @@
 //!    appended, and — unless `pass_filenames = false` — the matching
 //!    staged files come last.
 //! 2. **Cached upstream repo** (`repo: <url>` with a `rev`): ampelos
-//!    clones the repo into `.keel/cache/hooks/<key>/` and reads its
+//!    clones the repo into `.ampelos/cache/hooks/<key>/` and reads its
 //!    `.pre-commit-hooks.yaml` to fill in any fields the user didn't
 //!    override. Same execution path after merging.
 //!

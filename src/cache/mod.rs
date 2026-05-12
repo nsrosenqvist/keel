@@ -1,5 +1,5 @@
 //! Content-addressed git cache used by `ampelos-hooks` and
-//! `keel-agents`. See [`git`] for the surface and on-disk layout.
+//! `ampelos-agents`. See [`git`] for the surface and on-disk layout.
 
 pub mod error;
 pub mod git;

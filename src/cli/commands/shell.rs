@@ -39,7 +39,7 @@ async fn shell_into_devcontainer(
 ) -> Result<i32> {
     if !config.devcontainer.enabled {
         anyhow::bail!(
-            "no shell target. Either enable `[devcontainer] enabled = true` in keel.toml, \
+            "no shell target. Either enable `[devcontainer] enabled = true` in ampelos.toml, \
              or pass `--service <name>` to enter a compose service."
         );
     }

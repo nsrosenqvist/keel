@@ -20,7 +20,7 @@ pub fn parse_str(source: &str) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-/// Read a `keel.toml` (or other TOML file) from disk and parse it.
+/// Read a `ampelos.toml` (or other TOML file) from disk and parse it.
 pub fn load_from_path(path: &Path) -> Result<Config, ConfigError> {
     let raw = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),
@@ -45,13 +45,13 @@ pub fn load_project(project_root: &Path) -> Result<Config, ConfigError> {
 ///
 /// Layered on top of each other (later wins):
 ///
-/// 1. `keel.toml` at the project root.
-/// 2. `.keel/local.toml` (per-developer overrides; gitignored).
-/// 3. `.keel/worktrees/<slug>.toml` when `slug` is `Some` and the
+/// 1. `ampelos.toml` at the project root.
+/// 2. `.ampelos/local.toml` (per-developer overrides; gitignored).
+/// 3. `.ampelos/worktrees/<slug>.toml` when `slug` is `Some` and the
 ///    file exists (per-worktree overrides; gitignored).
 ///
-/// Missing `keel.toml` is fine — a default config is used as the
-/// base. Plus: scripts under `.keel/commands/` are discovered after
+/// Missing `ampelos.toml` is fine — a default config is used as the
+/// base. Plus: scripts under `.ampelos/commands/` are discovered after
 /// merging.
 ///
 /// Merging is done at the `toml::Value` level so any TOML structure
@@ -60,8 +60,8 @@ pub fn load_project_with_slug(
     project_root: &Path,
     slug: Option<&str>,
 ) -> Result<Config, ConfigError> {
-    let toml_path = project_root.join("keel.toml");
-    let local_path = project_root.join(".keel").join("local.toml");
+    let toml_path = project_root.join("ampelos.toml");
+    let local_path = project_root.join(".ampelos").join("local.toml");
 
     let mut value = if toml_path.exists() {
         read_toml_value(&toml_path)?
@@ -76,7 +76,7 @@ pub fn load_project_with_slug(
 
     if let Some(slug) = slug.filter(|s| !s.is_empty()) {
         let overlay_path = project_root
-            .join(".keel")
+            .join(".ampelos")
             .join("worktrees")
             .join(format!("{slug}.toml"));
         if overlay_path.exists() {
@@ -93,11 +93,11 @@ pub fn load_project_with_slug(
                 source,
             })?;
 
-    let scripts_dir = project_root.join(".keel").join("commands");
+    let scripts_dir = project_root.join(".ampelos").join("commands");
     if scripts_dir.is_dir() {
         config.scripts = discover_scripts(&scripts_dir)?;
     }
-    let install_dir = project_root.join(".keel").join("install");
+    let install_dir = project_root.join(".ampelos").join("install");
     if install_dir.is_dir() {
         let (discovered, order) = discover_install_steps(&install_dir)?;
         config.install.discovered = discovered;
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn load_from_path_reads_file() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("keel.toml");
+        let path = dir.path().join("ampelos.toml");
         std::fs::write(
             &path,
             r#"
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn load_from_path_reports_path_in_error() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("keel.toml");
+        let path = dir.path().join("ampelos.toml");
         std::fs::write(&path, "[project\nname = bad").unwrap();
         let err = load_from_path(&path).unwrap_err();
         match err {
@@ -221,14 +221,14 @@ mod tests {
     fn load_project_discovers_scripts() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "x"
             "#,
         )
         .unwrap();
-        let cmds = root.path().join(".keel").join("commands");
+        let cmds = root.path().join(".ampelos").join("commands");
         std::fs::create_dir_all(&cmds).unwrap();
         std::fs::write(cmds.join("seed"), "#!/bin/sh\n# @desc: Seed\necho hi\n").unwrap();
         std::fs::write(cmds.join("migrate.sh"), "#!/bin/sh\necho m\n").unwrap();
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn load_project_works_without_toml() {
         let root = TempDir::new().unwrap();
-        let cmds = root.path().join(".keel").join("commands");
+        let cmds = root.path().join(".ampelos").join("commands");
         std::fs::create_dir_all(&cmds).unwrap();
         std::fs::write(cmds.join("seed"), "echo hi\n").unwrap();
 
@@ -254,7 +254,7 @@ mod tests {
     fn load_project_merges_local_overlay() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "base"
@@ -267,9 +267,9 @@ mod tests {
             "#,
         )
         .unwrap();
-        std::fs::create_dir_all(root.path().join(".keel")).unwrap();
+        std::fs::create_dir_all(root.path().join(".ampelos")).unwrap();
         std::fs::write(
-            root.path().join(".keel").join("local.toml"),
+            root.path().join(".ampelos").join("local.toml"),
             r#"
                 [project]
                 name = "overridden"
@@ -308,9 +308,9 @@ mod tests {
     #[test]
     fn load_project_works_with_only_local() {
         let root = TempDir::new().unwrap();
-        std::fs::create_dir_all(root.path().join(".keel")).unwrap();
+        std::fs::create_dir_all(root.path().join(".ampelos")).unwrap();
         std::fs::write(
-            root.path().join(".keel").join("local.toml"),
+            root.path().join(".ampelos").join("local.toml"),
             r#"
                 [command.greet]
                 run = "echo hi"
@@ -325,7 +325,7 @@ mod tests {
     fn load_project_with_slug_applies_overlay() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "base"
@@ -335,10 +335,10 @@ mod tests {
             "#,
         )
         .unwrap();
-        std::fs::create_dir_all(root.path().join(".keel").join("worktrees")).unwrap();
+        std::fs::create_dir_all(root.path().join(".ampelos").join("worktrees")).unwrap();
         std::fs::write(
             root.path()
-                .join(".keel")
+                .join(".ampelos")
                 .join("worktrees")
                 .join("feature-x.toml"),
             r#"
@@ -365,16 +365,16 @@ mod tests {
     fn load_project_with_slug_layers_after_local() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "base"
             "#,
         )
         .unwrap();
-        std::fs::create_dir_all(root.path().join(".keel").join("worktrees")).unwrap();
+        std::fs::create_dir_all(root.path().join(".ampelos").join("worktrees")).unwrap();
         std::fs::write(
-            root.path().join(".keel").join("local.toml"),
+            root.path().join(".ampelos").join("local.toml"),
             r#"
                 [project]
                 name = "from-local"
@@ -382,7 +382,10 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            root.path().join(".keel").join("worktrees").join("x.toml"),
+            root.path()
+                .join(".ampelos")
+                .join("worktrees")
+                .join("x.toml"),
             r#"
                 [project]
                 name = "from-worktree"
@@ -398,7 +401,7 @@ mod tests {
     fn load_project_with_slug_falls_back_when_overlay_absent() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "stable"
@@ -414,7 +417,7 @@ mod tests {
     fn load_project_with_slug_none_matches_load_project() {
         let root = TempDir::new().unwrap();
         std::fs::write(
-            root.path().join("keel.toml"),
+            root.path().join("ampelos.toml"),
             r#"
                 [project]
                 name = "x"
@@ -429,7 +432,7 @@ mod tests {
     #[test]
     fn load_project_skips_hidden_and_underscored() {
         let root = TempDir::new().unwrap();
-        let cmds = root.path().join(".keel").join("commands");
+        let cmds = root.path().join(".ampelos").join("commands");
         std::fs::create_dir_all(&cmds).unwrap();
         std::fs::write(cmds.join(".secret"), "echo nope\n").unwrap();
         std::fs::write(cmds.join("_helper.sh"), "echo nope\n").unwrap();

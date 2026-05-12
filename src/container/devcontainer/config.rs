@@ -38,7 +38,7 @@ pub enum DevcontainerConfigError {
 
     #[error(
         "{path}: `dockerComposeFile` devcontainers are not supported in ampelos v1. \
-         Use `runtime.backend = \"compose\"` in keel.toml and route recipes \
+         Use `runtime.backend = \"compose\"` in ampelos.toml and route recipes \
          to the dev service with `in = \"<service>\"` instead."
     )]
     DockerComposeUnsupported { path: PathBuf },

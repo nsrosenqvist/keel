@@ -1,11 +1,11 @@
-//! `[install]` configuration and `.keel/install/` step discovery.
+//! `[install]` configuration and `.ampelos/install/` step discovery.
 //!
 //! The install flow has two surfaces:
 //!
 //! - **Declarative** — a top-level `[install]` table that names an
 //!   ordered sequence of steps. Each entry is either the name of a
 //!   recipe / discovered step or an inline `{ run = "…", … }` table.
-//! - **Discovered** — shell files under `.keel/install/` are picked up
+//! - **Discovered** — shell files under `.ampelos/install/` are picked up
 //!   automatically, sorted by file name. When `[install].steps` is
 //!   unset, the discovered list *is* the install plan, which is enough
 //!   for projects that prefer to author every step as a script.
@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct InstallConfig {
     /// Ordered list of step references. When empty, the install plan
-    /// is the alphabetical listing of `.keel/install/*` instead.
+    /// is the alphabetical listing of `.ampelos/install/*` instead.
     #[serde(default)]
     pub steps: Vec<InstallStepRef>,
 
@@ -40,12 +40,12 @@ pub struct InstallConfig {
 
     /// Path of the auto-managed `.gitignore`. Relative paths resolve
     /// against the project root. The default value is intentionally
-    /// inside `.keel/` so it only governs ampelos-owned files and
+    /// inside `.ampelos/` so it only governs ampelos-owned files and
     /// can't accidentally shadow the project's own root `.gitignore`.
     #[serde(default = "default_gitignore")]
     pub gitignore: String,
 
-    /// Steps discovered under `.keel/install/`. Populated by the
+    /// Steps discovered under `.ampelos/install/`. Populated by the
     /// loader after the TOML deserialisation pass; never serialised.
     #[serde(skip)]
     pub discovered: BTreeMap<String, InstallStepScript>,
@@ -78,7 +78,7 @@ const fn true_default() -> bool {
 }
 
 fn default_gitignore() -> String {
-    ".keel/.gitignore".to_string()
+    ".ampelos/.gitignore".to_string()
 }
 
 /// One entry in `[install].steps`.
@@ -108,7 +108,7 @@ pub struct InlineStep {
     pub name: String,
 
     /// Shell command to run. Single string form only; multi-step
-    /// inline blocks belong in a `.keel/install/<name>` file or a
+    /// inline blocks belong in a `.ampelos/install/<name>` file or a
     /// regular recipe.
     pub run: String,
 
@@ -144,7 +144,7 @@ pub struct InlineStep {
     pub interactive: bool,
 }
 
-/// A step discovered under `.keel/install/`. Same frontmatter parser
+/// A step discovered under `.ampelos/install/`. Same frontmatter parser
 /// as [`ScriptCommand`] — install-specific keys (`cwd`, `optional`,
 /// `interactive`) are accepted on either kind so authors don't have to
 /// memorise which keys live where.
@@ -177,8 +177,8 @@ impl From<ScriptCommand> for InstallStepScript {
     }
 }
 
-/// Scan `.keel/install/` for step files. Same skip rules as the
-/// `.keel/commands/` scan (hidden / underscore-prefixed files are
+/// Scan `.ampelos/install/` for step files. Same skip rules as the
+/// `.ampelos/commands/` scan (hidden / underscore-prefixed files are
 /// ignored, non-regular files skipped). Returns the steps keyed by
 /// name plus the alphabetical filename order so the runner can iterate
 /// without re-sorting.
@@ -237,7 +237,7 @@ mod tests {
         let cfg: Config = toml::from_str("").unwrap();
         assert!(cfg.install.steps.is_empty());
         assert!(cfg.install.install_git_hooks);
-        assert_eq!(cfg.install.gitignore, ".keel/.gitignore");
+        assert_eq!(cfg.install.gitignore, ".ampelos/.gitignore");
         assert!(cfg.install.discovered.is_empty());
     }
 
