@@ -9,7 +9,7 @@ use crate::tui::app::{
     App, AttachRequest, ClickTarget, Command, DOUBLE_CLICK_WINDOW, KillWindow, LaunchRejection,
     Mode, View,
 };
-use crate::tui::dialogs::switcher::{BranchSpec, NewWorktreeAction, SwitcherConfirm, WorktreeRow};
+use crate::tui::dialogs::switcher::WorktreeRow;
 use crate::tui::ui;
 use crate::tui::views::terminals::tmux::{attach_tmux, refresh_tmux_windows};
 use crossterm::{
@@ -316,11 +316,17 @@ pub(crate) async fn handle_event(app: &mut App, event: Event) {
             app.clear_flash();
             match app.mode() {
                 Mode::Normal => handle_key_normal(app, code, modifiers).await,
-                Mode::Palette => handle_key_palette(app, code, modifiers).await,
-                Mode::Confirm => handle_key_confirm(app, code, modifiers),
-                Mode::ArgsPrompt => handle_key_args_prompt(app, code, modifiers),
+                Mode::Palette => {
+                    crate::tui::dialogs::palette_input::handle_key(app, code, modifiers).await
+                }
+                Mode::Confirm => {
+                    crate::tui::dialogs::confirm_input::handle_key(app, code, modifiers)
+                }
+                Mode::ArgsPrompt => {
+                    crate::tui::dialogs::args_prompt_input::handle_key(app, code, modifiers)
+                }
                 Mode::WorktreeSwitcher => {
-                    handle_key_switcher(app, code, modifiers).await
+                    crate::tui::dialogs::switcher_input::handle_key(app, code, modifiers).await
                 }
             }
         }
@@ -340,9 +346,9 @@ pub(crate) async fn handle_event(app: &mut App, event: Event) {
 /// no-op.
 async fn handle_mouse(app: &mut App, me: MouseEvent) {
     match app.mode() {
-        Mode::Palette => handle_mouse_palette(app, me).await,
-        Mode::Confirm => handle_mouse_confirm(app, me),
-        Mode::WorktreeSwitcher => handle_mouse_switcher(app, me).await,
+        Mode::Palette => crate::tui::dialogs::palette_input::handle_mouse(app, me).await,
+        Mode::Confirm => crate::tui::dialogs::confirm_input::handle_mouse(app, me),
+        Mode::WorktreeSwitcher => crate::tui::dialogs::switcher_input::handle_mouse(app, me).await,
         // Text-input modes ignore mouse: there's no row to click and
         // we don't (yet) reposition the cursor on click.
         Mode::ArgsPrompt => {}
@@ -445,138 +451,6 @@ async fn handle_mouse_control_center(app: &mut App, me: MouseEvent) {
     }
 }
 
-/// Mouse handler for the command palette overlay. Click → select;
-/// double-click → run the selected entry (same path the Enter key
-/// takes in `handle_key_palette`).
-async fn handle_mouse_palette(app: &mut App, me: MouseEvent) {
-    match me.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            // Snapshot the index under the cursor before mutating
-            // the palette — drop the immutable borrow before any
-            // mutation happens.
-            let Some(idx) = app
-                .palette()
-                .and_then(|p| hit_test(&p.row_rects.borrow(), me.column, me.row))
-            else {
-                return;
-            };
-            let target = ClickTarget::PaletteRow(idx);
-            match resolve_click(app, target) {
-                ClickKind::Select => {
-                    if let Some(p) = app.palette_mut() {
-                        p.select_at(idx);
-                    }
-                }
-                ClickKind::Activate => {
-                    if let Some(p) = app.palette_mut() {
-                        p.select_at(idx);
-                    }
-                    activate_palette_selection(app);
-                }
-            }
-        }
-        MouseEventKind::ScrollDown => {
-            if let Some(p) = app.palette_mut() {
-                p.select_next();
-            }
-        }
-        MouseEventKind::ScrollUp => {
-            if let Some(p) = app.palette_mut() {
-                p.select_prev();
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Run the palette's selected entry. Mirrors the `KeyCode::Enter` arm
-/// of `handle_key_palette`.
-fn activate_palette_selection(app: &mut App) {
-    match app.confirm_palette() {
-        Some(Ok(())) => {}
-        Some(Err(LaunchRejection::AlreadyRunning)) => {
-            app.open_kill_restart_confirm();
-        }
-        Some(Err(rej)) => {
-            app.flash(launch_message(rej));
-        }
-        None => {}
-    }
-}
-
-/// Resolve the switcher's selected row. Mirrors the `KeyCode::Enter`
-/// arm of `handle_key_switcher` — including the async branch list /
-/// toplevel fetch for the "+ new worktree" sentinel.
-async fn activate_switcher_selection(app: &mut App) {
-    match app.switcher_confirm() {
-        SwitcherConfirm::OpenCreateForm => {
-            let project_root = app.project_root().to_path_buf();
-            let branches = crate::runtime::list_branches(&project_root).await;
-            let parent = crate::runtime::git_toplevel(&project_root)
-                .await
-                .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
-            app.open_create_form(branches, parent);
-        }
-        SwitcherConfirm::Switched | SwitcherConfirm::NoOp => {}
-    }
-}
-
-/// Mouse handler for the worktree switcher overlay. Click → select;
-/// double-click → switch / open the new-worktree form (the sentinel
-/// row at the end of the entries list).
-async fn handle_mouse_switcher(app: &mut App, me: MouseEvent) {
-    // The new-worktree form is text-only; once it's open, clicks
-    // shouldn't reset the list selection underneath. Drop the event.
-    if app.switcher().is_some_and(|s| s.creating.is_some()) {
-        return;
-    }
-    match me.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            let Some(idx) = app
-                .switcher()
-                .and_then(|s| hit_test(&s.row_rects.borrow(), me.column, me.row))
-            else {
-                return;
-            };
-            let target = ClickTarget::SwitcherRow(idx);
-            match resolve_click(app, target) {
-                ClickKind::Select => if let Some(s) = app.switcher_mut() { s.select_at(idx); },
-                ClickKind::Activate => {
-                    if let Some(s) = app.switcher_mut() { s.select_at(idx); };
-                    activate_switcher_selection(app).await;
-                }
-            }
-        }
-        MouseEventKind::ScrollDown => if let Some(s) = app.switcher_mut() { s.select_next(); },
-        MouseEventKind::ScrollUp => if let Some(s) = app.switcher_mut() { s.select_prev(); },
-        _ => {}
-    }
-}
-
-/// Mouse handler for the confirm dialog. Single-click on Yes / No
-/// presses the corresponding button; nothing else (no concept of
-/// "selected" button — the keyboard moves focus, the mouse acts
-/// directly).
-fn handle_mouse_confirm(app: &mut App, me: MouseEvent) {
-    let MouseEventKind::Down(MouseButton::Left) = me.kind else {
-        return;
-    };
-    let yes_hit = app
-        .confirm_yes_rect
-        .get()
-        .is_some_and(|r| rect_contains(r, me.column, me.row));
-    let no_hit = app
-        .confirm_no_rect
-        .get()
-        .is_some_and(|r| rect_contains(r, me.column, me.row));
-    if yes_hit {
-        if let Some(rej) = app.confirm_resolve(true) {
-            app.flash(launch_message(rej));
-        }
-    } else if no_hit {
-        app.confirm_resolve(false);
-    }
-}
 
 async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
@@ -772,55 +646,6 @@ async fn activate_control_center_selection(app: &mut App) {
     }
 }
 
-async fn handle_key_palette(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Ctrl-c always quits.
-    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
-        app.quit();
-        return;
-    }
-
-    match code {
-        KeyCode::Esc => app.close_palette(),
-        KeyCode::Up | KeyCode::BackTab => {
-            if let Some(p) = app.palette_mut() {
-                p.select_prev();
-            }
-        }
-        KeyCode::Down | KeyCode::Tab => {
-            if let Some(p) = app.palette_mut() {
-                p.select_next();
-            }
-        }
-        KeyCode::Backspace => {
-            if let Some(p) = app.palette_mut() {
-                p.pop_char();
-            }
-        }
-        KeyCode::Enter => {
-            // Palette confirm now drives the launch directly so it can
-            // forward args parsed from the input. The handler returns
-            // None when there's no match (the keypress is ignored — the
-            // palette stays open and the user keeps typing).
-            match app.confirm_palette() {
-                Some(Ok(())) => {}
-                Some(Err(LaunchRejection::AlreadyRunning)) => {
-                    app.open_kill_restart_confirm();
-                }
-                Some(Err(rej)) => {
-                    app.flash(launch_message(rej));
-                }
-                None => {}
-            }
-        }
-        KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(p) = app.palette_mut() {
-                p.push_char(c);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// True when the selected row has an in-flight run. Used to decide
 /// whether Enter opens the args prompt (only when not running — the
 /// kill-and-restart modal takes precedence so the user knows the
@@ -868,170 +693,7 @@ fn derive_slug_from_entry(e: &crate::runtime::WorktreeListEntry) -> String {
     String::new()
 }
 
-async fn handle_key_switcher(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
-        app.quit();
-        return;
-    }
-    // Two sub-modes inside this modal: list-of-worktrees (default)
-    // and the new-worktree create form. The form takes over key
-    // dispatch when active.
-    if app.switcher().and_then(|s| s.creating.as_ref()).is_some() {
-        handle_key_switcher_form(app, code).await;
-        return;
-    }
-    match code {
-        KeyCode::Esc => app.close_switcher(),
-        KeyCode::Up | KeyCode::Char('k') => if let Some(s) = app.switcher_mut() { s.select_prev(); },
-        KeyCode::Down | KeyCode::Char('j') => if let Some(s) = app.switcher_mut() { s.select_next(); },
-        KeyCode::Enter => match app.switcher_confirm() {
-            SwitcherConfirm::OpenCreateForm => {
-                let project_root = app.project_root().to_path_buf();
-                let branches = crate::runtime::list_branches(&project_root).await;
-                // Anchor new worktrees against the git toplevel's
-                // parent so they land next to the repo no matter
-                // where keel was invoked from (e.g. running in
-                // `<repo>/tmp/test` shouldn't push them into tmp/).
-                let parent = crate::runtime::git_toplevel(&project_root)
-                    .await
-                    .and_then(|tl| tl.parent().map(|p| p.to_path_buf()));
-                app.open_create_form(branches, parent);
-            }
-            SwitcherConfirm::Switched | SwitcherConfirm::NoOp => {
-            }
-        },
-        _ => {}
-    }
-}
-
-async fn handle_key_switcher_form(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Esc => app.switcher_form_cancel(),
-        KeyCode::Tab => if let Some(f) = app.switcher_form_mut() { f.toggle_focus(); },
-        KeyCode::Up => if let Some(f) = app.switcher_form_mut() { f.select_prev(); },
-        KeyCode::Down => if let Some(f) = app.switcher_form_mut() { f.select_next(); },
-        KeyCode::Backspace => if let Some(f) = app.switcher_form_mut() { f.pop_char(); },
-        KeyCode::Enter => {
-            // Resolve the form into (path, BranchSpec); shell out
-            // to git; report back via switcher_form_finish.
-            let Some(action) = app.switcher_form().and_then(|f| f.resolve()) else {
-                return;
-            };
-            let project_root = app.project_root().to_path_buf();
-            let result = create_worktree(&project_root, &action).await;
-            app.switcher_form_finish(result);
-        }
-        KeyCode::Char(c) => if let Some(f) = app.switcher_form_mut() { f.push_char(c); },
-        _ => {}
-    }
-}
-
-/// Run `git worktree add` for the user's resolved form action.
-/// `BranchSpec::Existing(name)` → `git worktree add <path> <name>`
-/// (git auto-creates a tracking branch when `name` matches a
-/// remote-only ref). `BranchSpec::CreateOff(name)` →
-/// `git worktree add <path> -b <name>` (new branch off HEAD).
-///
-/// Returns the canonicalised path on success so the App rebuild
-/// has a stable absolute target; trimmed git stderr on failure so
-/// the modal renders the diagnostic.
-async fn create_worktree(
-    project_root: &std::path::Path,
-    action: &NewWorktreeAction,
-) -> Result<std::path::PathBuf, String> {
-    use BranchSpec;
-    let path = action.path.trim();
-    if path.is_empty() {
-        return Err("path is required".into());
-    }
-    let mut argv: Vec<String> = vec!["worktree".into(), "add".into()];
-    match &action.branch {
-        BranchSpec::Existing(name) => {
-            argv.push(path.to_string());
-            argv.push(name.clone());
-        }
-        BranchSpec::CreateOff(name) => {
-            argv.push("-b".into());
-            argv.push(name.clone());
-            argv.push(path.to_string());
-        }
-    }
-    let output = tokio::process::Command::new("git")
-        .args(&argv)
-        .current_dir(project_root)
-        .output()
-        .await
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            format!(
-                "git worktree add failed (exit {})",
-                output.status.code().unwrap_or(-1)
-            )
-        } else {
-            stderr
-        });
-    }
-    let pb = std::path::PathBuf::from(path);
-    Ok(std::fs::canonicalize(&pb).unwrap_or(pb))
-}
-
-fn handle_key_args_prompt(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Ctrl-c always quits, even mid-prompt.
-    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
-        app.quit();
-        return;
-    }
-    match code {
-        KeyCode::Esc => {
-            app.args_prompt_resolve(false);
-        }
-        KeyCode::Backspace => app.args_prompt_pop_char(),
-        KeyCode::Enter => match app.args_prompt_resolve(true) {
-            Some(Ok(())) => {}
-            Some(Err(LaunchRejection::AlreadyRunning)) => {
-                app.open_kill_restart_confirm();
-            }
-            Some(Err(rej)) => app.flash(launch_message(rej)),
-            None => {}
-        },
-        KeyCode::Char(c) => app.args_prompt_push_char(c),
-        _ => {}
-    }
-}
-
-fn handle_key_confirm(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Ctrl-c always quits even from a modal.
-    if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
-        app.quit();
-        return;
-    }
-    match code {
-        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-            app.confirm_resolve(false);
-        }
-        KeyCode::Tab | KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l') => {
-            app.confirm_toggle_focus();
-        }
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            if let Some(rej) = app.confirm_resolve(true) {
-                app.flash(launch_message(rej));
-            }
-        }
-        KeyCode::Enter => {
-            // Enter accepts the focused choice — Yes by default;
-            // if the user tabbed to No, Enter dismisses.
-            let accept = app.confirm_dialog().map(|d| d.yes_focused).unwrap_or(true);
-            if let Some(rej) = app.confirm_resolve(accept) {
-                app.flash(launch_message(rej));
-            }
-        }
-        _ => {}
-    }
-}
-
-fn launch_message(rejection: LaunchRejection) -> String {
+pub(crate) fn launch_message(rejection: LaunchRejection) -> String {
     use LaunchRejection::*;
     match rejection {
         NoExecutor => "no backend wired into the TUI".into(),
