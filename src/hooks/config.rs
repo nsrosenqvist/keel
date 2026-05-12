@@ -1,10 +1,20 @@
 //! `.pre-commit-config.yaml` schema.
 //!
 //! The schema keel reads is a strict subset of pre-commit's. Unknown keys
-//! are tolerated (forward compat with the upstream format), unsupported
-//! semantics are flagged at run-time by the [`runner`](crate::hooks::runner)
-//! rather than at parse time. This keeps `keel hooks list` working even
-//! when the config references hooks keel can't run natively yet.
+//! are tolerated (forward compat with the upstream format). The
+//! [`HookLanguage`] tag is **advisory metadata** — keel does not gate
+//! execution on it: every hook's `entry` is parsed with `shell_words` and
+//! spawned directly, with the runtime (python, node, …) expected to be on
+//! `PATH` after `keel install`. The one shape that can't be exec'd
+//! verbatim is `repo: meta`; the runner rejects it at run-time.
+//!
+//! keel-specific extension keys (parsed but ignored by pre-commit):
+//!
+//! - `in: "<service>"` on a [`HookSpec`] routes the hook through the
+//!   configured container [`Backend`](crate::container::Backend), the
+//!   same way `[command.<name>] in = "..."` does for recipes. Absent →
+//!   workspace target (host, or devcontainer when
+//!   `[devcontainer] enabled = true`).
 
 use crate::hooks::error::HookError;
 use serde::Deserialize;
@@ -74,6 +84,11 @@ pub struct UpstreamHook {
     pub stages: Vec<String>,
     #[serde(default)]
     pub always_run: Option<bool>,
+    /// keel extension: target service. Upstream repos rarely set this;
+    /// it exists so a vendored `.pre-commit-hooks.yaml` can declare a
+    /// sensible default that users can still override.
+    #[serde(default, rename = "in")]
+    pub service: Option<String>,
 }
 
 /// Read the `.pre-commit-hooks.yaml` from the root of a cached upstream
@@ -89,8 +104,9 @@ pub fn load_upstream_hooks(repo_dir: &Path) -> Result<Vec<UpstreamHook>, HookErr
 
 /// Merge an upstream hook definition into the user's reference. The
 /// user wins on every explicitly-set field; upstream fills the gaps.
-/// Errors when the merged result still lacks an `entry` or has a
-/// non-native language — those translate to clear install-time errors.
+/// Errors only when the merged result lacks an `entry` — the
+/// [`HookLanguage`] is treated as advisory metadata and never gates
+/// the merge.
 pub fn merge_with_upstream(
     user: &HookSpec,
     upstream: &UpstreamHook,
@@ -103,12 +119,6 @@ pub fn merge_with_upstream(
         .language
         .clone()
         .unwrap_or_else(|| user.language.clone());
-    if !language.is_native() {
-        return Err(HookError::UnsupportedLanguage {
-            hook: user.id.clone(),
-            language: format!("{language:?}"),
-        });
-    }
     let entry = user
         .entry
         .clone()
@@ -145,6 +155,7 @@ pub fn merge_with_upstream(
             user.stages.clone()
         },
         always_run: user.always_run || upstream.always_run.unwrap_or(false),
+        service: user.service.clone().or_else(|| upstream.service.clone()),
     })
 }
 
@@ -171,8 +182,22 @@ pub struct HookSpec {
     pub stages: Vec<String>,
     #[serde(default)]
     pub always_run: bool,
+    /// keel extension: when set, the hook execs inside this container
+    /// service (via the configured [`Backend`](crate::container::Backend))
+    /// instead of running on the host or in the devcontainer. Matches
+    /// recipe `in = "<service>"` semantics. Plain pre-commit ignores
+    /// this key.
+    #[serde(default, rename = "in")]
+    pub service: Option<String>,
 }
 
+/// Hook language tag from `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`.
+///
+/// keel keeps this enum for parse fidelity and so future tooling
+/// (`keel hooks list`, doctor) can reason about declared runtimes — but
+/// it is **not** consulted by the runner. Every hook's `entry` is exec'd
+/// verbatim regardless of language; the user is responsible for putting
+/// the required runtime on `PATH` (typically through `keel install`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HookLanguage {
@@ -189,13 +214,6 @@ pub enum HookLanguage {
     Fail,
     #[serde(other)]
     Other,
-}
-
-impl HookLanguage {
-    /// Whether keel can run this language natively (no virtualenv etc.).
-    pub fn is_native(&self) -> bool {
-        matches!(self, HookLanguage::System | HookLanguage::Script)
-    }
 }
 
 fn default_language() -> HookLanguage {
@@ -263,7 +281,22 @@ mod tests {
         assert_eq!(hook.language, HookLanguage::System);
         assert_eq!(hook.entry.as_deref(), Some("cargo fmt --check"));
         assert!(!hook.pass_filenames);
-        assert!(hook.language.is_native());
+    }
+
+    #[test]
+    fn parses_keel_service_extension() {
+        let cfg = parse(
+            r#"
+            repos:
+              - repo: local
+                hooks:
+                  - id: rustfmt
+                    language: system
+                    entry: cargo fmt --check
+                    in: app
+            "#,
+        );
+        assert_eq!(cfg.repos[0].hooks[0].service.as_deref(), Some("app"));
     }
 
     #[test]
@@ -324,6 +357,7 @@ mod tests {
             pass_filenames: true,
             stages: vec![],
             always_run: false,
+            service: None,
         };
         assert!(hook.applies_to_stage("pre-commit", &[]));
         assert!(hook.applies_to_stage("pre-commit", &["pre-commit".into()]));
@@ -343,8 +377,74 @@ mod tests {
             pass_filenames: true,
             stages: vec!["pre-push".into()],
             always_run: false,
+            service: None,
         };
         assert!(!hook.applies_to_stage("pre-commit", &[]));
         assert!(hook.applies_to_stage("pre-push", &[]));
+    }
+
+    #[test]
+    fn merge_preserves_python_language_without_erroring() {
+        let user = HookSpec {
+            id: "ruff".into(),
+            name: None,
+            language: HookLanguage::System,
+            entry: None,
+            args: vec![],
+            files: None,
+            exclude: None,
+            pass_filenames: true,
+            stages: vec![],
+            always_run: false,
+            service: None,
+        };
+        let upstream = UpstreamHook {
+            id: "ruff".into(),
+            name: Some("Ruff".into()),
+            language: Some(HookLanguage::Python),
+            entry: Some("ruff".into()),
+            args: vec![],
+            files: None,
+            exclude: None,
+            pass_filenames: None,
+            stages: vec![],
+            always_run: None,
+            service: None,
+        };
+        let merged = merge_with_upstream(&user, &upstream).unwrap();
+        assert_eq!(merged.language, HookLanguage::Python);
+        assert_eq!(merged.entry.as_deref(), Some("ruff"));
+    }
+
+    #[test]
+    fn merge_inherits_service_from_upstream_when_user_silent() {
+        let user = HookSpec {
+            id: "lint".into(),
+            name: None,
+            language: HookLanguage::System,
+            entry: None,
+            args: vec![],
+            files: None,
+            exclude: None,
+            pass_filenames: true,
+            stages: vec![],
+            always_run: false,
+            service: None,
+        };
+        let upstream = UpstreamHook {
+            id: "lint".into(),
+            name: None,
+            language: Some(HookLanguage::System),
+            entry: Some("./lint.sh".into()),
+            args: vec![],
+            files: None,
+            exclude: None,
+            pass_filenames: None,
+            stages: vec![],
+            always_run: None,
+            service: Some("app".into()),
+        };
+        let merged = merge_with_upstream(&user, &upstream).unwrap();
+        assert_eq!(merged.service.as_deref(), Some("app"));
     }
 }

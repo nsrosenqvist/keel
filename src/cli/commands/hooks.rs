@@ -1,17 +1,20 @@
 //! `keel hooks <subcommand>` — install / run / uninstall git hooks.
 //!
-//! The CLI orchestrates two sources of hook logic:
+//! The CLI orchestrates two sources of hook logic, both running on the
+//! same [`Executor`]:
 //!
-//! - Native keel hooks declared in `keel.toml` `[hooks.<stage>]` —
-//!   these run as recipes through [`crate::runtime::Executor`].
-//! - `.pre-commit-config.yaml` hooks — these go through `keel_hooks`,
-//!   which natively runs `repo: local` + `language: system | script` and
-//!   bridges everything else to the `pre-commit` binary.
+//! - Native keel hooks declared in `keel.toml` `[hooks.<stage>]` — these
+//!   run as recipes through the executor's recipe runner, picking up
+//!   each recipe's `in = "<service>"` routing for free.
+//! - `.pre-commit-config.yaml` hooks — parsed by `crate::hooks` and run
+//!   verbatim. Per-hook `in = "<service>"` routes through the configured
+//!   container backend; absent that, when `[devcontainer].enabled =
+//!   true` the hook runs inside the devcontainer; otherwise on the host.
 
 use crate::config::Config;
 use crate::container::{Backend, compose::ComposeBackend};
 use crate::hooks::{HookOutcome, installer};
-use crate::runtime::Executor;
+use crate::runtime::{Executor, worktree};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
@@ -64,12 +67,11 @@ pub async fn uninstall(project_root: &Path, stages: &[String]) -> Result<()> {
 
 pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Result<i32> {
     let mut overall: i32 = 0;
+    let executor = build_hook_executor(config, project_root).await?;
 
     // 1. Native keel hooks.
     let native_hooks = config.hooks.for_stage(stage);
     if !native_hooks.is_empty() {
-        let backend = build_backend_or_null(config).await;
-        let executor = Executor::new(backend, Arc::clone(config), project_root);
         for name in native_hooks {
             println!("[keel] {name}");
             let code = executor.run_recipe(name, &[]).await?;
@@ -88,7 +90,7 @@ pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Resu
     if pcc_path.exists() && overall == 0 {
         let pcc = crate::hooks::config::load_from_path(&pcc_path)
             .with_context(|| format!("load {}", pcc_path.display()))?;
-        let outcomes = crate::hooks::run_pre_commit(&pcc, project_root, stage)
+        let outcomes = crate::hooks::run_pre_commit(&pcc, project_root, stage, &executor)
             .await
             .context("run pre-commit hooks")?;
         for outcome in &outcomes {
@@ -148,6 +150,22 @@ async fn build_backend_or_null(config: &Config) -> Arc<dyn Backend> {
         },
         _ => Arc::new(crate::container::null::NullBackend),
     }
+}
+
+/// Build the [`Executor`] used for both native keel hooks and
+/// `.pre-commit-config.yaml` dispatch. Detects the container backend
+/// and attaches the devcontainer routing when `[devcontainer]
+/// enabled = true` so a hook without explicit `in =` lands in the
+/// devcontainer just like a no-`in` recipe would.
+async fn build_hook_executor(config: &Arc<Config>, project_root: &Path) -> Result<Executor> {
+    let backend = build_backend_or_null(config).await;
+    let identity = worktree::Identity::detect(project_root, config).await;
+    let mut executor =
+        Executor::new(backend, Arc::clone(config), project_root).with_identity(identity.clone());
+    if let Some(dc) = crate::cli::app::build_devcontainer(config, project_root, &identity)? {
+        executor = executor.with_devcontainer(dc);
+    }
+    Ok(executor)
 }
 
 #[cfg(test)]

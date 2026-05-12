@@ -8,11 +8,15 @@
 //! - [`cache`] clones external hook repos into `.keel/cache/hooks/`
 //!   and remembers the resolved revision sha. keel owns this cache
 //!   end-to-end; it never delegates to the `pre-commit` binary.
-//! - [`runner`] runs the hooks for a given stage. Native execution
-//!   covers `repo: local` and cached external repos when their
-//!   resolved `language` is `system | script`. Anything else
-//!   (`python`, `node`, `repo: meta`, …) is rejected with a clear
-//!   error rather than silently skipping.
+//! - [`runner`] runs the hooks for a given stage. Each hook's `entry`
+//!   is exec'd verbatim regardless of the declared `language` — keel
+//!   trusts the user to have the runtime on `PATH` (typically via
+//!   `keel install`) rather than reimplementing pre-commit's
+//!   virtualenv / toolchain manager. `repo: meta` is the one shape
+//!   that's still rejected at run time, since there's no `entry` to
+//!   dispatch. Per-hook `in = "<service>"` and the executor's
+//!   workspace target (devcontainer when enabled, host otherwise)
+//!   pick where the spawn lands.
 //! - [`installer`] writes `.git/hooks/<stage>` shims that delegate to
 //!   `keel hooks run <stage> "$@"`.
 //!

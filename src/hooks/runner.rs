@@ -1,28 +1,40 @@
 //! Hook execution.
 //!
-//! Two paths, both native:
+//! Two parse paths, one execution path:
 //!
-//! 1. **Local hook** (`repo: local`, any `language: system | script`):
-//!    the user's `HookSpec` provides everything. The entry is parsed
-//!    via `shell_words`, args are appended, and — unless
-//!    `pass_filenames = false` — the matching staged files come last.
+//! 1. **Local hook** (`repo: local`): the user's `HookSpec` provides
+//!    everything. The entry is parsed via `shell_words`, args are
+//!    appended, and — unless `pass_filenames = false` — the matching
+//!    staged files come last.
 //! 2. **Cached upstream repo** (`repo: <url>` with a `rev`): keel
 //!    clones the repo into `.keel/cache/hooks/<key>/` and reads its
 //!    `.pre-commit-hooks.yaml` to fill in any fields the user didn't
-//!    override. Same native execution path after merging.
+//!    override. Same execution path after merging.
 //!
-//! Unsupported shapes (`language: python` / `node` / `ruby` / …,
-//! and `repo: meta`) produce a clear error at run time rather than
-//! silently skipping. keel deliberately does not bridge to the
-//! `pre-commit` binary; replication is the only mode.
+//! The hook's `language` tag is **advisory**: keel runs the entry
+//! verbatim regardless of `python` / `node` / `ruby` / … and trusts
+//! the runtime to be on `PATH` (typically installed by `keel install`).
+//! The only shape we still reject at run-time is `repo: meta`, which
+//! references pre-commit's built-in hooks that we deliberately don't
+//! implement. keel does not bridge to the `pre-commit` binary;
+//! replication is the only mode.
+//!
+//! Execution dispatch (per hook, after the spec is resolved):
+//!
+//! - `in = "<service>"` → exec inside that container service via the
+//!   configured [`Backend`](crate::container::Backend).
+//! - else, when the executor's workspace target is
+//!   [`crate::runtime::executor::WorkspaceTarget::Devcontainer`] →
+//!   exec inside the devcontainer.
+//! - else → spawn on the host with cwd = git repo root.
 
 use crate::hooks::cache;
 use crate::hooks::config::{HookLanguage, HookSpec, PreCommitConfig, Repo, UpstreamHook};
 use crate::hooks::error::HookError;
 use crate::hooks::git;
+use crate::runtime::Executor;
 use regex::Regex;
 use std::path::Path;
-use tokio::process::Command;
 use tracing::debug;
 
 /// Outcome of running a single hook.
@@ -44,10 +56,16 @@ impl HookOutcome {
 /// outcomes in declaration order; the caller renders them and decides
 /// on the overall exit code (typically: any non-zero hook fails the
 /// stage).
+///
+/// `executor` provides the container/devcontainer dispatch — hooks
+/// with `in = "<service>"` exec inside that service, otherwise
+/// hooks land on the executor's workspace target (host, or the
+/// devcontainer when `[devcontainer] enabled = true`).
 pub async fn run_pre_commit(
     config: &PreCommitConfig,
     project_root: &Path,
     stage: &str,
+    executor: &Executor,
 ) -> Result<Vec<HookOutcome>, HookError> {
     let repo_root = git::discover_repo(project_root)?;
     let staged = git::staged_files(&repo_root).await?;
@@ -58,7 +76,8 @@ pub async fn run_pre_commit(
             if !hook.applies_to_stage(stage, &config.default_stages) {
                 continue;
             }
-            let outcome = run_one_hook(project_root, repo, hook, &staged, &repo_root).await?;
+            let outcome =
+                run_one_hook(project_root, repo, hook, &staged, &repo_root, executor).await?;
             outcomes.push(outcome);
         }
     }
@@ -71,18 +90,13 @@ async fn run_one_hook(
     hook: &HookSpec,
     staged: &[String],
     repo_root: &Path,
+    executor: &Executor,
 ) -> Result<HookOutcome, HookError> {
     if repo.is_meta() {
         return Err(HookError::MetaRepoNotSupported);
     }
 
     let resolved = if repo.is_local() {
-        if !hook.language.is_native() {
-            return Err(HookError::UnsupportedLanguage {
-                hook: hook.id.clone(),
-                language: format!("{:?}", hook.language),
-            });
-        }
         ResolvedHook::local(hook.clone())
     } else {
         let cached = cache::clone_or_reuse(project_root, repo, false).await?;
@@ -91,7 +105,7 @@ async fn run_one_hook(
         ResolvedHook::cached(merged, cached.clone_dir)
     };
 
-    run_native(&resolved, staged, repo_root).await
+    dispatch(&resolved, staged, repo_root, executor).await
 }
 
 /// What the runner actually executes after resolving local-vs-cached
@@ -137,10 +151,11 @@ fn find_upstream(
         })
 }
 
-async fn run_native(
+async fn dispatch(
     resolved: &ResolvedHook,
     staged: &[String],
     repo_root: &Path,
+    executor: &Executor,
 ) -> Result<HookOutcome, HookError> {
     let entry = resolved
         .spec
@@ -163,8 +178,11 @@ async fn run_native(
     // repo*. Rewrite the first token to its absolute path so we can
     // still set `current_dir` to the user's repo_root (matches
     // pre-commit's semantics: hooks see the project tree, but their
-    // own files come from the cache).
+    // own files come from the cache). Only meaningful for host-side
+    // execution — in-container hooks resolve paths against the
+    // container's filesystem, not the host's cache.
     if matches!(resolved.spec.language, HookLanguage::Script)
+        && resolved.spec.service.is_none()
         && let Some(root) = resolved.script_root.as_deref()
     {
         let candidate = root.join(&argv[0]);
@@ -179,7 +197,7 @@ async fn run_native(
     if resolved.spec.pass_filenames && files.is_empty() && !resolved.spec.always_run {
         debug!(
             hook = resolved.spec.id,
-            "no staged files match; skipping native hook"
+            "no staged files match; skipping hook"
         );
         return Ok(HookOutcome {
             hook_id: resolved.spec.id.clone(),
@@ -192,20 +210,31 @@ async fn run_native(
         argv.extend(files.iter().cloned());
     }
 
-    let (program, rest) = argv.split_first().expect("argv non-empty above");
-    let mut cmd = Command::new(program);
-    cmd.args(rest);
-    cmd.current_dir(repo_root);
-    let status = cmd
-        .status()
-        .await
-        .map_err(|e| HookError::GitFailed(format!("spawn `{program}`: {e}")))?;
+    let exit_code = run_argv(&resolved.spec, &argv, repo_root, executor).await?;
     Ok(HookOutcome {
         hook_id: resolved.spec.id.clone(),
         native: true,
         skipped: None,
-        exit_code: status.code(),
+        exit_code: Some(exit_code),
     })
+}
+
+/// Per-hook dispatch: explicit `in = "<service>"` wins; otherwise the
+/// executor's workspace target picks host vs devcontainer. The actual
+/// routing lives on [`Executor::hook_exec`] so the four spawn
+/// surfaces (service / devcontainer / host inherit / host capture)
+/// stay in one place.
+async fn run_argv(
+    spec: &HookSpec,
+    argv: &[String],
+    repo_root: &Path,
+    executor: &Executor,
+) -> Result<i32, HookError> {
+    let argv_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+    executor
+        .hook_exec(spec.service.as_deref(), &argv_refs, repo_root)
+        .await
+        .map_err(|e| HookError::Runtime(Box::new(e)))
 }
 
 fn filter_files(hook: &HookSpec, staged: &[String]) -> Result<Vec<String>, HookError> {
@@ -253,7 +282,19 @@ mod tests {
             pass_filenames: true,
             stages: vec![],
             always_run: false,
+            service: None,
         }
+    }
+
+    fn host_executor(project_root: &Path) -> Executor {
+        use crate::config::Config;
+        use crate::container::null::NullBackend;
+        use std::sync::Arc;
+        Executor::new(
+            Arc::new(NullBackend) as Arc<dyn crate::container::Backend>,
+            Arc::new(Config::default()),
+            project_root,
+        )
     }
 
     #[test]
@@ -337,18 +378,22 @@ mod tests {
                     pass_filenames: false,
                     stages: vec![],
                     always_run: true,
+                    service: None,
                 }],
             }],
             default_stages: vec![],
         };
-        let err = run_pre_commit(&cfg, temp.path(), "pre-commit")
+        let executor = host_executor(temp.path());
+        let err = run_pre_commit(&cfg, temp.path(), "pre-commit", &executor)
             .await
             .unwrap_err();
         assert!(matches!(err, HookError::MetaRepoNotSupported));
     }
 
     #[tokio::test]
-    async fn local_python_hook_errors_with_clear_message() {
+    async fn local_python_hook_runs_verbatim_when_entry_on_path() {
+        // The language tag is advisory now — keel doesn't gate on it.
+        // Use a host binary that always exists so the spawn succeeds.
         let temp = tempfile::TempDir::new().unwrap();
         tokio::process::Command::new("git")
             .args(["init", "-q"])
@@ -364,23 +409,114 @@ mod tests {
                     id: "ruff".into(),
                     name: None,
                     language: HookLanguage::Python,
-                    entry: Some("ruff".into()),
+                    entry: Some("true".into()),
                     args: vec![],
                     files: None,
                     exclude: None,
-                    pass_filenames: true,
+                    pass_filenames: false,
                     stages: vec![],
                     always_run: true,
+                    service: None,
                 }],
             }],
             default_stages: vec![],
         };
-        let err = run_pre_commit(&cfg, temp.path(), "pre-commit")
+        let executor = host_executor(temp.path());
+        let outcomes = run_pre_commit(&cfg, temp.path(), "pre-commit", &executor)
             .await
-            .unwrap_err();
-        match err {
-            HookError::UnsupportedLanguage { hook, .. } => assert_eq!(hook, "ruff"),
-            other => panic!("expected UnsupportedLanguage, got {other:?}"),
+            .unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].exit_code, Some(0));
+        assert!(outcomes[0].passed());
+    }
+
+    #[tokio::test]
+    async fn hook_with_explicit_service_routes_through_backend() {
+        use crate::config::Config;
+        use crate::container::{Backend, BackendError, ExecOptions, ServiceStatus};
+        use async_trait::async_trait;
+        use std::sync::{Arc, Mutex};
+
+        struct RecordingBackend {
+            calls: Mutex<Vec<(String, Vec<String>)>>,
         }
+        #[async_trait]
+        impl Backend for RecordingBackend {
+            fn name(&self) -> &'static str {
+                "rec"
+            }
+            async fn status(&self, _service: &str) -> Result<ServiceStatus, BackendError> {
+                Ok(ServiceStatus::Running)
+            }
+            async fn exec(
+                &self,
+                service: &str,
+                argv: &[&str],
+                _opts: &ExecOptions,
+            ) -> Result<i32, BackendError> {
+                self.calls.lock().unwrap().push((
+                    service.to_string(),
+                    argv.iter().map(|s| (*s).to_string()).collect(),
+                ));
+                Ok(0)
+            }
+            async fn passthrough(&self, _args: &[&str]) -> Result<i32, BackendError> {
+                Ok(0)
+            }
+            async fn exec_with_stdin(
+                &self,
+                _service: &str,
+                _argv: &[&str],
+                _opts: &ExecOptions,
+                _stdin: &str,
+            ) -> Result<i32, BackendError> {
+                Ok(0)
+            }
+        }
+
+        let temp = tempfile::TempDir::new().unwrap();
+        tokio::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .status()
+            .await
+            .unwrap();
+        let cfg = PreCommitConfig {
+            repos: vec![Repo {
+                repo: "local".into(),
+                rev: None,
+                hooks: vec![HookSpec {
+                    id: "fmt".into(),
+                    name: None,
+                    language: HookLanguage::System,
+                    entry: Some("cargo fmt --check".into()),
+                    args: vec![],
+                    files: None,
+                    exclude: None,
+                    pass_filenames: false,
+                    stages: vec![],
+                    always_run: true,
+                    service: Some("app".into()),
+                }],
+            }],
+            default_stages: vec![],
+        };
+        let backend = Arc::new(RecordingBackend {
+            calls: Mutex::new(Vec::new()),
+        });
+        let executor = Executor::new(
+            Arc::clone(&backend) as Arc<dyn Backend>,
+            Arc::new(Config::default()),
+            temp.path(),
+        );
+        let outcomes = run_pre_commit(&cfg, temp.path(), "pre-commit", &executor)
+            .await
+            .unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].exit_code, Some(0));
+        let calls = backend.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "app");
+        assert_eq!(calls[0].1, vec!["cargo", "fmt", "--check"]);
     }
 }

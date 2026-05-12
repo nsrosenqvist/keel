@@ -45,17 +45,14 @@ pub enum HookError {
     EntryMissing { hook: String },
 
     #[error(
-        "hook `{hook}` uses language `{language}`; keel runs only `system` / `script` hooks. \
-         Use a wrapper script with `language: script`, or a tool already on PATH with `language: system`."
-    )]
-    UnsupportedLanguage { hook: String, language: String },
-
-    #[error(
         "`repo: meta` references pre-commit's built-in hooks (check-hooks-apply, identity, …) \
          which keel does not implement. Remove the entry or replace it with an equivalent \
          `repo: local` hook."
     )]
     MetaRepoNotSupported,
+
+    #[error(transparent)]
+    Runtime(#[from] Box<crate::runtime::RuntimeError>),
 
     #[error(
         "hook `{hook}` references repo {repo} at rev `{rev}` but its `.pre-commit-hooks.yaml` \

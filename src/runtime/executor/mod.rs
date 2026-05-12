@@ -191,6 +191,63 @@ impl Executor {
             .await
             .map_err(Into::into)
     }
+
+    /// Dispatch a hook-style invocation: a fully-resolved argv plus
+    /// an optional service routing. Centralises the three spawn
+    /// surfaces (service exec / devcontainer exec / host) so the hook
+    /// runner doesn't have to duplicate the dispatch logic.
+    ///
+    /// - `service = Some(svc)` → exec via the configured backend.
+    /// - `service = None`, workspace target =
+    ///   [`WorkspaceTarget::Devcontainer`] → exec inside the devcontainer.
+    /// - `service = None`, workspace target = `Local` → host spawn with
+    ///   `current_dir = host_cwd`.
+    pub async fn hook_exec(
+        &self,
+        service: Option<&str>,
+        argv: &[&str],
+        host_cwd: &Path,
+    ) -> Result<i32, RuntimeError> {
+        if argv.is_empty() {
+            return Err(RuntimeError::ArgvParse {
+                input: String::new(),
+                message: "empty argv".into(),
+            });
+        }
+        let env = self.effective_env(None).await?;
+
+        if let Some(svc) = service {
+            let opts = ExecOptions {
+                tty: false,
+                env: env.project_only_map(),
+                workdir: None,
+            };
+            return self
+                .backend
+                .exec(svc, argv, &opts)
+                .await
+                .map_err(Into::into);
+        }
+
+        if let WorkspaceTarget::Devcontainer(dc) = &self.workspace {
+            let opts = ExecOptions {
+                tty: false,
+                env: env.project_only_map(),
+                workdir: None,
+            };
+            return dc
+                .exec(dc.container_name(), argv, &opts)
+                .await
+                .map_err(Into::into);
+        }
+
+        let (program, rest) = argv.split_first().expect("argv non-empty above");
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(rest.iter().copied());
+        cmd.current_dir(host_cwd);
+        env.apply_to(&mut cmd);
+        self.spawn_host(cmd).await
+    }
 }
 
 #[cfg(test)]
