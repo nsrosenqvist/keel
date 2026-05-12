@@ -151,8 +151,7 @@ async fn drive(
                     continue 'outer;
                 }
                 Command::OpenEditor { target } => {
-                    let suspended =
-                        run_editor(app, &mut events, terminal, &target).await?;
+                    let suspended = run_editor(app, &mut events, terminal, &target).await?;
                     if suspended {
                         continue 'outer;
                     }

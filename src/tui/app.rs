@@ -16,12 +16,12 @@ use crate::container::Backend;
 use crate::container::devcontainer::DevcontainerBackend;
 use crate::runtime::Executor;
 use crate::tui::dialogs::Modal;
-use crate::tui::editor::ResolvedEditor;
 use crate::tui::dialogs::args_prompt::ArgsPrompt;
 use crate::tui::dialogs::confirm::{ConfirmAction, ConfirmDialog};
 use crate::tui::dialogs::switcher::{
     NewFormField, NewWorktreeForm, SwitcherConfirm, WorktreeRow, WorktreeSwitcher,
 };
+use crate::tui::editor::ResolvedEditor;
 use crate::tui::palette::Palette;
 use crate::tui::runner::RunState;
 use crate::tui::services::ServicePane;

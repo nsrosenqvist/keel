@@ -31,7 +31,12 @@ After **every** code change, run the full verification ladder
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
 ```
+
+All four steps gate CI — running any subset locally is not enough.
+The `cargo doc` step in particular catches broken intra-doc-links
+and private-item link warnings that the other three miss.
 
 If any step fails, fix the cause — don't suppress warnings, don't
 `#[allow]` clippy lints without a written justification in the
