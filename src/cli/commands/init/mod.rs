@@ -4,14 +4,14 @@
 //!
 //! Two modes:
 //!
-//! - **Auto** (default): walks the [`detectors`] registry. Each detector
+//! - **Auto** (default): walks the `detectors` registry. Each detector
 //!   inspects the project root and contributes typed fragments (runtime,
-//!   env files, suggested commands); [`render`] weaves them into a single
+//!   env files, suggested commands); `render` weaves them into a single
 //!   TOML body. Auto-detected commands are emitted commented — the user
 //!   uncomments what they want.
 //! - **Templated** (`--template <stack>`): writes a richer hand-curated
 //!   config for a specific stack (laravel, rails, node, rust). Bypasses
-//!   the detector registry entirely. See [`template`].
+//!   the detector registry entirely. See the `template` submodule.
 
 mod detector;
 mod detectors;
