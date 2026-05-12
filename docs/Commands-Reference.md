@@ -46,9 +46,24 @@ service status. Exits non-zero on any failure. See
 
 ## `keel init [--template <NAME>]`
 
-Generate a starter `keel.toml` at the project root with detection
-hints for the host stack. `--template` picks a stack explicitly
-instead of auto-detecting (compose / docker / podman / minimal).
+Generate a starter `keel.toml` at the project root. Refuses to
+overwrite an existing file.
+
+Without `--template`, runs a registry of ecosystem detectors against
+the project: compose / devcontainer / dotenv / node (npm | pnpm |
+yarn | bun | deno) / python (uv | poetry | pdm | pipenv | pip) /
+rust / go / ruby (+Rails) / php (+Laravel | Symfony). Each detector
+contributes typed fragments to the generated TOML; container
+detectors own `[runtime]` and `[devcontainer]`, language detectors
+contribute commented `[command.*]` suggestions. When two ecosystems
+suggest the same command name, both are emitted under a "Multiple
+ecosystems suggest …" header. See
+[Getting Started](Getting-Started#2-generate-a-starter-keeltoml) for
+the full detection table.
+
+With `--template <NAME>`, bypass auto-detection and start from a
+hand-curated scaffold. Valid names: `laravel`, `rails`, `node`,
+`rust`.
 
 ## `keel install [<step>] [flags]`
 

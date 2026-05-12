@@ -41,13 +41,30 @@ Inside any project directory:
 keel init
 ```
 
-This drops a `keel.toml` at the project root with detection hints
-based on what `init` finds in the directory (compose, `.env`,
-`package.json`, `composer.json`). Open the file — every recipe is
-commented and ready for you to uncomment / rename.
+This drops a `keel.toml` at the project root and walks a registry of
+ecosystem detectors against the directory. Each detector contributes
+to the generated file:
 
-Pass `--template <NAME>` to skip auto-detection
-(`keel init --template minimal`).
+| Detector       | Trigger files                                                  | What it contributes                                       |
+| -------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
+| `compose`      | `docker-compose.{yml,yaml}`, `compose.{yml,yaml}`              | `[runtime] backend = "compose"`                           |
+| `devcontainer` | `.devcontainer/devcontainer.json`, `.devcontainer.json`        | `[devcontainer] enabled = true`                           |
+| `dotenv`       | `.env`, `.env.local`                                           | `[env_files]` entries                                     |
+| `node`         | `package.json`, `deno.json[c]`, plus lockfile selects the tool | `dev` / `build` / `test` / `lint` using `npm` / `pnpm` / `yarn` / `bun` / `deno` |
+| `python`       | `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` | `install` / `test` / (`lint`) using `uv` / `poetry` / `pdm` / `pipenv` / `pip` |
+| `rust`         | `Cargo.toml` (workspace-aware)                                 | `build` / `test` / `fmt` / `check`                        |
+| `go`           | `go.mod`                                                       | `build` / `test` / `run` / `vet`                          |
+| `ruby`         | `Gemfile`; Rails via `bin/rails` or `config/application.rb`    | `install` / `test`; Rails adds `console` / `migrate`      |
+| `php`          | `composer.json`; Laravel via `artisan`; Symfony via `symfony.lock` | `install` / `test`; Laravel adds `artisan` / `migrate`, Symfony adds `console` |
+
+Open the file — every detected command is **commented**. Uncomment
+the ones you want to keep. When two detectors suggest the same name
+(e.g. both `node` and `rust` want `build`), `init` emits both under a
+"Multiple ecosystems suggest …" header so you can pick one.
+
+Pass `--template <NAME>` to skip auto-detection and start from a
+hand-curated stack scaffold instead (`laravel`, `rails`, `node`,
+`rust`).
 
 ## 3. Define your first recipe
 
