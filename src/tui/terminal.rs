@@ -545,9 +545,22 @@ async fn handle_key_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         }
         // Open the worktree root in the configured editor. Global so
         // an IDE-using devloop can jump from any view back into the
-        // editor without first hopping through `G`.
+        // editor without first hopping through `G`. Gated on a
+        // GUI-mode editor: terminal editors (nano, hx, …) either
+        // can't open a directory or do something surprising when
+        // they can (vim's netrw), so refuse with a flash instead of
+        // launching a process that'll error and clobber the screen.
+        // The hint legends hide `E` in this case; this guard catches
+        // muscle memory.
         KeyCode::Char('E') => {
-            app.request_open_worktree_in_editor();
+            if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
+                app.request_open_worktree_in_editor();
+            } else {
+                let name = app.editor().display_name().to_owned();
+                app.flash(format!(
+                    "E (open worktree) needs a GUI editor; {name} is terminal — set [editor] command in keel.toml"
+                ));
+            }
             return;
         }
         _ => {}

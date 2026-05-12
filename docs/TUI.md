@@ -88,7 +88,7 @@ service list changes.
 |---|---|
 | `G` | Open the [Diff View](Diff-View). |
 | `W` | Open the worktree switcher modal. |
-| `E` | Open the worktree root in your preferred editor (see [Editor integration](#editor-integration)). |
+| `E` | Open the worktree root in your preferred editor (GUI editors only — see [Editor integration](#editor-integration)). |
 
 ## Worktree switcher (`W`)
 
@@ -151,6 +151,13 @@ The command string is whitespace-tokenised: `"code --wait"` becomes
 Terminal editors (vim, nvim, nano, helix, …) suspend the TUI like
 the lazygit handoff and resume on exit. GUI editors (code, cursor,
 gvim, IntelliJ, …) spawn detached — the TUI stays painted.
+
+The global `E` (open worktree root) is only offered when the
+resolved editor is in **GUI mode** — terminal editors either can't
+open a directory (`nano`, `hx`) or surprise the user when they can
+(`vim` drops into netrw). The legend hides the `E` hint in that
+case; pressing it anyway flashes an explanation. `e` (open file) is
+unaffected and works for both modes.
 
 Classification uses a built-in registry. For editors keel doesn't
 know, set the launch mode explicitly:

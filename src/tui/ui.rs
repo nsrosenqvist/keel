@@ -1001,16 +1001,22 @@ pub(crate) fn window(selected: usize, visible: usize, total: usize) -> (usize, u
 fn view_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.view() {
         crate::tui::app::View::ControlCenter => control_center_hints(app),
-        crate::tui::app::View::Terminals => vec![
-            ("↑↓", "nav"),
-            ("enter", "attach"),
-            ("n", "new"),
-            ("d", "delete"),
-            ("C", "control"),
-            ("G", "diff"),
-            ("W", "worktree"),
-            ("q", "quit"),
-        ],
+        crate::tui::app::View::Terminals => {
+            let mut h: Vec<(&'static str, &'static str)> = vec![
+                ("↑↓", "nav"),
+                ("enter", "attach"),
+                ("n", "new"),
+                ("d", "delete"),
+                ("C", "control"),
+                ("G", "diff"),
+                ("W", "worktree"),
+            ];
+            if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
+                h.push(("E", "open ide"));
+            }
+            h.push(("q", "quit"));
+            h
+        }
         crate::tui::app::View::Diff => diff_hints(app),
     }
 }
@@ -1023,6 +1029,9 @@ fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             if !in_read {
                 h.push(("]/[", "hunk"));
             }
+            // `e` opens a single file — works for any editor (terminal
+            // or GUI), so no mode gate here.
+            h.push(("e", "edit"));
             h
         }
         DiffFocus::Body => {
@@ -1046,6 +1055,9 @@ fn diff_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     hints.push(("C", "control"));
     hints.push(("T", "terminals"));
     hints.push(("W", "worktree"));
+    if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
+        hints.push(("E", "open ide"));
+    }
     hints.push(("q", "quit"));
     hints
 }
@@ -1076,6 +1088,9 @@ fn control_center_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         hints.push(("T", "terminals"));
         hints.push(("G", "diff"));
         hints.push(("W", "worktree"));
+        if app.editor().mode == crate::tui::editor::LaunchMode::Gui {
+            hints.push(("E", "open ide"));
+        }
     }
     hints.push(("/", "palette"));
     hints.push(("q", "quit"));
