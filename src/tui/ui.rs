@@ -157,7 +157,7 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
     // immediately below. The view accent already has plenty of
     // representation (panel titles, status-bar tag, group headers).
     let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("  ampelos ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("ampelos ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];
