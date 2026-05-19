@@ -28,7 +28,7 @@ DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 
 - `default` is used only if no earlier layer set it.
 - `base + offset` picks a per-worktree port so two checkouts can
-  run side-by-side. See [Worktrees](Worktrees).
+  run side-by-side. See [Worktrees](08-Worktrees).
 - `from_command` runs a shell command and uses its trimmed stdout.
 
 **3. Verify what's resolved:**
@@ -109,7 +109,7 @@ APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
 DB_PORT  = { base = "5432", offset = "AMPELOS_WORKTREE_OFFSET" }
 ```
 
-`AMPELOS_WORKTREE_OFFSET` is injected automatically (see [Worktrees](Worktrees)).
+`AMPELOS_WORKTREE_OFFSET` is injected automatically (see [Worktrees](08-Worktrees)).
 Two checkouts get different offsets → different ports → no
 collisions when both stacks are up.
 
@@ -253,8 +253,8 @@ script contracts in full.
 
 ## See also
 
-- [Worktrees](Worktrees) for the slug + offset model that powers
+- [Worktrees](08-Worktrees) for the slug + offset model that powers
   `base + offset`.
-- [Hooks](Hooks) for how the post-checkout / post-merge auto-wiring
+- [Hooks](09-Hooks) for how the post-checkout / post-merge auto-wiring
   keeps `.env` fresh.
 - [Configuration Reference: `[env]`](Configuration-Reference#env-and-env_files).

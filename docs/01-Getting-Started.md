@@ -2,7 +2,7 @@
 
 This page takes you from "no ampelos" to "first recipe + first
 hook + open dashboard" in under five minutes. After that, the
-[Quick Tour](Quick-Tour) shows the rest of the surface.
+[Quick Tour](02-Quick-Tour) shows the rest of the surface.
 
 ## 1. Install
 
@@ -128,7 +128,7 @@ ampelos hooks install
 
 This writes `.git/hooks/pre-commit` as a shim that runs `ampelos
 hooks run pre-commit`. Try it: `git commit` triggers `check`
-automatically. See [Hooks](Hooks) for the full model
+automatically. See [Hooks](09-Hooks) for the full model
 (including `.pre-commit-config.yaml` compatibility).
 
 ## 5. Open the dashboard
@@ -137,19 +137,19 @@ automatically. See [Hooks](Hooks) for the full model
 ampelos
 ```
 
-Bare `ampelos` opens the [TUI](TUI): a sidebar of every recipe,
+Bare `ampelos` opens the [TUI](12-TUI): a sidebar of every recipe,
 script, and service; an output pane for whatever's selected; service
-lifecycle keymaps; a built-in [diff view](Diff-View) (`G`); a
+lifecycle keymaps; a built-in [diff view](13-Diff-View) (`G`); a
 [worktree switcher](Worktrees#tui-worktree-switcher-w) (`W`).
 
 ## 6. Where to go next
 
-- **The full tour** → [Quick Tour](Quick-Tour) — a guided 5-minute walk
+- **The full tour** → [Quick Tour](02-Quick-Tour) — a guided 5-minute walk
   through every major feature.
 - **Schema reference** →
-  [Configuration Reference](Configuration-Reference) for
+  [Configuration Reference](16-Configuration-Reference) for
   every `ampelos.toml` key.
-- **Real projects** → [Examples](Examples) — runnable
+- **Real projects** → [Examples](18-Examples) — runnable
   configurations under `examples/`.
-- **Stuck?** → [Troubleshooting](Troubleshooting) — `ampelos
+- **Stuck?** → [Troubleshooting](19-Troubleshooting) — `ampelos
   doctor` and common pitfalls.

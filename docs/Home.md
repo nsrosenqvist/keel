@@ -56,62 +56,62 @@ ampelos                      # TUI dashboard with every recipe + service
 
 ## Where to go next
 
-- **New here?** → [Getting Started](Getting-Started): install,
+- **New here?** → [Getting Started](01-Getting-Started): install,
   `ampelos init`, your first recipe and hook.
-- **Want the tour?** → [Quick Tour](Quick-Tour): a guided
+- **Want the tour?** → [Quick Tour](02-Quick-Tour): a guided
   5-minute walk through recipes, hooks, agents, and the TUI.
 - **Need the reference?** →
-  [Configuration Reference](Configuration-Reference) for every
-  `ampelos.toml` key, [Commands Reference](Commands-Reference)
+  [Configuration Reference](16-Configuration-Reference) for every
+  `ampelos.toml` key, [Commands Reference](17-Commands-Reference)
   for every CLI subcommand.
 
 ## All pages
 
 ### Concepts
 
-- [Recipes and Scripts](Recipes-and-Scripts) — declarative
+- [Recipes and Scripts](03-Recipes-and-Scripts) — declarative
   TOML vs `.ampelos/commands/` shell scripts.
-- [Environments](Environments) — `[env]`, dotenv layering,
+- [Environments](04-Environments) — `[env]`, dotenv layering,
   `base + offset` arithmetic.
-- [Container Backends](Container-Backends) — compose / docker
+- [Container Backends](05-Container-Backends) — compose / docker
   / podman / none, passthrough resolution.
-- [Non Container Services](Non-Container-Services) — system
+- [Non Container Services](07-Non-Container-Services) — system
   daemons alongside compose.
-- [Worktrees](Worktrees) — slug + offset, per-worktree
+- [Worktrees](08-Worktrees) — slug + offset, per-worktree
   isolation, dotenv writer.
 
 ### Subsystems
 
-- [Hooks](Hooks) — git hook installer +
+- [Hooks](09-Hooks) — git hook installer +
   `.pre-commit-config.yaml` runner.
-- [Agents](Agents) — sync agent instructions / skills from
+- [Agents](10-Agents) — sync agent instructions / skills from
   upstream repos.
-- [Install Flow](Install-Flow) — `.ampelos/install/` ordered
+- [Install Flow](11-Install-Flow) — `.ampelos/install/` ordered
   setup steps with state + resume.
-- [TUI](TUI) — the embedded dashboard.
-- [Diff View](Diff-View) — branch-review surface pinned to
+- [TUI](12-TUI) — the embedded dashboard.
+- [Diff View](13-Diff-View) — branch-review surface pinned to
   the trunk merge-base.
-- [Watch](Watch) — re-run a recipe on filesystem change.
-- [Shell Library](Shell-Library) — `ampelos lib ask|confirm|…`
+- [Watch](14-Watch) — re-run a recipe on filesystem change.
+- [Shell Library](15-Shell-Library) — `ampelos lib ask|confirm|…`
   prompts for shell scripts.
 
 ### Reference
 
-- [Configuration Reference](Configuration-Reference) — every
+- [Configuration Reference](16-Configuration-Reference) — every
   `ampelos.toml` key.
-- [Commands Reference](Commands-Reference) — every CLI
+- [Commands Reference](17-Commands-Reference) — every CLI
   subcommand.
 
 ### Resources
 
-- [Examples](Examples) — runnable ampelos projects under
+- [Examples](18-Examples) — runnable ampelos projects under
   `examples/`.
-- [Troubleshooting](Troubleshooting) — `ampelos doctor`, common
+- [Troubleshooting](19-Troubleshooting) — `ampelos doctor`, common
   pitfalls.
 
 ### Project
 
-- [Architecture](Architecture) — operating principles, crate
+- [Architecture](20-Architecture) — operating principles, crate
   layout.
-- [Contributing](Contributing) — verification ladder, commit
+- [Contributing](21-Contributing) — verification ladder, commit
   conventions, how to send a PR.

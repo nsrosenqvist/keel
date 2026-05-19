@@ -118,7 +118,7 @@ See [Install Flow](Install-Flow#interactive-steps).
 
 ## See also
 
-- [Install Flow](Install-Flow) for the `# @interactive:`
+- [Install Flow](11-Install-Flow) for the `# @interactive:`
   frontmatter.
 - [`examples/install-flow/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/install-flow)
   for a runnable demo using `ampelos lib ask` inside an install

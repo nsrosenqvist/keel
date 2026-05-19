@@ -15,12 +15,12 @@ ampelos doctor
 
 ampelos uses `deny_unknown_fields` on every TOML section. Typo or a
 removed field. Cross-check the
-[Configuration Reference](Configuration-Reference).
+[Configuration Reference](16-Configuration-Reference).
 
 ### "duplicate service name `<name>`"
 
 A name appears in two of:
-[`[[services.custom]]`](Non-Container-Services), `[[services.systemd]]`,
+[`[[services.custom]]`](07-Non-Container-Services), `[[services.systemd]]`,
 or the compose project. Rename one. Errors at config-load time, not
 at runtime.
 
@@ -39,7 +39,7 @@ duplicate from `[install].steps`).
 ### "compose backend selected but `docker` is not on PATH"
 
 Install Docker, or set `[runtime].backend = "none"` if you only
-use [`[[services.custom]]`](Non-Container-Services) /
+use [`[[services.custom]]`](07-Non-Container-Services) /
 `[[services.systemd]]` declarations.
 
 ### Recipe with `in = "<svc>"` errors with "no such service"
@@ -80,7 +80,7 @@ APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
 
 `ampelos worktree list` shows every worktree's computed offset and
 warns on collisions. Pin a slug explicitly with `ampelos worktree
-assign <slug> <n>` if needed. See [Worktrees](Worktrees).
+assign <slug> <n>` if needed. See [Worktrees](08-Worktrees).
 
 ## Hook issues
 
@@ -88,7 +88,7 @@ assign <slug> <n>` if needed. See [Worktrees](Worktrees).
 
 `.git/hooks/<stage>` exists and isn't a ampelos-managed shim. Move
 it aside (e.g. `.git/hooks/pre-commit.bak`) and rerun
-`ampelos hooks install`. See [Hooks](Hooks).
+`ampelos hooks install`. See [Hooks](09-Hooks).
 
 ### "hook `<id>` uses language `<lang>`; ampelos runs only `system` / `script` hooks"
 

@@ -225,7 +225,7 @@ built-in `check-hooks-apply` / `identity` etc.) — there's no
 
 ## See also
 
-- [Install Flow](Install-Flow) — `ampelos install` includes a
+- [Install Flow](11-Install-Flow) — `ampelos install` includes a
   synthetic step that installs hook shims and prefetches external
   repos.
 - [`examples/hooks/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/hooks)

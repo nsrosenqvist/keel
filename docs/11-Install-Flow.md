@@ -113,7 +113,7 @@ echo "ADMIN_PASS=$PASS"   >> .env
 ```
 
 `ampelos lib ask | confirm | password | select | filter` give you
-prompt helpers without an extra dependency. See [Shell Library](Shell-Library).
+prompt helpers without an extra dependency. See [Shell Library](15-Shell-Library).
 
 ### Mark a step optional
 
@@ -210,11 +210,11 @@ Two steps are auto-appended:
 
 - **`apply-agents`** — runs first, when
   `[agents].install_with_setup = true` (default) and at least one
-  `[[agents.sources]]` is declared. See [Agents](Agents).
+  `[[agents.sources]]` is declared. See [Agents](10-Agents).
 - **`install-hooks`** — runs last, when
   `[install].install_git_hooks = true` (default). Installs git
   hook shims and prefetches `.pre-commit-config.yaml` external
-  repos into `.ampelos/cache/hooks/<rev>/`. See [Hooks](Hooks).
+  repos into `.ampelos/cache/hooks/<rev>/`. See [Hooks](09-Hooks).
 
 ### Step plan resolution
 
@@ -237,7 +237,7 @@ Each step runs with `AMPELOS_PROJECT_DIR` set to the host path of
 the worktree project root. Script-source steps also get
 `AMPELOS_SCRIPT_DIR` pointing at the parent directory of the step
 file (typically `.ampelos/install/`). Both sit alongside the
-resolved [Environments](Environments) layers and `@env:`
+resolved [Environments](04-Environments) layers and `@env:`
 declarations. Inline install steps in `[install].steps` get
 `AMPELOS_PROJECT_DIR` only — there's no script file for
 `AMPELOS_SCRIPT_DIR` to point at.
@@ -278,7 +278,7 @@ configurable via `[install].gitignore = "..."`.
 
 - [`examples/install-flow/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/install-flow)
   — runnable demo with ordered + optional + interactive steps.
-- [Hooks](Hooks) and [Agents](Agents) — the synthetic steps that
+- [Hooks](09-Hooks) and [Agents](10-Agents) — the synthetic steps that
   bookend your plan.
-- [Shell Library](Shell-Library) — prompts inside interactive
+- [Shell Library](15-Shell-Library) — prompts inside interactive
   steps.

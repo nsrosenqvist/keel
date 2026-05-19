@@ -38,7 +38,7 @@ a status preflight.
 - **Route per recipe.** `in = "<service>"` says "exec this inside
   that container service." Without it, the recipe runs on the
   host (or inside the devcontainer if that's enabled — see
-  [Devcontainer](Devcontainer)).
+  [Devcontainer](06-Devcontainer)).
 - **Passthrough fills the gaps.** If you type `ampelos <name>` and
   the name isn't a recipe / script, ampelos tries it as a compose
   subcommand (`docker compose <name>`) and then as a service exec
@@ -107,7 +107,7 @@ backend = "none"
 Compose preflight is skipped. Useful when `[[services.custom]]`
 or `[[services.systemd]]` covers your stack — ampelos still manages
 their lifecycle and shows them in the TUI. See
-[Non-Container Services](Non-Container-Services).
+[Non-Container Services](07-Non-Container-Services).
 
 ### Stop a recipe name from being shadowed
 
@@ -172,13 +172,13 @@ them with the standard lifecycle keymap (`r` start, `R` restart,
 `s` stop, `S` stop & remove, `U` up, `D` down). The same keymap
 applies to `[[services.custom]]` and `[[services.systemd]]`
 declarations, so the user experience is uniform across backends.
-See [TUI](TUI).
+See [TUI](12-TUI).
 
 ## See also
 
-- [Non-Container Services](Non-Container-Services) for system
+- [Non-Container Services](07-Non-Container-Services) for system
   daemons you want to manage alongside compose.
-- [Recipes and Scripts](Recipes-and-Scripts) for the full
+- [Recipes and Scripts](03-Recipes-and-Scripts) for the full
   resolution order and `in = "..."` semantics.
-- [Devcontainer](Devcontainer) for routing host-targeted recipes
+- [Devcontainer](06-Devcontainer) for routing host-targeted recipes
   into a devcontainer workspace.

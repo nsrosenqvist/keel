@@ -232,6 +232,6 @@ or semver tag if you want reproducible installs.
 
 ## See also
 
-- [Install Flow](Install-Flow) — how `apply-agents` slots into the
+- [Install Flow](11-Install-Flow) — how `apply-agents` slots into the
   install plan.
 - [Configuration Reference: `[agents]`](Configuration-Reference#agents-and-agentssources).

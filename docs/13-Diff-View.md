@@ -1,6 +1,6 @@
 # Diff View
 
-The diff view is a branch-review surface inside the [TUI](TUI):
+The diff view is a branch-review surface inside the [TUI](12-TUI):
 every file you've changed since you branched off `main` (or
 whatever your trunk is), with hunk navigation, jump-to-editor,
 and lazygit handoff. Press **`G`** to open it.
@@ -135,7 +135,7 @@ In order, first match wins:
 
 ## See also
 
-- [TUI](TUI) — the dashboard the diff view is part of, including
+- [TUI](12-TUI) — the dashboard the diff view is part of, including
   editor + lazygit handoff details.
 - [Configuration Reference: `[diff]`](Configuration-Reference#diff).
 - [Configuration Reference: `[editor]`](Configuration-Reference#editor)

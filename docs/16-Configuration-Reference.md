@@ -27,7 +27,7 @@ description = "Public-facing API"
 
 ## `[runtime]`
 
-Container-runtime selection. See [Container Backends](Container-Backends).
+Container-runtime selection. See [Container Backends](05-Container-Backends).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -38,7 +38,7 @@ Container-runtime selection. See [Container Backends](Container-Backends).
 
 ## `[env]` and `[env_files]`
 
-Per-key spec. See [Environments](Environments).
+Per-key spec. See [Environments](04-Environments).
 
 ```toml
 [env_files]
@@ -64,7 +64,7 @@ Resolution order per key (first match wins): `value` → `base + offset`
 
 ## `[command.<name>]` (recipes)
 
-Declarative commands. See [Recipes and Scripts](Recipes-and-Scripts).
+Declarative commands. See [Recipes and Scripts](03-Recipes-and-Scripts).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -98,7 +98,7 @@ inherit the recipe's value. Activated with `ampelos --profile <name> <recipe>`.
 
 ## `[hooks]`
 
-Native ampelos git hooks. See [Hooks](Hooks).
+Native ampelos git hooks. See [Hooks](09-Hooks).
 
 ```toml
 [hooks]
@@ -112,7 +112,7 @@ installed shim.
 
 ## `[install]`
 
-First-time setup. See [Install Flow](Install-Flow).
+First-time setup. See [Install Flow](11-Install-Flow).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -136,7 +136,7 @@ env         = { APP_ENV = "local" }
 
 ## `[worktrees]`
 
-Per-worktree isolation. See [Worktrees](Worktrees).
+Per-worktree isolation. See [Worktrees](08-Worktrees).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -158,7 +158,7 @@ production = 0
 
 ## `[devcontainer]`
 
-Opt-in devcontainer integration. See [Devcontainer](Devcontainer).
+Opt-in devcontainer integration. See [Devcontainer](06-Devcontainer).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -172,7 +172,7 @@ enabled = true
 
 ## `[diff]`
 
-Diff-view trunk override. See [Diff View](Diff-View).
+Diff-view trunk override. See [Diff View](13-Diff-View).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -199,7 +199,7 @@ opens_directory = true
 
 ## `[[services.custom]]` / `[[services.systemd]]`
 
-Non-container services. See [Non Container Services](Non-Container-Services).
+Non-container services. See [Non Container Services](07-Non-Container-Services).
 
 ```toml
 [[services.custom]]
@@ -219,7 +219,7 @@ scope = "user"                     # "user" (default) | "system"
 
 ## `[agents]` and `[[agents.sources]]`
 
-Upstream-sourced agent instructions. See [Agents](Agents).
+Upstream-sourced agent instructions. See [Agents](10-Agents).
 
 | `[agents]` | Type | Default | Notes |
 |---|---|---|---|
@@ -255,7 +255,7 @@ relocate = ".claude/skills/security-review.upstream.md"
 
 ## `[ui]`
 
-Optional TUI customisation. See [TUI](TUI).
+Optional TUI customisation. See [TUI](12-TUI).
 
 ```toml
 [ui]

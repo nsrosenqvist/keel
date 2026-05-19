@@ -4,7 +4,7 @@ Every `ampelos <subcommand>` and its flags. Source of truth:
 [`src/cli/app.rs`](https://github.com/nsrosenqvist/ampelos/blob/main/src/cli/app.rs).
 Anything not matched by an explicit subcommand falls through to
 recipe / script resolution, then to compose passthrough — see
-[Recipes and Scripts](Recipes-and-Scripts).
+[Recipes and Scripts](03-Recipes-and-Scripts).
 
 ## Global flags
 
@@ -16,7 +16,7 @@ recipe / script resolution, then to compose passthrough — see
 
 ## `ampelos` (no subcommand)
 
-Bare invocation opens the [TUI dashboard](TUI). With a name and
+Bare invocation opens the [TUI dashboard](12-TUI). With a name and
 args, resolves the name as: built-in → recipe → script → compose
 passthrough → service exec → unknown.
 
@@ -42,7 +42,7 @@ post-merge git hooks.
 
 Validate config + backend availability + env files + non-container
 service status. Exits non-zero on any failure. See
-[Troubleshooting](Troubleshooting).
+[Troubleshooting](19-Troubleshooting).
 
 ## `ampelos init [--template <NAME>]`
 
@@ -68,7 +68,7 @@ hand-curated scaffold. Valid names: `laravel`, `rails`, `node`,
 ## `ampelos install [<step>] [flags]`
 
 Run the install plan (`.ampelos/install/*` + `[install].steps`). See
-[Install Flow](Install-Flow). With a positional `<step>`, runs
+[Install Flow](11-Install-Flow). With a positional `<step>`, runs
 that step alone.
 
 | Flag | Notes |
@@ -81,7 +81,7 @@ that step alone.
 
 ## `ampelos ui`
 
-Open the [TUI dashboard](TUI) explicitly (same as bare `ampelos`
+Open the [TUI dashboard](12-TUI) explicitly (same as bare `ampelos`
 with no args).
 
 ## `ampelos shell [--service <name>]`
@@ -93,7 +93,7 @@ Drop into an interactive shell.
 | (none) | Enter the project's devcontainer. Requires `[devcontainer] enabled = true`. Ensures the container is up first. |
 | `--service <name>` | Enter the named compose service (`docker compose exec -it <name>`). Independent of devcontainer config. |
 
-See [Devcontainer](Devcontainer).
+See [Devcontainer](06-Devcontainer).
 
 ## `ampelos hooks <action>`
 
@@ -103,7 +103,7 @@ See [Devcontainer](Devcontainer).
 | `uninstall [--stages s1,s2]` | Remove ampelos-managed shims; default: every known stage. |
 | `run <stage>` | Run hooks for `<stage>`. Used by the installed shims. |
 
-See [Hooks](Hooks).
+See [Hooks](09-Hooks).
 
 ## `ampelos agents <action>`
 
@@ -114,7 +114,7 @@ See [Hooks](Hooks).
 | `status [--strict]` | Per-source pinned rev + per-file drift. `--strict` exits non-zero on drift. |
 | `diff` | Print actions a fresh apply would take. |
 
-See [Agents](Agents).
+See [Agents](10-Agents).
 
 ## `ampelos watch <recipe> [args...] [flags]`
 
@@ -125,7 +125,7 @@ Re-run `<recipe>` whenever watched files change.
 | `--path <PATH>` | Path to watch. Repeat for multiple. Default: project root. |
 | `--debounce-ms <MS>` | Debounce window. Default: 300. |
 
-See [Watch](Watch).
+See [Watch](14-Watch).
 
 ## `ampelos worktree <action>`
 
@@ -135,13 +135,13 @@ See [Watch](Watch).
 | `list` | Every git worktree + computed offset, with collision warnings. |
 | `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.ampelos/local.toml`. |
 
-See [Worktrees](Worktrees).
+See [Worktrees](08-Worktrees).
 
 ## `ampelos lib <action>`
 
 Interactive prompt helpers callable from any shell script. Prompt to
 stderr, answer to stdout. Non-tty invocations honour `--default`.
-See [Shell Library](Shell-Library).
+See [Shell Library](15-Shell-Library).
 
 | Action | Signature |
 |---|---|

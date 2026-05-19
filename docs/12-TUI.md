@@ -18,7 +18,7 @@ under `.ampelos/commands/`.
 
 - **`↑` / `↓`** — move the selection.
 - **`Enter`** — run a recipe / focus a service.
-- **`G`** — open the branch [Diff View](Diff-View).
+- **`G`** — open the branch [Diff View](13-Diff-View).
 - **`W`** — switch worktrees.
 - **`q`** — quit.
 
@@ -59,11 +59,11 @@ Select it in the sidebar and press a lifecycle key:
 | `D` | Down (compose only). |
 
 Same keys for `[[services.systemd]]` and `[[services.custom]]`
-backends — see [Non-Container Services](Non-Container-Services).
+backends — see [Non-Container Services](07-Non-Container-Services).
 
 ### See what's changed in your branch
 
-`G` opens the [Diff View](Diff-View) — every file that differs
+`G` opens the [Diff View](13-Diff-View) — every file that differs
 from your trunk's merge-base, with hunk navigation and edit /
 lazygit handoff.
 
@@ -79,7 +79,7 @@ lazygit handoff.
   `git worktree add -b`.
 
 The path field auto-fills as `<parent>/<slug>`; Tab into it for
-a manual override. See [Worktrees](Worktrees).
+a manual override. See [Worktrees](08-Worktrees).
 
 ### Pin a recipe to a single-key shortcut
 
@@ -101,7 +101,7 @@ name        = "test"
 restart_on  = ["src/**", "tests/**"]
 ```
 
-Same engine as `ampelos watch` — see [Watch](Watch).
+Same engine as `ampelos watch` — see [Watch](14-Watch).
 
 ### Add a long-running watcher pane
 
@@ -224,7 +224,7 @@ service list changes.
 
 | Key | Action |
 |---|---|
-| `G` | Open the [Diff View](Diff-View). |
+| `G` | Open the [Diff View](13-Diff-View). |
 | `W` | Open the worktree switcher modal. |
 | `E` | Open the worktree root in your editor (when the editor handles directories — see below). |
 
@@ -275,8 +275,8 @@ show up immediately.
 
 ## See also
 
-- [Diff View](Diff-View) — `G` view's trunk resolution.
-- [Watch](Watch) — the standalone `ampelos watch` command uses the
+- [Diff View](13-Diff-View) — `G` view's trunk resolution.
+- [Watch](14-Watch) — the standalone `ampelos watch` command uses the
   same engine as `restart_on` panes.
-- [Worktrees](Worktrees) — what `W` switches between.
+- [Worktrees](08-Worktrees) — what `W` switches between.
 - [Configuration Reference: `[editor]`](Configuration-Reference#editor).

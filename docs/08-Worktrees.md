@@ -224,9 +224,9 @@ wins.
 
 ## See also
 
-- [Environments](Environments) — `base + offset` lives there;
+- [Environments](04-Environments) — `base + offset` lives there;
   this page covers the offset source.
-- [Hooks](Hooks) — `post-checkout` / `post-merge` auto-wiring for
+- [Hooks](09-Hooks) — `post-checkout` / `post-merge` auto-wiring for
   the dotenv writer.
-- [TUI](TUI) — the `W` worktree switcher modal.
+- [TUI](12-TUI) — the `W` worktree switcher modal.
 - [Configuration Reference: `[worktrees]`](Configuration-Reference#worktrees).

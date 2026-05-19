@@ -97,7 +97,7 @@ explicitly.
 ### Environment variables provided to scripts
 
 Every `.ampelos/commands/<name>` script runs with two extra env vars
-set by ampelos, on top of the resolved [Environments](Environments)
+set by ampelos, on top of the resolved [Environments](04-Environments)
 layers:
 
 | Var | Value |
@@ -152,7 +152,7 @@ resolver tries:
 
 - [Configuration Reference](Configuration-Reference#commandname-recipes)
   for the recipe schema in full.
-- [Commands Reference](Commands-Reference) for the built-in
+- [Commands Reference](17-Commands-Reference) for the built-in
   subcommands you can't override.
-- [Environments](Environments) for how recipe `env` interacts
+- [Environments](04-Environments) for how recipe `env` interacts
   with `.env` files and `[env]` arithmetic.
