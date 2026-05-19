@@ -108,6 +108,8 @@ jobs:
         uses: nsrosenqvist/chronikl@v1.1.0
         with:
           output: release_notes.md
+          voice: prose
+          rich_context: 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHRONIKL_PROVIDER: github-models
