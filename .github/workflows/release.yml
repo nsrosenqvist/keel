@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 jobs:
   build:
@@ -103,31 +104,14 @@ jobs:
           cd artifacts
           sha256sum *.tar.gz > SHA256SUMS
 
-      - name: Build changelog
-        id: changelog
-        run: |
-          # Find the previous tag (excluding floating major/minor tags like v0, v0.2)
-          PREV_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname \
-            | grep -v "^${GITHUB_REF_NAME}$" | head -n 1)
-
-          if [ -n "$PREV_TAG" ]; then
-            RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"
-            DIFF_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${GITHUB_REF_NAME}"
-          else
-            RANGE="${GITHUB_REF_NAME}"
-            DIFF_URL=""
-          fi
-
-          {
-            echo "## What's Changed"
-            echo ""
-            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges
-            echo ""
-            if [ -n "$DIFF_URL" ]; then
-              echo ""
-              echo "**Full Changelog**: ${DIFF_URL}"
-            fi
-          } > release_notes.md
+      - name: Generate release notes
+        uses: nsrosenqvist/chronikl@v1.1.0
+        with:
+          output: release_notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHRONIKL_PROVIDER: github-models
+          CHRONIKL_MODEL: openai/gpt-4o-mini
 
       - name: Create release
         uses: softprops/action-gh-release@v2
