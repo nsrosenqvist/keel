@@ -1,9 +1,9 @@
 ---
-name: ampelos-doctor
+name: croft-doctor
 description: Run the project doctor and surface any failing checks.
 ---
 
-Run `ampelos doctor` and report:
+Run `croft doctor` and report:
 
 - Backend availability (compose / podman / docker / none)
 - Recipe / script discovery

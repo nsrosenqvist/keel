@@ -1,7 +1,7 @@
 # Example: hooks
 
 Git hook configuration end to end. Native `[hooks]` recipes from
-`ampelos.toml` plus a `.pre-commit-config.yaml` mixing `repo: local`
+`croft.toml` plus a `.pre-commit-config.yaml` mixing `repo: local`
 hooks and an external repo at a pinned tag — all run by the same
 installed shim.
 
@@ -19,7 +19,7 @@ git add -A && git commit -q -m "seed"
 ## Install the shims
 
 ```sh
-ampelos hooks install
+croft hooks install
 ```
 
 Writes `.git/hooks/pre-commit` (and any other stages you declare).
@@ -27,21 +27,21 @@ Each shim is a one-liner:
 
 ```sh
 #!/usr/bin/env sh
-# managed by ampelos
-exec ampelos hooks run pre-commit "$@"
+# managed by croft
+exec croft hooks run pre-commit "$@"
 ```
 
-Existing non-ampelos hooks at the same path are left alone — the
+Existing non-croft hooks at the same path are left alone — the
 installer refuses to overwrite a foreign hook with a clear error.
 Move your old hook aside (e.g. `.git/hooks/pre-commit.bak`) and
-rerun `ampelos hooks install`.
+rerun `croft hooks install`.
 
 ## What runs on `git commit`
 
 For the `pre-commit` stage, the installed shim runs (in order):
 
-1. **Native ampelos hooks** from `[hooks.pre-commit]` in
-   `ampelos.toml`. In this example: `check`, which expands to
+1. **Native croft hooks** from `[hooks.pre-commit]` in
+   `croft.toml`. In this example: `check`, which expands to
    `fmt` then `lint`.
 2. **`.pre-commit-config.yaml` hooks** whose stages include
    `pre-commit`. In this example: `trim-trailing-ws`,
@@ -57,15 +57,15 @@ The first invocation clones
 `https://github.com/pre-commit/pre-commit-hooks` at `v4.5.0` into:
 
 ```
-.ampelos/cache/hooks/<slug(url)-v4.5.0>/clone/
-.ampelos/cache/hooks/<slug(url)-v4.5.0>/meta.json
+.croft/cache/hooks/<slug(url)-v4.5.0>/clone/
+.croft/cache/hooks/<slug(url)-v4.5.0>/meta.json
 ```
 
 Subsequent runs reuse the cache. To force a refresh (e.g. when an
 upstream moves a tag):
 
 ```sh
-ampelos install --update-hooks
+croft install --update-hooks
 ```
 
 ## Try the manual run path
@@ -73,7 +73,7 @@ ampelos install --update-hooks
 You can run hooks without going through git:
 
 ```sh
-ampelos hooks run pre-commit
+croft hooks run pre-commit
 ```
 
 Same execution as the installed shim invokes. Useful for debugging
@@ -82,10 +82,10 @@ which hook fails.
 ## Uninstall
 
 ```sh
-ampelos hooks uninstall
+croft hooks uninstall
 ```
 
-Removes only ampelos-managed shims (identified by the marker
+Removes only croft-managed shims (identified by the marker
 comment). Foreign hooks at the same paths are left alone.
 
 ## Errors you can trip on purpose
@@ -98,9 +98,9 @@ Add an unsupported language to `.pre-commit-config.yaml`:
   entry: flake8
 ```
 
-`ampelos hooks install` errors with:
+`croft hooks install` errors with:
 
-> hook `flake8` uses language `python`; ampelos runs only `system`
+> hook `flake8` uses language `python`; croft runs only `system`
 > / `script` hooks. Use a wrapper script with `language: script`,
 > or a tool already on PATH with `language: system`.
 
@@ -111,6 +111,6 @@ Same shape for `repo: meta` (pre-commit's built-in hooks like
 
 - [Hooks](../../docs/Hooks.md) — the full subsystem doc.
 - [Configuration Reference: `[hooks]`](../../docs/Configuration-Reference.md#hooks).
-- [Install Flow](../../docs/Install-Flow.md) — `ampelos install`
+- [Install Flow](../../docs/Install-Flow.md) — `croft install`
   bundles a synthetic `install-hooks` step that does the same job
-  as the manual `ampelos hooks install` command above.
+  as the manual `croft hooks install` command above.

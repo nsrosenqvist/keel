@@ -1,5 +1,5 @@
 //! Detector trait + the fragment vocabulary detectors contribute to the
-//! generated `ampelos.toml`.
+//! generated `croft.toml`.
 //!
 //! Each detector is a zero-sized struct implementing [`Detector`] and lives
 //! in `detectors/<ecosystem>.rs`. The orchestration in [`super::run`] walks

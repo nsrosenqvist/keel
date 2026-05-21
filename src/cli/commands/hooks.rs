@@ -1,9 +1,9 @@
-//! `ampelos hooks <subcommand>` — install / run / uninstall git hooks.
+//! `croft hooks <subcommand>` — install / run / uninstall git hooks.
 //!
 //! The CLI orchestrates two sources of hook logic, both running on the
 //! same [`Executor`]:
 //!
-//! - Native ampelos hooks declared in `ampelos.toml` `[hooks.<stage>]` — these
+//! - Native croft hooks declared in `croft.toml` `[hooks.<stage>]` — these
 //!   run as recipes through the executor's recipe runner, picking up
 //!   each recipe's `in = "<service>"` routing for free.
 //! - `.pre-commit-config.yaml` hooks — parsed by `crate::hooks` and run
@@ -33,7 +33,7 @@ pub async fn install(config: &Config, project_root: &Path, stages: &[String]) ->
     Ok(())
 }
 
-/// Default stages for `ampelos hooks install` (no `--stages`):
+/// Default stages for `croft hooks install` (no `--stages`):
 /// always includes `pre-commit`; adds `post-checkout` and
 /// `post-merge` when `[worktrees] dotenv` is set so the file stays
 /// fresh after branch switches even when the user runs Docker
@@ -56,7 +56,7 @@ pub async fn uninstall(project_root: &Path, stages: &[String]) -> Result<()> {
     let removed = installer::uninstall(project_root, &stages_ref)
         .with_context(|| format!("uninstall hooks under {}", project_root.display()))?;
     if removed.is_empty() {
-        println!("No ampelos-managed hooks to remove.");
+        println!("No croft-managed hooks to remove.");
     } else {
         for path in removed {
             println!("Removed {}", path.display());
@@ -69,17 +69,17 @@ pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Resu
     let mut overall: i32 = 0;
     let executor = build_hook_executor(config, project_root).await?;
 
-    // 1. Native ampelos hooks.
+    // 1. Native croft hooks.
     let native_hooks = config.hooks.for_stage(stage);
     if !native_hooks.is_empty() {
         for name in native_hooks {
-            println!("[ampelos] {name}");
+            println!("[croft] {name}");
             let code = executor.run_recipe(name, &[]).await?;
             if code != 0 && overall == 0 {
                 overall = code;
             }
             if code != 0 {
-                eprintln!("[ampelos] {name}: failed (exit {code})");
+                eprintln!("[croft] {name}: failed (exit {code})");
                 break; // mirror pre-commit's stop-on-first-failure behaviour
             }
         }
@@ -110,7 +110,7 @@ pub async fn run(config: &Arc<Config>, project_root: &Path, stage: &str) -> Resu
         // surface that as the actual work — not claim "nothing
         // happened".
         if dotenv_stage_handled(config, stage) {
-            println!("[ampelos] refreshed dotenv for stage `{stage}`");
+            println!("[croft] refreshed dotenv for stage `{stage}`");
         } else {
             println!("(no hooks configured for stage `{stage}`)");
         }
@@ -152,7 +152,7 @@ async fn build_backend_or_null(config: &Config) -> Arc<dyn Backend> {
     }
 }
 
-/// Build the [`Executor`] used for both native ampelos hooks and
+/// Build the [`Executor`] used for both native croft hooks and
 /// `.pre-commit-config.yaml` dispatch. Detects the container backend
 /// and attaches the devcontainer routing when `[devcontainer]
 /// enabled = true` so a hook without explicit `in =` lands in the

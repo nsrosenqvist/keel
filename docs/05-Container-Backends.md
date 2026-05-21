@@ -1,21 +1,21 @@
 # Container Backends
 
-If your project uses Docker Compose, ampelos works out of the box —
+If your project uses Docker Compose, croft works out of the box —
 detect services, exec into them, run `compose ps` / `logs` /
-`build` through `ampelos`. If you use plain Docker, Podman, or no
-containers at all, flip one setting in `ampelos.toml` and keep
+`build` through `croft`. If you use plain Docker, Podman, or no
+containers at all, flip one setting in `croft.toml` and keep
 going. The recipe surface (`in = "<service>"`, lifecycle keymaps,
 etc.) doesn't change.
 
 ## Quickstart
 
-For a typical compose project, you don't need any config — ampelos
+For a typical compose project, you don't need any config — croft
 picks Compose by default and auto-discovers your services.
 
 ```sh
-ampelos ps              # → docker compose ps
-ampelos logs app        # → docker compose logs app
-ampelos app php -v      # → docker compose exec app php -v
+croft ps              # → docker compose ps
+croft logs app        # → docker compose logs app
+croft app php -v      # → docker compose exec app php -v
 ```
 
 Routing a recipe into a service is one line:
@@ -26,7 +26,7 @@ in   = "app"
 run  = "composer test"
 ```
 
-`ampelos test` runs `composer test` inside the `app` service after
+`croft test` runs `composer test` inside the `app` service after
 a status preflight.
 
 ## Mental model
@@ -39,8 +39,8 @@ a status preflight.
   that container service." Without it, the recipe runs on the
   host (or inside the devcontainer if that's enabled — see
   [Devcontainer](06-Devcontainer)).
-- **Passthrough fills the gaps.** If you type `ampelos <name>` and
-  the name isn't a recipe / script, ampelos tries it as a compose
+- **Passthrough fills the gaps.** If you type `croft <name>` and
+  the name isn't a recipe / script, croft tries it as a compose
   subcommand (`docker compose <name>`) and then as a service exec
   shortcut (`docker compose exec <name>`). Both are on by
   default; either can be turned off when they collide with
@@ -83,8 +83,8 @@ Recipes without explicit `in =` fall back to `default_service`.
 Service passthrough lets you skip writing a recipe for one-offs:
 
 ```sh
-ampelos app php -v      # → docker compose exec app php -v
-ampelos db psql -U pg   # → docker compose exec db psql -U pg
+croft app php -v      # → docker compose exec app php -v
+croft db psql -U pg   # → docker compose exec db psql -U pg
 ```
 
 ### Switch to podman or plain docker
@@ -105,13 +105,13 @@ backend = "none"
 ```
 
 Compose preflight is skipped. Useful when `[[services.custom]]`
-or `[[services.systemd]]` covers your stack — ampelos still manages
+or `[[services.systemd]]` covers your stack — croft still manages
 their lifecycle and shows them in the TUI. See
 [Non-Container Services](07-Non-Container-Services).
 
 ### Stop a recipe name from being shadowed
 
-If you have a recipe called `up` and don't want `ampelos up` to fall
+If you have a recipe called `up` and don't want `croft up` to fall
 through to `docker compose up`:
 
 ```toml
@@ -129,7 +129,7 @@ service_passthrough = false
 ### Verify the backend is reachable
 
 ```sh
-ampelos doctor
+croft doctor
 ```
 
 Reports the active backend, whether its CLI is on `PATH`, and
@@ -158,10 +158,10 @@ service_passthrough = true
 ```
 
 - `default_service` — recipes without `in =` use this.
-- `compose_passthrough` — when on, `ampelos <name>` falls through to
+- `compose_passthrough` — when on, `croft <name>` falls through to
   `docker compose <name>` for unknown names. Set `false` to make
   recipe names absolute.
-- `service_passthrough` — when on, `ampelos <name>` falls through to
+- `service_passthrough` — when on, `croft <name>` falls through to
   `docker compose exec <name>` if `<name>` matches a compose
   service. Set `false` to make service names absolute.
 

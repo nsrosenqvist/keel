@@ -1,8 +1,8 @@
 # Devcontainer
 
-ampelos can route terminal sessions and host-targeted recipes into a
+croft can route terminal sessions and host-targeted recipes into a
 project's [devcontainer](https://containers.dev/) instead of running
-them on the host. The feature is **opt-in**: ampelos ignores
+them on the host. The feature is **opt-in**: croft ignores
 `devcontainer.json` until you flip it on.
 
 ```toml
@@ -12,7 +12,7 @@ enabled = true
 # path = ".devcontainer/devcontainer.json"
 ```
 
-When enabled, ampelos auto-detects `.devcontainer/devcontainer.json`
+When enabled, croft auto-detects `.devcontainer/devcontainer.json`
 first, then `.devcontainer.json`. Use `path` to point at a custom
 location (e.g. when you keep multiple variants in one repo).
 
@@ -23,8 +23,8 @@ location (e.g. when you keep multiple variants in one repo).
 | TUI `n` / new shell | `$SHELL` on host | `docker exec` into devcontainer |
 | Recipe without `in =` | host fork | runs inside devcontainer |
 | Recipe with `in = "<svc>"` | unchanged | unchanged |
-| `ampelos shell` | (no command) | enters devcontainer |
-| `ampelos shell --service app` | (no command) | enters compose service `app` (devcontainer toggle irrelevant) |
+| `croft shell` | (no command) | enters devcontainer |
+| `croft shell --service app` | (no command) | enters compose service `app` (devcontainer toggle irrelevant) |
 
 Existing routing for `in = "<service>"` is **unaffected**. Devcontainer
 and compose services are different targets: the compose backend keeps
@@ -33,7 +33,7 @@ workspace shell. They coexist.
 
 ## Supported `devcontainer.json` fields (v1)
 
-ampelos parses a subset of the spec — enough for the most common
+croft parses a subset of the spec — enough for the most common
 "isolated workspace image" pattern:
 
 - `name`
@@ -42,7 +42,7 @@ ampelos parses a subset of the spec — enough for the most common
 - `runArgs` (passed through to `docker run`; privilege-escalating
   entries log a warning)
 - `containerEnv` (baked in at `docker run`)
-- `remoteEnv` (merged on top of ampelos recipe env at `docker exec`)
+- `remoteEnv` (merged on top of croft recipe env at `docker exec`)
 - `remoteUser`
 
 Comments and trailing commas in the JSON are accepted (the file
@@ -50,7 +50,7 @@ format is JSONC).
 
 ### Unsupported / rejected
 
-- `dockerComposeFile` — **rejected** with an error. Use ampelos's
+- `dockerComposeFile` — **rejected** with an error. Use croft's
   existing `runtime.backend = "compose"` instead, and route
   recipes to your dev service with `in = "<service>"`. The two
   approaches solve the same problem; reimplementing
@@ -61,39 +61,39 @@ format is JSONC).
 
 ## Lifecycle
 
-ampelos owns the container's lifecycle: there's no separate "up" step
+croft owns the container's lifecycle: there's no separate "up" step
 to run.
 
-1. **First use** (TUI `n` press, recipe run, `ampelos shell`):
+1. **First use** (TUI `n` press, recipe run, `croft shell`):
    - For `build` mode, build the image and tag it
-     `ampelos-devcontainer-<project>:<sha>`, where `<sha>` is a hash
+     `croft-devcontainer-<project>:<sha>`, where `<sha>` is a hash
      of the dockerfile + build args. Skipped if the tag already
      exists.
    - `docker run -d` the container with `--name
-     ampelos-devcontainer-<project>[-<worktree>]`, the workspace
+     croft-devcontainer-<project>[-<worktree>]`, the workspace
      bind-mounted to `workspaceFolder`, and the devcontainer's
      `containerEnv` + `remoteUser` applied. Keep-alive command: a
      portable infinite `sleep` loop.
 2. **Subsequent uses**: `docker exec -it <name> ...`. If the
-   container is stopped, ampelos `docker start`s it first.
+   container is stopped, croft `docker start`s it first.
 
 To rebuild after editing the Dockerfile or build args, change a
-build input — the hash changes, ampelos detects the missing tag, and
+build input — the hash changes, croft detects the missing tag, and
 rebuilds. To rebuild without changing inputs:
 
 ```sh
-docker rm -f ampelos-devcontainer-<project>
-docker image rm ampelos-devcontainer-<project>:<tag>
+docker rm -f croft-devcontainer-<project>
+docker image rm croft-devcontainer-<project>:<tag>
 ```
 
 ## Worktree isolation
 
 Each git worktree gets its own devcontainer.
 
-- Container name: `ampelos-devcontainer-<project-slug>-<worktree-slug>`
+- Container name: `croft-devcontainer-<project-slug>-<worktree-slug>`
 - Bind mount: the worktree's own root → `workspaceFolder`
-- Labels: `ampelos.devcontainer.root=<absolute path>`,
-  `ampelos.devcontainer.worktree=<slug>`
+- Labels: `croft.shcontainer.root=<absolute path>`,
+  `croft.shcontainer.worktree=<slug>`
 
 This mirrors `WorktreesConfig::isolate_compose` for the compose
 backend. Two worktrees of the same project can be running
@@ -101,7 +101,7 @@ side-by-side, each with an independent container.
 
 ## Doctor
 
-`ampelos doctor` reports the active devcontainer setup (config path,
+`croft doctor` reports the active devcontainer setup (config path,
 dockerfile presence, container name → image → workspace folder) and
 warns on privilege-escalating `runArgs`. The check is skipped
 entirely when `[devcontainer] enabled = false`.

@@ -1,14 +1,14 @@
-//! Upstream `ampelos-agents.toml` manifest types.
+//! Upstream `croft-agents.toml` manifest types.
 //!
 //! Each upstream repo declares which of its files map to which paths
 //! in the downstream project, plus an optional `mode` toggle that
-//! relaxes ampelos's normal whole-file ownership for seed files.
+//! relaxes croft's normal whole-file ownership for seed files.
 
 use crate::agents::error::AgentsError;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-/// Wire form of `ampelos-agents.toml`.
+/// Wire form of `croft-agents.toml`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamManifest {
@@ -130,7 +130,7 @@ mod tests {
             src  = "skills/"
             dest = ".claude/skills/"
         "#;
-        let m = parse_manifest(Path::new("ampelos-agents.toml"), raw).unwrap();
+        let m = parse_manifest(Path::new("croft-agents.toml"), raw).unwrap();
         assert_eq!(m.files.len(), 1);
         assert_eq!(m.dirs.len(), 1);
         assert_eq!(m.files[0].mode, FileMode::Replace);

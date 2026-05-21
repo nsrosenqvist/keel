@@ -3,18 +3,18 @@
 //! Given a name typed at the CLI, decide which dispatch path it follows.
 //! Resolution is a pure function of the loaded [`Config`] plus a list of
 //! known compose services and on-disk script names. Side-effect-free, so
-//! it's the same in `ampelos which`, `ampelos --explain`, and the TUI palette.
+//! it's the same in `croft which`, `croft --explain`, and the TUI palette.
 
 use crate::config::Config;
 
 /// The dispatch decision for a typed command name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution<'a> {
-    /// Built-in ampelos subcommand (handled by the CLI before reaching here).
+    /// Built-in croft subcommand (handled by the CLI before reaching here).
     Builtin(&'static str),
-    /// User-defined recipe in `ampelos.toml`.
+    /// User-defined recipe in `croft.toml`.
     Recipe(&'a str),
-    /// Script under `.ampelos/commands/<name>` (or `<name>.sh`).
+    /// Script under `.croft/commands/<name>` (or `<name>.sh`).
     Script(&'a str),
     /// Pass remaining args through to `compose <name> ...`.
     ComposePassthrough(&'a str),

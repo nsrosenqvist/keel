@@ -1,33 +1,33 @@
 # Getting Started
 
-This page takes you from "no ampelos" to "first recipe + first
+This page takes you from "no croft" to "first recipe + first
 hook + open dashboard" in under five minutes. After that, the
 [Quick Tour](02-Quick-Tour) shows the rest of the surface.
 
 ## 1. Install
 
-ampelos is a single Rust binary. Three install paths:
+croft is a single Rust binary. Three install paths:
 
 ### Homebrew (macOS / Linux)
 
 ```sh
-brew install nsrosenqvist/ampelos/ampelos
+brew install nsrosenqvist/croft/croft
 ```
 
 ### From a clone (any platform)
 
 ```sh
-git clone https://github.com/nsrosenqvist/ampelos
-cd ampelos
+git clone https://github.com/nsrosenqvist/croft
+cd croft
 cargo install --path .
 ```
 
-The binary is named `ampelos` and lands in `~/.cargo/bin/`.
+The binary is named `croft` and lands in `~/.cargo/bin/`.
 
 ### Once published to crates.io
 
 ```sh
-cargo install ampelos
+cargo install croft
 ```
 
 (Not yet on crates.io. Track the project README for the publish
@@ -36,18 +36,18 @@ announcement.)
 ### Verify
 
 ```sh
-ampelos --version
+croft --version
 ```
 
-## 2. Generate a starter `ampelos.toml`
+## 2. Generate a starter `croft.toml`
 
 Inside any project directory:
 
 ```sh
-ampelos init
+croft init
 ```
 
-This drops a `ampelos.toml` at the project root and walks a registry of
+This drops a `croft.toml` at the project root and walks a registry of
 ecosystem detectors against the directory. Each detector contributes
 to the generated file:
 
@@ -74,7 +74,7 @@ hand-curated stack scaffold instead (`laravel`, `rails`, `node`,
 
 ## 3. Define your first recipe
 
-Edit `ampelos.toml` to add a recipe for a command you actually run:
+Edit `croft.toml` to add a recipe for a command you actually run:
 
 ```toml
 [command.up]
@@ -94,16 +94,16 @@ tty  = true
 Run them:
 
 ```sh
-ampelos up
-ampelos shell
+croft up
+croft shell
 ```
 
-`ampelos list` (or `ampelos ls`) shows every recipe and script, with
+`croft list` (or `croft ls`) shows every recipe and script, with
 their descriptions.
 
 ## 4. Install your first git hook
 
-Add `[hooks]` to `ampelos.toml`:
+Add `[hooks]` to `croft.toml`:
 
 ```toml
 [command.check]
@@ -123,10 +123,10 @@ pre-commit = ["check"]
 Then:
 
 ```sh
-ampelos hooks install
+croft hooks install
 ```
 
-This writes `.git/hooks/pre-commit` as a shim that runs `ampelos
+This writes `.git/hooks/pre-commit` as a shim that runs `croft
 hooks run pre-commit`. Try it: `git commit` triggers `check`
 automatically. See [Hooks](09-Hooks) for the full model
 (including `.pre-commit-config.yaml` compatibility).
@@ -134,10 +134,10 @@ automatically. See [Hooks](09-Hooks) for the full model
 ## 5. Open the dashboard
 
 ```sh
-ampelos
+croft
 ```
 
-Bare `ampelos` opens the [TUI](12-TUI): a sidebar of every recipe,
+Bare `croft` opens the [TUI](12-TUI): a sidebar of every recipe,
 script, and service; an output pane for whatever's selected; service
 lifecycle keymaps; a built-in [diff view](13-Diff-View) (`G`); a
 [worktree switcher](Worktrees#tui-worktree-switcher-w) (`W`).
@@ -148,8 +148,8 @@ lifecycle keymaps; a built-in [diff view](13-Diff-View) (`G`); a
   through every major feature.
 - **Schema reference** →
   [Configuration Reference](16-Configuration-Reference) for
-  every `ampelos.toml` key.
+  every `croft.toml` key.
 - **Real projects** → [Examples](18-Examples) — runnable
   configurations under `examples/`.
-- **Stuck?** → [Troubleshooting](19-Troubleshooting) — `ampelos
+- **Stuck?** → [Troubleshooting](19-Troubleshooting) — `croft
   doctor` and common pitfalls.

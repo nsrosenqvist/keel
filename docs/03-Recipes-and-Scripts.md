@@ -1,12 +1,12 @@
 # Recipes and Scripts
 
-ampelos gives you two ways to define a command. Use whichever shape
+croft gives you two ways to define a command. Use whichever shape
 matches the command's complexity — they coexist, neither shadows the
 other, and resolution is deterministic.
 
 ## Recipes (`[command.<name>]`)
 
-Declarative TOML in `ampelos.toml`. Best for one-liners and small
+Declarative TOML in `croft.toml`. Best for one-liners and small
 sequences.
 
 ```toml
@@ -42,7 +42,7 @@ after a status preflight. Absent → host. `tty = true` allocates a
 TTY (required for shells, irrelevant for pure-stdout commands).
 
 `forward_args = true` appends the trailing CLI args to the command:
-`ampelos test --filter Login` → `composer test --filter Login`.
+`croft test --filter Login` → `composer test --filter Login`.
 
 ### Profiles
 
@@ -59,15 +59,15 @@ forward_args = true
 env = { XDEBUG_MODE = "off" }
 ```
 
-`ampelos --profile ci test --testdox` runs `composer test --testdox`
+`croft --profile ci test --testdox` runs `composer test --testdox`
 with `tty = false` and the override env.
 
-## Scripts (`.ampelos/commands/`)
+## Scripts (`.croft/commands/`)
 
 Plain shell files — anything that grows past one or two lines.
 
 ```sh
-# .ampelos/commands/seed
+# .croft/commands/seed
 #!/usr/bin/env bash
 # @desc: Seed the database with development data
 # @in: app
@@ -77,7 +77,7 @@ php artisan migrate:fresh
 php artisan db:seed
 ```
 
-ampelos scans `.ampelos/commands/` at load time. The optional `# @key:
+croft scans `.croft/commands/` at load time. The optional `# @key:
 value` frontmatter (terminated by the first non-`# @` line) sets the
 same fields you'd put in a `[command.*]` recipe:
 
@@ -96,14 +96,14 @@ explicitly.
 
 ### Environment variables provided to scripts
 
-Every `.ampelos/commands/<name>` script runs with two extra env vars
-set by ampelos, on top of the resolved [Environments](04-Environments)
+Every `.croft/commands/<name>` script runs with two extra env vars
+set by croft, on top of the resolved [Environments](04-Environments)
 layers:
 
 | Var | Value |
 |---|---|
-| `AMPELOS_PROJECT_DIR` | Host path to the worktree project root. |
-| `AMPELOS_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+| `CROFT_PROJECT_DIR` | Host path to the worktree project root. |
+| `CROFT_SCRIPT_DIR`  | Host path to the script file's parent directory. |
 
 Both are **host-side paths** even when the script runs inside a
 service (`@in:`) or devcontainer — convenient on the host,
@@ -117,7 +117,7 @@ sibling helper:
 ```sh
 #!/usr/bin/env bash
 set -euo pipefail
-source "$AMPELOS_SCRIPT_DIR/_lib.sh"
+source "$CROFT_SCRIPT_DIR/_lib.sh"
 ```
 
 Recipes (`[command.<name>]`) don't receive these vars — they're a
@@ -135,18 +135,18 @@ collision.
 
 ## Resolution order
 
-When you run `ampelos <name> [args...]` (no explicit subcommand), the
+When you run `croft <name> [args...]` (no explicit subcommand), the
 resolver tries:
 
 1. Built-in subcommand (e.g. `list`, `doctor`).
 2. `[command.<name>]` recipe.
-3. `.ampelos/commands/<name>` script.
+3. `.croft/commands/<name>` script.
 4. `<name>` as a docker-compose subcommand (passthrough), if
    `[runtime].compose_passthrough = true`.
 5. `<name>` as a compose service name (exec into it), if
    `[runtime].service_passthrough = true`.
 
-`ampelos which <name>` prints which slot resolved.
+`croft which <name>` prints which slot resolved.
 
 ## See also
 

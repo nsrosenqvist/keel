@@ -4,9 +4,9 @@
 # universally supported across BSD/GNU coreutils; trailing `:` makes
 # the step succeed even when there's nothing to copy.
 set -eu
-if [ -f "$AMPELOS_PROJECT_DIR/.env" ]; then
+if [ -f "$CROFT_PROJECT_DIR/.env" ]; then
   echo ".env already exists; nothing to copy."
 else
-  cp "$AMPELOS_PROJECT_DIR/.env.example" "$AMPELOS_PROJECT_DIR/.env"
+  cp "$CROFT_PROJECT_DIR/.env.example" "$CROFT_PROJECT_DIR/.env"
   echo "Created .env from .env.example."
 fi

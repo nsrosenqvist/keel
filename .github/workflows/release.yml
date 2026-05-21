@@ -63,18 +63,18 @@ jobs:
       - name: Build
         # `[profile.release] strip = "symbols"` in the workspace Cargo.toml
         # handles stripping for us, so no separate strip step is needed.
-        run: cargo build --release --target ${{ matrix.target }} --bin ampelos
+        run: cargo build --release --target ${{ matrix.target }} --bin croft
 
       - name: Package
         run: |
-          ARCHIVE="ampelos-${{ matrix.target }}.tar.gz"
-          tar czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" ampelos
+          ARCHIVE="croft-${{ matrix.target }}.tar.gz"
+          tar czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" croft
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ampelos-${{ matrix.target }}
+          name: croft-${{ matrix.target }}
           path: ${{ env.ARCHIVE }}
 
       - name: Upload patched manifest
@@ -138,7 +138,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish ampelos to crates.io
+      - name: Publish croft to crates.io
         # The version in Cargo.toml was patched by the build job and
         # downloaded over the checked-out tree, leaving the working
         # copy dirty — hence --allow-dirty. `cargo publish` is
@@ -156,17 +156,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: nsrosenqvist/homebrew-ampelos
+          repository: nsrosenqvist/homebrew-croft
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update formula
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
-          FORMULA="Formula/ampelos.rb"
+          FORMULA="Formula/croft.rb"
 
           # Download the checksums file from the release
-          curl -sSfL "https://github.com/nsrosenqvist/ampelos/releases/download/${TAG}/SHA256SUMS" -o SHA256SUMS
+          curl -sSfL "https://github.com/nsrosenqvist/croft/releases/download/${TAG}/SHA256SUMS" -o SHA256SUMS
 
           # Extract per-target checksums
           SHA_MACOS_ARM=$(grep 'aarch64-apple-darwin' SHA256SUMS | awk '{print $1}')
@@ -201,9 +201,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ampelos.rb
+          git add Formula/croft.rb
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "ampelos ${GITHUB_REF_NAME}"
+          git commit -m "croft ${GITHUB_REF_NAME}"
           git push
 
   update-floating-tags:
@@ -227,18 +227,18 @@ jobs:
           done
 
   notify-web:
-    # Fires ampelos-web's `release-published` dispatch with the new tag in
+    # Fires croft-web's `release-published` dispatch with the new tag in
     # the payload so the site rebuilds with the current version baked in.
     # Prerelease-gated to match the other publish jobs above.
     needs: [release, build]
     if: needs.build.outputs.is_prerelease != 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger ampelos-web deploy
+      - name: Trigger croft-web deploy
         run: |
           curl -sSf -X POST \
-            -H "Authorization: Bearer ${{ secrets.AMPELOS_WEB_DISPATCH_PAT }}" \
+            -H "Authorization: Bearer ${{ secrets.CROFT_WEB_DISPATCH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/nsrosenqvist/ampelos-web/dispatches \
+            https://api.github.com/repos/nsrosenqvist/croft-web/dispatches \
             -d "{\"event_type\":\"release-published\",\"client_payload\":{\"tag\":\"${GITHUB_REF_NAME}\"}}"

@@ -4,13 +4,13 @@
 //!
 //! Three concerns kept separable:
 //!
-//! - [`manifest`] parses the upstream `ampelos-agents.toml` that
+//! - [`manifest`] parses the upstream `croft-agents.toml` that
 //!   declares which files map to which destinations.
 //! - [`merge`] applies downstream overrides + expands `[[dir]]`
 //!   mappings against the cloned worktree.
-//! - [`mod@apply`] orchestrates cache (via `ampelos::cache`) → manifest →
+//! - [`mod@apply`] orchestrates cache (via `croft::cache`) → manifest →
 //!   merge → drift / collision / shadow checks → file writes,
-//!   maintaining `.ampelos/agents.state.json` along the way.
+//!   maintaining `.croft/agents.state.json` along the way.
 
 pub mod apply;
 pub mod error;

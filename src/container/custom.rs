@@ -4,8 +4,8 @@
 //! status / start / stop / restart command quartet plus an optional
 //! log-tailing command. systemd, brew services, ad-hoc daemons, etc.
 //!
-//! The container crate intentionally does not depend on ampelos-config.
-//! Higher layers (the registry in `ampelos-runtime`) translate
+//! The container crate intentionally does not depend on croft-config.
+//! Higher layers (the registry in `croft-runtime`) translate
 //! `services.custom` and `services.systemd` declarations into
 //! [`CustomEntry`] values and hand them to [`CustomBackend::new`].
 

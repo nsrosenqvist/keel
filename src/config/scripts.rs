@@ -1,6 +1,6 @@
 //! Script-based commands.
 //!
-//! Files under `.ampelos/commands/` become subcommands. Each one carries
+//! Files under `.croft/commands/` become subcommands. Each one carries
 //! optional metadata in a "frontmatter" block of `# @key: value` lines that
 //! appear at the top of the file (after an optional shebang).
 //!
@@ -15,7 +15,7 @@
 //! - `forward-args` / `forward_args` — boolean, append CLI args to the script
 //!
 //! Anything beyond the frontmatter block is the script body and is not
-//! parsed by ampelos. The file is executed verbatim — by the host shell
+//! parsed by croft. The file is executed verbatim — by the host shell
 //! when no `in =` is set, or piped into `<interpreter> -s` inside the
 //! configured service when `in = "<service>"` is set. The interpreter
 //! is determined from the script's shebang (`bash` / `zsh` / `sh`),
@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 ///
 /// The `cwd` / `optional` / `interactive` fields are populated by the
 /// frontmatter parser but are only consulted by the install runner —
-/// `.ampelos/commands/` execution ignores them. They live on the shared
+/// `.croft/commands/` execution ignores them. They live on the shared
 /// struct so authors don't have to remember which keys go where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptCommand {

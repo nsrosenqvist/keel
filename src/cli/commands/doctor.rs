@@ -1,4 +1,4 @@
-//! `ampelos doctor` — validate config and report.
+//! `croft doctor` — validate config and report.
 
 use crate::config::Config;
 use crate::container::{Backend, compose::ComposeBackend};

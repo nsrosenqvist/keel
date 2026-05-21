@@ -1,12 +1,12 @@
 #!/bin/sh
-# @desc: Pick the PHP version to record in .ampelos/local.toml
+# @desc: Pick the PHP version to record in .croft/local.toml
 # @interactive: yes
-# Demonstrates `ampelos lib select` — pick one item from a fixed list,
+# Demonstrates `croft lib select` — pick one item from a fixed list,
 # the answer is written to a local override file. Real projects would
 # do something useful with the answer (write to .env, configure
 # Dockerfile build args, etc.).
 set -eu
-choice=$(ampelos lib select "PHP version" 8.2 8.3 8.4 --default 1)
+choice=$(croft lib select "PHP version" 8.2 8.3 8.4 --default 1)
 echo "Recording PHP_VERSION=$choice"
 # The actual recording is illustrative — the example doesn't change
 # any real config. Plug in whatever your project needs here.

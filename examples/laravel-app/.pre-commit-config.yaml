@@ -1,11 +1,11 @@
-# Example pre-commit config. `ampelos install` (and `ampelos hooks
-# install` directly) clone external repos into `.ampelos/cache/hooks/`
+# Example pre-commit config. `croft install` (and `croft hooks
+# install` directly) clone external repos into `.croft/cache/hooks/`
 # the first time a hook runs and re-use the cache thereafter.
-# `ampelos install --update-hooks` forces a re-clone when you bump
+# `croft install --update-hooks` forces a re-clone when you bump
 # revisions.
 #
 # Supported languages: `system` and `script`. Other languages
-# (`python`, `node`, `ruby`, …) are not implemented; ampelos errors
+# (`python`, `node`, `ruby`, …) are not implemented; croft errors
 # at install time rather than silently skipping.
 
 repos:
@@ -15,7 +15,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        exclude: ^\.ampelos/
+        exclude: ^\.croft/
 
   - repo: local
     hooks:

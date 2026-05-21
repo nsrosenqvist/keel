@@ -1,0 +1,27 @@
+# Example: ordered first-time setup with .croft/install/ scripts.
+#
+# Run `croft install` from this directory to walk through the
+# numbered steps under .croft/install/. Each step writes a marker
+# file under `state/` so you can see exactly which steps ran.
+#
+# Try:
+#   croft install                       # full plan
+#   croft install --list                # plan + last status per step
+#   croft install --dry-run             # preview without executing
+#   croft install 03-seed-db            # single-step mode
+#   croft install --restart             # wipe state, run from step 1
+
+[project]
+name        = "install-flow-demo"
+description = "Walk-through of croft install"
+
+[runtime]
+backend = "none"             # host-only; no compose preflight
+
+# `install_with_setup = false` keeps things demo-focused; in real
+# projects you usually want the default (true).
+[agents]
+install_with_setup = false
+
+[install]
+install_git_hooks = false    # the hooks example covers that surface

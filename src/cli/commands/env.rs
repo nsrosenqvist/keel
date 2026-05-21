@@ -1,8 +1,8 @@
-//! `ampelos env` — print the resolved project environment, or
-//! materialise it to a dotenv file with a ampelos-managed block.
+//! `croft env` — print the resolved project environment, or
+//! materialise it to a dotenv file with a croft-managed block.
 //!
 //! The `--write` form is what makes the worktree-aware `[env]`
-//! arithmetic visible to tools that don't go through ampelos's process
+//! arithmetic visible to tools that don't go through croft's process
 //! tree (e.g. plain `docker compose up`, IDE-launched servers, etc.).
 //! Hooked up to `post-checkout` / `post-merge`, the file is rewritten
 //! on every branch switch, so dotenv-aware tooling automatically sees
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 /// Resolve the project env (process + .env files + `[env]` section)
 /// and either print sorted `KEY=VALUE` pairs to stdout (default) or
-/// write them as a `# >>> ampelos-managed >>>` block inside a file.
+/// write them as a `# >>> croft-managed >>>` block inside a file.
 pub async fn run(config: &Config, project_root: &Path, write: Option<PathBuf>) -> Result<()> {
     let env = Env::resolve(config, project_root).await?;
 
@@ -34,7 +34,7 @@ pub async fn run(config: &Config, project_root: &Path, write: Option<PathBuf>) -
             let changed = write_managed_block(&resolved_path, &pairs)?;
             if changed {
                 println!(
-                    "Wrote {} ampelos-managed entries to {}",
+                    "Wrote {} croft-managed entries to {}",
                     pairs.len(),
                     resolved_path.display()
                 );
@@ -71,16 +71,16 @@ fn resolve_path(project_root: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// The set of env vars ampelos is willing to export to a file. We
+/// The set of env vars croft is willing to export to a file. We
 /// curate this rather than dumping every inherited shell variable —
 /// the file becomes huge and noisy otherwise. Includes:
 ///
 /// - Every key explicitly declared in `[env]`.
-/// - The three worktree-derived built-ins ampelos injects.
+/// - The three worktree-derived built-ins croft injects.
 fn exportable_keys(config: &Config) -> std::collections::BTreeSet<String> {
     let mut keys: std::collections::BTreeSet<String> = config.env.keys().cloned().collect();
-    keys.insert("AMPELOS_WORKTREE_SLUG".into());
-    keys.insert("AMPELOS_WORKTREE_OFFSET".into());
+    keys.insert("CROFT_WORKTREE_SLUG".into());
+    keys.insert("CROFT_WORKTREE_OFFSET".into());
     keys.insert("COMPOSE_PROJECT_NAME".into());
     keys
 }
@@ -149,12 +149,12 @@ mod tests {
     fn write_emits_dotenv_pairs_inside_managed_block() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("subdir").join(".env");
-        let pairs = vec![("APP_PORT", "8085"), ("AMPELOS_WORKTREE_SLUG", "feature-x")];
+        let pairs = vec![("APP_PORT", "8085"), ("CROFT_WORKTREE_SLUG", "feature-x")];
         write_managed_block(&path, &pairs).unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains(BEGIN_MARKER));
         assert!(body.contains("APP_PORT=8085"));
-        assert!(body.contains("AMPELOS_WORKTREE_SLUG=feature-x"));
+        assert!(body.contains("CROFT_WORKTREE_SLUG=feature-x"));
         assert!(body.contains(END_MARKER));
     }
 

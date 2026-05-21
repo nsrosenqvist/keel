@@ -1,9 +1,9 @@
-//! `.ampelos/agents.state.json` — what ampelos owns, what it pinned to,
+//! `.croft/agents.state.json` — what croft owns, what it pinned to,
 //! what bytes it last wrote. Drives drift detection and orphan
 //! removal across `agents install` / `agents update` runs.
 //!
 //! Atomic write via temp-file-and-rename, mirroring the install
-//! state in `ampelos-cli`.
+//! state in `croft-cli`.
 
 use crate::agents::error::AgentsError;
 use crate::agents::manifest::FileMode;
@@ -38,7 +38,7 @@ pub struct AppliedFile {
     pub dest: PathBuf,
     pub source_name: String,
     pub src: String,
-    /// SHA-256 of the bytes ampelos last wrote. `None` for `mode =
+    /// SHA-256 of the bytes croft last wrote. `None` for `mode =
     /// once` (we explicitly let go after first write, so the drift
     /// scan must skip the dest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,7 +78,7 @@ impl AgentsState {
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
-                        "agents.state.json has version {}, expected {}. Remove the file and re-run `ampelos agents install`.",
+                        "agents.state.json has version {}, expected {}. Remove the file and re-run `croft agents install`.",
                         parsed.version, SCHEMA_VERSION
                     ),
                 ),
@@ -124,7 +124,7 @@ impl AgentsState {
 }
 
 fn state_path(project_root: &Path) -> PathBuf {
-    project_root.join(".ampelos").join(STATE_FILE)
+    project_root.join(".croft").join(STATE_FILE)
 }
 
 pub fn epoch_ms() -> u64 {
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn version_mismatch_is_an_error() {
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join(".ampelos")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".croft")).unwrap();
         std::fs::write(
             state_path(dir.path()),
             r#"{"version":999,"applied_at_ms":0,"sources":[],"files":[]}"#,

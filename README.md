@@ -1,19 +1,19 @@
-# ampelos
+# croft
 
-> *Bends to your project. Holds it together.*
+> *Tend your croft.*
 
-Ampelos is a dev-loop trellis. One `ampelos.toml` holds Docker
-Compose, scripts, hooks, and agent instructions together — so
-your stack runs the way *your project* runs it, not the way a
-tool demands.
+Croft is the dev workspace you tend. One `croft.toml` keeps
+Docker Compose, scripts, hooks, and agent instructions together
+on a small plot of ground you know well — your project, the way
+*your project* runs, not the way a tool demands.
 
-Write commands declaratively in `ampelos.toml` or as shell scripts
-under `.ampelos/commands/`. Wrap Docker Compose, run host tooling,
-install git hooks that natively run a `.pre-commit-config.yaml`
-subset, sync agent instructions from upstream repos, and
-supervise the whole stack from a built-in TUI.
+Declare commands in `croft.toml` or drop shell scripts under
+`.croft/commands/`. Hold Docker Compose, host tooling, git hooks
+that natively read a `.pre-commit-config.yaml` subset, and
+upstream agent instructions on the same ground, and mind the
+whole stack from a built-in TUI.
 
-- **Site:** [ampelos.dev](https://ampelos.dev)
+- **Site:** [croft.sh](https://croft.sh)
 - **Status:** alpha. End-to-end usable on Linux and macOS
   for the features documented in the wiki.
 
@@ -22,7 +22,7 @@ supervise the whole stack from a built-in TUI.
 Homebrew (macOS / Linux):
 
 ```sh
-brew install nsrosenqvist/ampelos/ampelos
+brew install nsrosenqvist/croft/croft
 ```
 
 From a clone (any platform):
@@ -34,15 +34,15 @@ cargo install --path .
 Once published to crates.io:
 
 ```sh
-cargo install ampelos
+cargo install croft
 ```
 
-The binary is named `ampelos`.
+The binary is named `croft`.
 
-## 60 seconds with ampelos
+## 60 seconds with croft
 
 ```toml
-# ampelos.toml
+# croft.toml
 [project]
 name = "myapp"
 
@@ -66,42 +66,42 @@ pre-commit = ["check"]
 ```
 
 ```sh
-ampelos up                   # docker compose up -d
-ampelos test --filter Login  # forwards to composer test
-ampelos hooks install        # writes .git/hooks/pre-commit
-ampelos                      # TUI dashboard
+croft up                   # docker compose up -d
+croft test --filter Login  # forwards to composer test
+croft hooks install        # writes .git/hooks/pre-commit
+croft                      # TUI dashboard
 ```
 
 Anything not matched as a recipe / script / built-in falls through
-to `docker compose <cmd>` (`ampelos ps`, `ampelos logs app`, …) or, if
+to `docker compose <cmd>` (`croft ps`, `croft logs app`, …) or, if
 `<cmd>` is a compose service, to `docker compose exec <cmd>` (so
-`ampelos app php -v` works).
+`croft app php -v` works).
 
 ## Documentation lives in the wiki
 
 The full feature set, configuration reference, command reference,
 subsystem deep-dives, and onboarding flow live in the
-[**ampelos wiki**](https://github.com/nsrosenqvist/ampelos/wiki).
+[**croft wiki**](https://github.com/nsrosenqvist/croft/wiki).
 The wiki is auto-synced from
 [`docs/`](./docs/) on every push to `main`, so the source-tree copy
 is always the canonical reference.
 
 Start here:
 
-- [**Home**](https://github.com/nsrosenqvist/ampelos/wiki/Home) — landing + page index.
-- [**Getting Started**](https://github.com/nsrosenqvist/ampelos/wiki/Getting-Started) — first project, first recipe, first hook.
-- [**Quick Tour**](https://github.com/nsrosenqvist/ampelos/wiki/Quick-Tour) — guided walk through every major feature.
-- [**Configuration Reference**](https://github.com/nsrosenqvist/ampelos/wiki/Configuration-Reference) — every `ampelos.toml` key.
-- [**Commands Reference**](https://github.com/nsrosenqvist/ampelos/wiki/Commands-Reference) — every CLI subcommand.
-- [**Examples**](https://github.com/nsrosenqvist/ampelos/wiki/Examples) — runnable ampelos projects.
-- [**Troubleshooting**](https://github.com/nsrosenqvist/ampelos/wiki/Troubleshooting) — `ampelos doctor` and common pitfalls.
+- [**Home**](https://github.com/nsrosenqvist/croft/wiki/Home) — landing + page index.
+- [**Getting Started**](https://github.com/nsrosenqvist/croft/wiki/Getting-Started) — first project, first recipe, first hook.
+- [**Quick Tour**](https://github.com/nsrosenqvist/croft/wiki/Quick-Tour) — guided walk through every major feature.
+- [**Configuration Reference**](https://github.com/nsrosenqvist/croft/wiki/Configuration-Reference) — every `croft.toml` key.
+- [**Commands Reference**](https://github.com/nsrosenqvist/croft/wiki/Commands-Reference) — every CLI subcommand.
+- [**Examples**](https://github.com/nsrosenqvist/croft/wiki/Examples) — runnable croft projects.
+- [**Troubleshooting**](https://github.com/nsrosenqvist/croft/wiki/Troubleshooting) — `croft doctor` and common pitfalls.
 
 ## Examples (in this repo)
 
 - [`examples/minimal`](./examples/minimal/) — smallest useful config.
 - [`examples/laravel-app`](./examples/laravel-app/) — Laravel + Docker
-  Compose, modeled on what ampelos was built to replace.
-- [`examples/install-flow`](./examples/install-flow/) — `.ampelos/install/`
+  Compose, modeled on the dev script croft was built to replace.
+- [`examples/install-flow`](./examples/install-flow/) — `.croft/install/`
   ordered setup with optional + interactive steps.
 - [`examples/hooks`](./examples/hooks/) — native `[hooks]` plus a
   `.pre-commit-config.yaml` mixing local and external repos.
@@ -110,7 +110,7 @@ Start here:
 
 ## Contributing
 
-See [Contributing](https://github.com/nsrosenqvist/ampelos/wiki/Contributing)
+See [Contributing](https://github.com/nsrosenqvist/croft/wiki/Contributing)
 in the wiki for the verification ladder, Conventional Commits
 conventions, and how to add a new example. AI agents working on this
 repo: read [`AGENTS.md`](./AGENTS.md).

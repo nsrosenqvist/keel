@@ -1,6 +1,6 @@
 # Environments
 
-`ampelos` controls the environment variables your commands see. It
+`croft` controls the environment variables your commands see. It
 loads `.env` files, lets you compute values (e.g. a port that's
 unique per git checkout), and forwards a project-declared subset
 into container exec sessions. The same model drives recipe runs,
@@ -8,7 +8,7 @@ compose preflight, and the optional `.env` writer.
 
 ## Quickstart
 
-**1. List your dotenv files** in `ampelos.toml`:
+**1. List your dotenv files** in `croft.toml`:
 
 ```toml
 [env_files]
@@ -22,7 +22,7 @@ files = [".env", ".env.local"]
 ```toml
 [env]
 LOG_LEVEL = { default = "info" }
-APP_PORT  = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+APP_PORT  = { base = "8080", offset = "CROFT_WORKTREE_OFFSET" }
 DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 ```
 
@@ -34,7 +34,7 @@ DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 **3. Verify what's resolved:**
 
 ```sh
-ampelos env
+croft env
 ```
 
 Prints every key as `KEY=VALUE` lines.
@@ -97,7 +97,7 @@ DATABASE_URL = { from_command = "scripts/db-url.sh", required = true }
 GIT_SHA      = { from_command = "git rev-parse --short HEAD" }
 ```
 
-The command runs once per ampelos invocation; stdout (trimmed) is
+The command runs once per croft invocation; stdout (trimmed) is
 the value. `required = true` errors at preflight if no value
 resolves.
 
@@ -105,11 +105,11 @@ resolves.
 
 ```toml
 [env]
-APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
-DB_PORT  = { base = "5432", offset = "AMPELOS_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "CROFT_WORKTREE_OFFSET" }
+DB_PORT  = { base = "5432", offset = "CROFT_WORKTREE_OFFSET" }
 ```
 
-`AMPELOS_WORKTREE_OFFSET` is injected automatically (see [Worktrees](08-Worktrees)).
+`CROFT_WORKTREE_OFFSET` is injected automatically (see [Worktrees](08-Worktrees)).
 Two checkouts get different offsets → different ports → no
 collisions when both stacks are up.
 
@@ -137,26 +137,26 @@ GITHUB_TOKEN = { default = "" }   # default empty string; picks up the shell val
 This becomes part of the project-declared subset that's forwarded
 with `-e GITHUB_TOKEN=...`.
 
-### Auto-write `.env` for tools outside ampelos
+### Auto-write `.env` for tools outside croft
 
 ```toml
 [worktrees]
 dotenv = ".env"
 ```
 
-Every `ampelos <anything>` invocation re-writes the managed block in
+Every `croft <anything>` invocation re-writes the managed block in
 `.env` so `docker compose up` (run directly), IDE launch configs,
 and `bin/rails s` all see the same values. The write is
 idempotent — when the contents already match, the file's mtime
 stays put.
 
-`ampelos env --write .env` does the same one-shot.
+`croft env --write .env` does the same one-shot.
 
 ### Inspect the resolved environment
 
 ```sh
-ampelos env                # everything
-ampelos env | grep '^APP_' # just APP_*
+croft env                # everything
+croft env | grep '^APP_' # just APP_*
 ```
 
 Useful when you've layered three `from_command`s and can't
@@ -168,7 +168,7 @@ remember which one won.
 
 In order, later wins:
 
-1. **Inherited process env.** Whatever shell variables ampelos was
+1. **Inherited process env.** Whatever shell variables croft was
    launched with.
 2. **Dotenv files**, in `[env_files].files` order. `${VAR}`
    expansion inside dotenv values resolves against earlier
@@ -185,7 +185,7 @@ a single key declaration):
 ```toml
 [env]
 LOG_LEVEL  = { default = "info" }
-APP_PORT   = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+APP_PORT   = { base = "8080", offset = "CROFT_WORKTREE_OFFSET" }
 DB_URL     = { from_command = "scripts/db-url.sh", required = true }
 EDITOR     = { value = "vim" }
 ```
@@ -212,7 +212,7 @@ Container (`in = "<service>"` or under a devcontainer): only the
 
 - Keys loaded from `[env_files]` dotenv files.
 - Keys defined under `[env]`.
-- Injected `AMPELOS_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
+- Injected `CROFT_WORKTREE_*` / `COMPOSE_PROJECT_NAME` vars.
 - Per-recipe / per-script `env = {...}` overrides.
 
 Inherited host process env is intentionally **not** propagated —
@@ -226,26 +226,26 @@ Always injected, ahead of `[env]` resolution:
 
 | Key | Source |
 |---|---|
-| `AMPELOS_WORKTREE_SLUG` | Detected from the active git checkout. |
-| `AMPELOS_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed from the slug. |
+| `CROFT_WORKTREE_SLUG` | Detected from the active git checkout. |
+| `CROFT_WORKTREE_OFFSET` | Pinned (`[worktrees.assign]`) or hashed from the slug. |
 | `COMPOSE_PROJECT_NAME` | `<project>-<slug>` when `[worktrees].isolate_compose` is on and the user hasn't set it. |
 
 ### Script-only variables
 
 Set by the script and install-flow runners, **outside** the merge
-pipeline. Reach `.ampelos/commands/` scripts and `.ampelos/install/`
+pipeline. Reach `.croft/commands/` scripts and `.croft/install/`
 steps only — not `[command.*]` recipes, not the dotenv writer,
-not `ampelos env`:
+not `croft env`:
 
 | Key | Source |
 |---|---|
-| `AMPELOS_PROJECT_DIR` | Host path to the worktree project root. |
-| `AMPELOS_SCRIPT_DIR`  | Host path to the script file's parent directory. |
+| `CROFT_PROJECT_DIR` | Host path to the worktree project root. |
+| `CROFT_SCRIPT_DIR`  | Host path to the script file's parent directory. |
 
 Both are host-side paths even when the script runs inside a
 service or devcontainer. Inline install steps get
-`AMPELOS_PROJECT_DIR` only — there's no script file for
-`AMPELOS_SCRIPT_DIR` to point at.
+`CROFT_PROJECT_DIR` only — there's no script file for
+`CROFT_SCRIPT_DIR` to point at.
 
 See [Recipes and Scripts](Recipes-and-Scripts#environment-variables-provided-to-scripts)
 and [Install Flow](Install-Flow#environment-variables) for the

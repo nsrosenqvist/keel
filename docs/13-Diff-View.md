@@ -13,7 +13,7 @@ Committed changes, working-tree changes, and untracked files
 ## Quickstart
 
 ```sh
-ampelos        # open the dashboard
+croft        # open the dashboard
 G           # open the diff view
 ```
 
@@ -64,7 +64,7 @@ projects where `main` isn't the integration branch.
 
 ### Edit a file you're reviewing
 
-In the files panel, press `e` on the selected row. ampelos opens
+In the files panel, press `e` on the selected row. croft opens
 your `[editor].command` / `$VISUAL` / `$EDITOR` / `vim` (in that
 order). Terminal editors suspend the TUI and resume on exit;
 GUI editors spawn detached. After a terminal-editor session,
@@ -73,10 +73,10 @@ the diff reloads automatically. See
 
 ### Hand off to lazygit
 
-`L` from the diff view. ampelos leaves the alternate screen, runs
+`L` from the diff view. croft leaves the alternate screen, runs
 lazygit foreground, and re-enters when you `q` out. Commits /
 stages / resets done inside lazygit invalidate the cached diff —
-ampelos reloads automatically. No-op (with a hint flashed in the
+croft reloads automatically. No-op (with a hint flashed in the
 status bar) when lazygit isn't on `PATH`.
 
 ### Refresh after a rebase / pull
@@ -103,7 +103,7 @@ deleted, `?` untracked.
 
 In order, first match wins:
 
-1. `[diff].base = "..."` in `ampelos.toml` if set.
+1. `[diff].base = "..."` in `croft.toml` if set.
 2. `git symbolic-ref refs/remotes/origin/HEAD` — the remote
    default branch when a remote is configured.
 3. Local fallback: `main`, `master`, `develop`, `trunk`, in

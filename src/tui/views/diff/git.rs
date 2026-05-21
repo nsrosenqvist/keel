@@ -1,6 +1,6 @@
 //! Git shell-outs + parsers for the Diff view.
 //!
-//! Everything ampelos knows about git at the process level for the diff
+//! Everything croft knows about git at the process level for the diff
 //! view lives here: the file-list query (`name-status` + `numstat` +
 //! `ls-files --others` merged in parallel), per-file diff loaders,
 //! read-mode loaders, and the porcelain-fallback for repos with no
@@ -196,7 +196,7 @@ pub(crate) fn parse_numstat(input: &str) -> Vec<NumstatEntry> {
 /// - Plain: `old => new` (no common prefix/suffix).
 /// - Brace: `prefix{old => new}suffix`, where prefix and suffix
 ///   are the shared directory components, e.g.
-///   `.{scaffl => ampelos}/commands/seed` for a top-level rename.
+///   `.{scaffl => croft}/commands/seed` for a top-level rename.
 ///
 /// We rewrite the brace form by substituting the right side of the
 /// `=>` and collapse any `//` left behind when either side is

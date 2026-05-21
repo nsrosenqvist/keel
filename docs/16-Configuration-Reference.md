@@ -1,23 +1,23 @@
 # Configuration Reference
 
-Every key in `ampelos.toml`, with type, default, and a one-line
+Every key in `croft.toml`, with type, default, and a one-line
 example. The schema lives in
-[`src/config/`](https://github.com/nsrosenqvist/ampelos/tree/main/src/config/src);
+[`src/config/`](https://github.com/nsrosenqvist/croft/tree/main/src/config/src);
 unknown keys are rejected at load time so typos don't silently
 become no-ops.
 
-ampelos loads config in three layers, deep-merged in order (later wins):
+croft loads config in three layers, deep-merged in order (later wins):
 
-1. `ampelos.toml` at the project root.
-2. `.ampelos/local.toml` (per-developer overrides; gitignored).
-3. `.ampelos/worktrees/<slug>.toml` (per-worktree overrides; gitignored).
+1. `croft.toml` at the project root.
+2. `.croft/local.toml` (per-developer overrides; gitignored).
+3. `.croft/worktrees/<slug>.toml` (per-worktree overrides; gitignored).
 
 ## `[project]`
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `name` | string | unset | Used as the worktree-hash seed when `[worktrees].seed` isn't set. |
-| `description` | string | unset | Surfaced by `ampelos doctor` and the TUI title. |
+| `description` | string | unset | Surfaced by `croft doctor` and the TUI title. |
 
 ```toml
 [project]
@@ -45,7 +45,7 @@ Per-key spec. See [Environments](04-Environments).
 files = [".env", ".env.local"]
 
 [env]
-APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+APP_PORT = { base = "8080", offset = "CROFT_WORKTREE_OFFSET" }
 DB_URL   = { from_command = "scripts/db-url.sh", required = true }
 LOG      = { default = "info" }
 ```
@@ -68,7 +68,7 @@ Declarative commands. See [Recipes and Scripts](03-Recipes-and-Scripts).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `desc` | string | unset | One-line description; shown by `ampelos list` and the TUI. |
+| `desc` | string | unset | One-line description; shown by `croft list` and the TUI. |
 | `run` | string \| `[string]` | required | Single command or sequential step list. |
 | `in` | string | unset | Compose service to exec into. Absent = host. |
 | `tty` | bool | `false` | Allocate a pseudo-TTY (`-it`). Required for shells. |
@@ -94,11 +94,11 @@ env = { XDEBUG_MODE = "off" }
 ### `[command.<name>.profile.<profile>]`
 
 Optional override layer. Each field is optional; missing fields
-inherit the recipe's value. Activated with `ampelos --profile <name> <recipe>`.
+inherit the recipe's value. Activated with `croft --profile <name> <recipe>`.
 
 ## `[hooks]`
 
-Native ampelos git hooks. See [Hooks](09-Hooks).
+Native croft git hooks. See [Hooks](09-Hooks).
 
 ```toml
 [hooks]
@@ -116,11 +116,11 @@ First-time setup. See [Install Flow](11-Install-Flow).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `steps` | `[InstallStepRef]` | `[]` | Ordered plan; when empty, `.ampelos/install/*` drives. |
+| `steps` | `[InstallStepRef]` | `[]` | Ordered plan; when empty, `.croft/install/*` drives. |
 | `install_git_hooks` | bool | `true` | Append a synthetic `install-hooks` step. |
-| `gitignore` | string | `.ampelos/.gitignore` | Path of the auto-managed gitignore. |
+| `gitignore` | string | `.croft/.gitignore` | Path of the auto-managed gitignore. |
 
-`InstallStepRef` is either a name (resolves to a `.ampelos/install/`
+`InstallStepRef` is either a name (resolves to a `.croft/install/`
 file or a `[command.*]` recipe) or an inline table:
 
 ```toml
@@ -223,8 +223,8 @@ Upstream-sourced agent instructions. See [Agents](10-Agents).
 
 | `[agents]` | Type | Default | Notes |
 |---|---|---|---|
-| `install_with_setup` | bool | `true` | Apply during `ampelos install`. |
-| `manifest_path` | string | `ampelos-agents.toml` | Default upstream manifest path. |
+| `install_with_setup` | bool | `true` | Apply during `croft install`. |
+| `manifest_path` | string | `croft-agents.toml` | Default upstream manifest path. |
 
 | `[[agents.sources]]` | Type | Notes |
 |---|---|---|

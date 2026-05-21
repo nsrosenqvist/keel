@@ -1,8 +1,8 @@
-# Standard pre-commit-format file. ampelos parses it directly — no
+# Standard pre-commit-format file. croft parses it directly — no
 # `pre-commit` binary required. External repos are cloned into
-# `.ampelos/cache/hooks/<rev>/` and run natively.
+# `.croft/cache/hooks/<rev>/` and run natively.
 #
-# ampelos runs hooks whose effective `language` is `system` or
+# croft runs hooks whose effective `language` is `system` or
 # `script`. Anything else (`python`, `node`, `ruby`, `golang`, …)
 # errors at install time with a clear message — wrap the tool with
 # a shell script and use `language: script`, or pick a tool already
@@ -26,8 +26,8 @@ repos:
         language: system
         files: \.ya?ml$
 
-  # External repo. `rev:` is the pinned tag; ampelos clones the repo
-  # into .ampelos/cache/hooks/<slug(url)-rev>/ and reads the upstream
+  # External repo. `rev:` is the pinned tag; croft clones the repo
+  # into .croft/cache/hooks/<slug(url)-rev>/ and reads the upstream
   # `.pre-commit-hooks.yaml` to find each hook's `entry` and
   # `language`. The hooks below all resolve to `language: system`
   # (shell utilities), so they run natively.

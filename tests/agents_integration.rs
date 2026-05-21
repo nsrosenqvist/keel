@@ -2,8 +2,8 @@
 //! filesystem-path upstream that we mutate between runs to exercise
 //! every code path (write / update / drift / orphan / once-mode).
 
-use ampelos::agents::{AgentsError, AgentsState, ApplyOptions, FileMode, apply};
-use ampelos::config::{
+use croft::agents::{AgentsError, AgentsState, ApplyOptions, FileMode, apply};
+use croft::config::{
     AgentsConfig, MappingOverride, MappingOverrideKind, ResolvedOverride, SourceSpec,
 };
 use std::path::Path;
@@ -38,7 +38,7 @@ async fn commit(dir: &Path, message: &str) {
 fn cfg_with(source_repo: &Path, rev: &str) -> AgentsConfig {
     AgentsConfig {
         install_with_setup: true,
-        manifest_path: "ampelos-agents.toml".into(),
+        manifest_path: "croft-agents.toml".into(),
         sources: vec![SourceSpec {
             name: "upstream".into(),
             repo: source_repo.to_string_lossy().into_owned(),
@@ -65,7 +65,7 @@ async fn install_then_update_then_orphan_removal() {
     // Upstream layout: CLAUDE.md (replace), AGENTS.md (once),
     // skills/{a.md,b.md}.
     write(
-        &upstream.path().join("ampelos-agents.toml"),
+        &upstream.path().join("croft-agents.toml"),
         r#"
         [[file]]
         src  = "agents/CLAUDE.md"
@@ -176,7 +176,7 @@ async fn drift_is_detected_and_left_alone_by_default() {
     let upstream = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     write(
-        &upstream.path().join("ampelos-agents.toml"),
+        &upstream.path().join("croft-agents.toml"),
         r#"
         [[file]]
         src  = "CLAUDE.md"
@@ -193,7 +193,7 @@ async fn drift_is_detected_and_left_alone_by_default() {
         .await
         .unwrap();
 
-    // Hand-edit the ampelos-owned file.
+    // Hand-edit the croft-owned file.
     write(&project.path().join("CLAUDE.md"), "hand-edited");
 
     let report = apply(project.path(), &cfg, &ApplyOptions::default())
@@ -225,7 +225,7 @@ async fn local_sibling_in_dir_target_is_shadow_error() {
     let upstream = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     write(
-        &upstream.path().join("ampelos-agents.toml"),
+        &upstream.path().join("croft-agents.toml"),
         r#"
         [[dir]]
         src  = "skills"
@@ -252,7 +252,7 @@ async fn override_skip_drops_a_file() {
     let upstream = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     write(
-        &upstream.path().join("ampelos-agents.toml"),
+        &upstream.path().join("croft-agents.toml"),
         r#"
         [[file]]
         src  = "CLAUDE.md"
@@ -294,7 +294,7 @@ async fn dry_run_writes_no_files_or_state() {
     let upstream = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     write(
-        &upstream.path().join("ampelos-agents.toml"),
+        &upstream.path().join("croft-agents.toml"),
         r#"
         [[file]]
         src  = "CLAUDE.md"

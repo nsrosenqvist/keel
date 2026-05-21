@@ -1,6 +1,6 @@
 # TUI
 
-Run `ampelos` with no arguments to open the dashboard: every recipe,
+Run `croft` with no arguments to open the dashboard: every recipe,
 script, and service in one sidebar, with output streaming in the
 main pane. Most of the time you won't configure anything — services
 auto-appear, recipes show up by name, the standard keymaps just
@@ -9,12 +9,12 @@ work.
 ## Quickstart
 
 ```sh
-ampelos
+croft
 ```
 
 You'll see a sidebar with three groups: services discovered from
 `docker compose`, recipes declared in `[command.*]`, and scripts
-under `.ampelos/commands/`.
+under `.croft/commands/`.
 
 - **`↑` / `↓`** — move the selection.
 - **`Enter`** — run a recipe / focus a service.
@@ -72,7 +72,7 @@ lazygit handoff.
 `W` opens the worktree-switcher modal:
 
 - Lists every checkout under the repo. Pick one to hot-reload
-  ampelos into it.
+  croft into it.
 - "+ new worktree" opens a branch-first picker — type to filter
   local + remote branches, pick one to attach, or take the
   **"create branch '<input>' off HEAD"** sentinel for
@@ -101,7 +101,7 @@ name        = "test"
 restart_on  = ["src/**", "tests/**"]
 ```
 
-Same engine as `ampelos watch` — see [Watch](14-Watch).
+Same engine as `croft watch` — see [Watch](14-Watch).
 
 ### Add a long-running watcher pane
 
@@ -130,7 +130,7 @@ override its launch mode.
 
 ### Hand off to lazygit
 
-`L` in the diff view: ampelos leaves the alternate screen, runs
+`L` in the diff view: croft leaves the alternate screen, runs
 lazygit in the foreground, and re-enters when you `q` out. Diff
 is reloaded automatically. No-op (with a status-bar hint) when
 lazygit isn't on `PATH`.
@@ -150,7 +150,7 @@ lazygit isn't on `PATH`.
 
 ### Auto-discovery
 
-At startup, ampelos asks the active backend for its service list
+At startup, croft asks the active backend for its service list
 (`docker compose config --services` on compose). Every name
 becomes a sidebar row in alphabetical order. No config required.
 
@@ -239,7 +239,7 @@ Two keybinds launch your preferred editor:
 
 **Resolution**, in order:
 
-1. `[editor].command = "..."` in `ampelos.toml` (project-pinned).
+1. `[editor].command = "..."` in `croft.toml` (project-pinned).
 2. `$VISUAL`.
 3. `$EDITOR`.
 4. `vim` (final fallback).
@@ -270,13 +270,13 @@ opens_directory  = true   # enable the global E
 
 Unknown editors with no override default to **terminal mode**
 (POSIX convention for `$EDITOR`). After a terminal-editor session
-returns, ampelos marks the diff stale and reloads — file changes
+returns, croft marks the diff stale and reloads — file changes
 show up immediately.
 
 ## See also
 
 - [Diff View](13-Diff-View) — `G` view's trunk resolution.
-- [Watch](14-Watch) — the standalone `ampelos watch` command uses the
+- [Watch](14-Watch) — the standalone `croft watch` command uses the
   same engine as `restart_on` panes.
 - [Worktrees](08-Worktrees) — what `W` switches between.
 - [Configuration Reference: `[editor]`](Configuration-Reference#editor).

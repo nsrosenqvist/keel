@@ -1,4 +1,4 @@
-//! `ampelos watch <recipe>` — re-run a recipe when watched files change.
+//! `croft watch <recipe>` — re-run a recipe when watched files change.
 //!
 //! Uses [`notify`] for filesystem events. A blocking watcher thread funnels
 //! events into a tokio mpsc channel; the main loop debounces them and runs
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 300;
-const IGNORED_SEGMENTS: &[&str] = &["target", ".git", "node_modules", ".ampelos"];
+const IGNORED_SEGMENTS: &[&str] = &["target", ".git", "node_modules", ".croft"];
 
 pub async fn run(
     config: Arc<Config>,

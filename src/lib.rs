@@ -1,4 +1,4 @@
-//! ampelos — a dev-loop wrapper that adapts to your project.
+//! croft — the dev workspace you tend, shaped to fit your project.
 //!
 //! Each top-level module is a bounded context. Concrete responsibilities:
 //!

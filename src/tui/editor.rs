@@ -117,7 +117,7 @@ fn lookup(binary: &str) -> Option<(LaunchMode, bool)> {
 
 /// Resolve the editor command. Source order:
 ///
-///   1. `[editor] command = "..."` in `ampelos.toml`
+///   1. `[editor] command = "..."` in `croft.toml`
 ///   2. `$VISUAL`
 ///   3. `$EDITOR`
 ///   4. literal `"vim"`

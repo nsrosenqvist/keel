@@ -1,6 +1,6 @@
 # Hooks
 
-`ampelos hooks` runs checks at git lifecycle points — typically
+`croft hooks` runs checks at git lifecycle points — typically
 formatters and linters before a commit, tests before a push.
 Same effect as the `pre-commit` Python tool, but built in: no
 extra binary to install, no virtualenvs created in your tree,
@@ -9,7 +9,7 @@ devcontainer the same way recipes do.
 
 ## Quickstart
 
-**1. Pick what to run** in `ampelos.toml`:
+**1. Pick what to run** in `croft.toml`:
 
 ```toml
 [hooks]
@@ -17,18 +17,18 @@ pre-commit = ["check:format", "check:lint"]
 pre-push   = ["test"]
 ```
 
-The strings are recipe / script names — anything `ampelos <name>`
+The strings are recipe / script names — anything `croft <name>`
 runs, a hook can run. (`check:format` and `check:lint` here are
-ordinary `[command.*]` recipes elsewhere in your `ampelos.toml`.)
+ordinary `[command.*]` recipes elsewhere in your `croft.toml`.)
 
 **2. Install the git shims:**
 
 ```sh
-ampelos hooks install
+croft hooks install
 ```
 
 This writes `.git/hooks/pre-commit` and `pre-push` that delegate
-to `ampelos hooks run <stage>`. Foreign hooks at the same paths are
+to `croft hooks run <stage>`. Foreign hooks at the same paths are
 left alone (with a clear error) so you don't lose a hand-written
 setup.
 
@@ -38,19 +38,19 @@ commit is aborted, same as plain git.
 To run a stage manually for debugging:
 
 ```sh
-ampelos hooks run pre-commit
+croft hooks run pre-commit
 ```
 
 ## Mental model
 
-- **Two sources, one runner.** ampelos looks at `[hooks.<stage>]` in
-  `ampelos.toml` *and* at `.pre-commit-config.yaml` if it exists.
+- **Two sources, one runner.** croft looks at `[hooks.<stage>]` in
+  `croft.toml` *and* at `.pre-commit-config.yaml` if it exists.
   Both are evaluated for the firing stage and run sequentially;
   the first non-zero exit halts.
-- **Every hook's `entry` runs verbatim.** ampelos doesn't manage
+- **Every hook's `entry` runs verbatim.** croft doesn't manage
   toolchains the way the `pre-commit` binary does. If your
-  `.pre-commit-config.yaml` says `entry: ruff`, ampelos runs `ruff`
-  — make sure it's on `PATH` (typically as part of `ampelos install`).
+  `.pre-commit-config.yaml` says `entry: ruff`, croft runs `ruff`
+  — make sure it's on `PATH` (typically as part of `croft install`).
   The `language:` field is parsed and remembered but never gates
   execution.
 - **Hooks route like recipes.** A hook with `in: "<service>"`
@@ -74,7 +74,7 @@ A single recipe wraps the checks; the hook just calls it.
 
 ### Use an existing `.pre-commit-config.yaml`
 
-If your repo already has one, ampelos reads it as-is — both
+If your repo already has one, croft reads it as-is — both
 `repo: local` hooks and external repos (`repo: https://...`)
 work:
 
@@ -95,14 +95,14 @@ repos:
       - id: end-of-file-fixer
 ```
 
-External repos are cloned into `.ampelos/cache/hooks/<slug-rev>/` on
-first use and reused thereafter. `ampelos install --update-hooks`
+External repos are cloned into `.croft/cache/hooks/<slug-rev>/` on
+first use and reused thereafter. `croft install --update-hooks`
 force-refreshes the cache.
 
 ### Run a hook inside a service container
 
 Add `in: <service>` to any hook in `.pre-commit-config.yaml`
-(ampelos extension; plain pre-commit ignores it):
+(croft extension; plain pre-commit ignores it):
 
 ```yaml
 - repo: local
@@ -121,11 +121,11 @@ referenced recipe's own `in =` field — no separate switch needed.
 ### Hook a different stage
 
 ```sh
-ampelos hooks install --stages pre-commit,pre-push,commit-msg,post-merge
+croft hooks install --stages pre-commit,pre-push,commit-msg,post-merge
 ```
 
-Any of git's standard stages works. `ampelos hooks uninstall
-[--stages ...]` removes only ampelos-managed shims (identified by
+Any of git's standard stages works. `croft hooks uninstall
+[--stages ...]` removes only croft-managed shims (identified by
 a marker comment).
 
 ### Use `language: python` / `node` / etc.
@@ -141,11 +141,11 @@ Declare them as you would in pre-commit:
       files: \.py$
 ```
 
-ampelos runs `ruff` directly. Make sure it's installed — for
+croft runs `ruff` directly. Make sure it's installed — for
 example, by adding an install step:
 
 ```sh
-# .ampelos/install/40-tools.sh
+# .croft/install/40-tools.sh
 #!/usr/bin/env bash
 # @desc: Dev tooling
 pip install --user ruff
@@ -156,10 +156,10 @@ in the image.
 
 ### Auto-refresh `.env` after a branch switch
 
-Setting `[worktrees].dotenv = ".env"` makes `ampelos hooks install`
+Setting `[worktrees].dotenv = ".env"` makes `croft hooks install`
 auto-include `post-checkout` and `post-merge` shims (no need to
 list them explicitly) so the dotenv file stays fresh when a
-developer skips ampelos and runs `docker compose up` directly. See
+developer skips croft and runs `docker compose up` directly. See
 [Worktrees](Worktrees#materialising-worktree-env-into-env).
 
 ## Where hooks run
@@ -172,7 +172,7 @@ For each hook, precedence is:
    inside the project's devcontainer.
 3. **Otherwise** → host spawn, with cwd set to the git repo root.
 
-`in` is a ampelos extension to `.pre-commit-config.yaml` — plain
+`in` is a croft extension to `.pre-commit-config.yaml` — plain
 `pre-commit` ignores it, so the same config works for either
 tool.
 
@@ -181,7 +181,7 @@ tool.
 For a given stage, hooks run in this order, first non-zero exit
 halts:
 
-1. Every `[hooks.<stage>]` entry from `ampelos.toml`, in declaration
+1. Every `[hooks.<stage>]` entry from `croft.toml`, in declaration
    order, via the recipe runner.
 2. Every `.pre-commit-config.yaml` hook whose `stages` includes
    `<stage>` (or whose `default_stages` does), in declaration
@@ -192,7 +192,7 @@ which files are staged.
 
 ## Configuration reference
 
-### `ampelos.toml`
+### `croft.toml`
 
 ```toml
 [hooks]
@@ -206,11 +206,11 @@ names. Routing comes from the referenced recipe's own `in =`.
 
 ### `.pre-commit-config.yaml`
 
-Standard pre-commit format, plus the ampelos-only `in:` extension
+Standard pre-commit format, plus the croft-only `in:` extension
 on hook entries. Every hook's `entry` is parsed with
 `shell_words` and spawned directly; `language:` is advisory.
 
-The one shape ampelos still rejects is `repo: meta` (pre-commit's
+The one shape croft still rejects is `repo: meta` (pre-commit's
 built-in `check-hooks-apply` / `identity` etc.) — there's no
 `entry` to dispatch.
 
@@ -218,16 +218,16 @@ built-in `check-hooks-apply` / `identity` etc.) — there's no
 
 | Command | Notes |
 |---|---|
-| `ampelos hooks install [--stages ...]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit` (plus `post-checkout`/`post-merge` if `[worktrees].dotenv` is set). |
-| `ampelos hooks uninstall [--stages ...]` | Remove only ampelos-managed shims. |
-| `ampelos hooks run <stage> [args...]` | What the shim invokes. Run directly to debug. |
-| `ampelos install --update-hooks` | Force-refresh cached external pre-commit repos. |
+| `croft hooks install [--stages ...]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit` (plus `post-checkout`/`post-merge` if `[worktrees].dotenv` is set). |
+| `croft hooks uninstall [--stages ...]` | Remove only croft-managed shims. |
+| `croft hooks run <stage> [args...]` | What the shim invokes. Run directly to debug. |
+| `croft install --update-hooks` | Force-refresh cached external pre-commit repos. |
 
 ## See also
 
-- [Install Flow](11-Install-Flow) — `ampelos install` includes a
+- [Install Flow](11-Install-Flow) — `croft install` includes a
   synthetic step that installs hook shims and prefetches external
   repos.
-- [`examples/hooks/`](https://github.com/nsrosenqvist/ampelos/tree/main/examples/hooks)
+- [`examples/hooks/`](https://github.com/nsrosenqvist/croft/tree/main/examples/hooks)
   — runnable demo with a local hook and an external repo.
 - [Configuration Reference: `[hooks]`](Configuration-Reference#hooks).

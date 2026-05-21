@@ -1,9 +1,9 @@
-//! Pre-commit-flavoured wrapper around the `ampelos-cache` crate.
+//! Pre-commit-flavoured wrapper around the `croft-cache` crate.
 //!
-//! `ampelos-cache` does the actual cloning and on-disk caching. This
+//! `croft-cache` does the actual cloning and on-disk caching. This
 //! shim translates the hooks-side `Repo` value object into a plain
-//! `RepoRef` and forwards through, so callers in `ampelos-hooks` and
-//! `ampelos-cli` don't need to know about the cache crate's API.
+//! `RepoRef` and forwards through, so callers in `croft-hooks` and
+//! `croft-cli` don't need to know about the cache crate's API.
 
 use crate::cache::{CacheError, CacheKind, RepoRef};
 use crate::hooks::config::Repo;
@@ -12,7 +12,7 @@ use crate::hooks::error::HookError;
 pub use crate::cache::{CacheMeta, CachedRepo};
 
 /// Cache root for hook repos. Equivalent to
-/// `<project>/.ampelos/cache/hooks/`.
+/// `<project>/.croft/cache/hooks/`.
 pub fn cache_root(project_root: &std::path::Path) -> std::path::PathBuf {
     crate::cache::cache_root(project_root, CacheKind::Hooks)
 }

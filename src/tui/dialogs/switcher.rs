@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 
 /// One row in the worktree switcher list. Slug is computed by the
-/// runtime crate; `is_current` flags the worktree ampelos is
+/// runtime crate; `is_current` flags the worktree croft is
 /// currently bound to so we can render it differently.
 #[derive(Debug, Clone)]
 pub struct WorktreeRow {

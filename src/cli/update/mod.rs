@@ -1,4 +1,4 @@
-//! Self-update logic for the ampelos binary.
+//! Self-update logic for the croft binary.
 //!
 //! # Bounded Context: Self-Update
 //!
@@ -93,7 +93,7 @@ pub async fn run_update(force: bool, prerelease: bool) -> Result<(), UpdateError
 
     check_write_permission(&current_exe)?;
 
-    let asset_name = format!("ampelos-{TARGET}.tar.gz");
+    let asset_name = format!("croft-{TARGET}.tar.gz");
     let asset_url = constants::release_asset_url(&release.tag, TARGET);
     eprintln!("▸ Downloading {asset_name}");
     let archive_bytes = download_bytes(&asset_url).await?;
@@ -259,9 +259,9 @@ fn verify_checksum(data: &[u8], asset_name: &str, checksums_text: &str) -> Resul
     Ok(())
 }
 
-/// Extract the `ampelos` binary from a `.tar.gz` archive in memory.
+/// Extract the `croft` binary from a `.tar.gz` archive in memory.
 ///
-/// Looks for an entry named `ampelos` (or ending with `/ampelos`) in the
+/// Looks for an entry named `croft` (or ending with `/croft`) in the
 /// archive and returns its contents as bytes.
 fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
     let decoder = GzDecoder::new(archive_bytes);
@@ -278,7 +278,7 @@ fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
             .path()
             .map_err(|e| UpdateError::ExtractError(format!("invalid path in archive: {e}")))?;
 
-        let is_binary = path.file_name().is_some_and(|name| name == "ampelos");
+        let is_binary = path.file_name().is_some_and(|name| name == "croft");
         if !is_binary {
             continue;
         }
@@ -298,7 +298,7 @@ fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>, UpdateError> {
     }
 
     Err(UpdateError::ExtractError(
-        "archive does not contain a 'ampelos' binary".to_string(),
+        "archive does not contain a 'croft' binary".to_string(),
     ))
 }
 
@@ -311,7 +311,7 @@ fn atomic_replace(target_path: &Path, new_binary: &[u8]) -> Result<(), UpdateErr
         UpdateError::ReplaceError("cannot determine parent directory".to_string())
     })?;
 
-    let tmp_path = parent.join(".ampelos-update.tmp");
+    let tmp_path = parent.join(".croft-update.tmp");
 
     let mut tmp_file = fs::File::create(&tmp_path).map_err(|e| {
         if e.kind() == io::ErrorKind::PermissionDenied {
@@ -359,7 +359,7 @@ fn check_write_permission(exe_path: &Path) -> Result<(), UpdateError> {
         UpdateError::ReplaceError("cannot determine parent directory".to_string())
     })?;
 
-    let probe_path = parent.join(".ampelos-write-probe");
+    let probe_path = parent.join(".croft-write-probe");
     match fs::File::create(&probe_path) {
         Ok(_) => {
             let _ = fs::remove_file(&probe_path);
@@ -461,17 +461,15 @@ mod tests {
     fn verify_checksum_success() {
         let data = b"hello world";
         let hash = hex::encode(Sha256::digest(data));
-        let checksums = format!("{hash}  ampelos-x86_64-unknown-linux-gnu.tar.gz\n");
-        assert!(
-            verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", &checksums).is_ok()
-        );
+        let checksums = format!("{hash}  croft-x86_64-unknown-linux-gnu.tar.gz\n");
+        assert!(verify_checksum(data, "croft-x86_64-unknown-linux-gnu.tar.gz", &checksums).is_ok());
     }
 
     #[test]
     fn verify_checksum_mismatch() {
         let data = b"hello world";
-        let checksums = "0000000000000000000000000000000000000000000000000000000000000000  ampelos-x86_64-unknown-linux-gnu.tar.gz\n";
-        let result = verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", checksums);
+        let checksums = "0000000000000000000000000000000000000000000000000000000000000000  croft-x86_64-unknown-linux-gnu.tar.gz\n";
+        let result = verify_checksum(data, "croft-x86_64-unknown-linux-gnu.tar.gz", checksums);
         assert!(matches!(result, Err(UpdateError::ChecksumMismatch { .. })));
     }
 
@@ -479,7 +477,7 @@ mod tests {
     fn verify_checksum_not_found() {
         let data = b"hello world";
         let checksums = "abc123  some-other-file.tar.gz\n";
-        let result = verify_checksum(data, "ampelos-x86_64-unknown-linux-gnu.tar.gz", checksums);
+        let result = verify_checksum(data, "croft-x86_64-unknown-linux-gnu.tar.gz", checksums);
         assert!(matches!(result, Err(UpdateError::ChecksumNotFound(_))));
     }
 
@@ -499,7 +497,7 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "ampelos", &content[..])
+            .append_data(&mut header, "croft", &content[..])
             .unwrap();
         let tar_bytes = builder.into_inner().unwrap();
 
@@ -577,7 +575,7 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "ampelos-v1.0.0/ampelos", &content[..])
+            .append_data(&mut header, "croft-v1.0.0/croft", &content[..])
             .unwrap();
         let tar_bytes = builder.into_inner().unwrap();
 

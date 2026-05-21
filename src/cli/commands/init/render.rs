@@ -1,4 +1,4 @@
-//! Section-ordered TOML emitter for the auto-detected `ampelos.toml`.
+//! Section-ordered TOML emitter for the auto-detected `croft.toml`.
 //!
 //! The detectors return shapeful fragments; this module is the *only*
 //! place that knows what the output text looks like. Two responsibilities
@@ -19,7 +19,7 @@ use std::fmt::Write;
 /// Build the full TOML body from the project name and the detector findings.
 pub fn render(project_name: &str, findings: &[Finding]) -> String {
     let mut out = String::new();
-    out.push_str("# ampelos configuration. See AGENTS.md / README.md for guidance.\n");
+    out.push_str("# croft configuration. See AGENTS.md / README.md for guidance.\n");
     out.push_str("# Auto-detected suggestions below are commented — uncomment what you want.\n\n");
 
     let _ = writeln!(out, "[project]\nname = \"{}\"\n", escape(project_name));

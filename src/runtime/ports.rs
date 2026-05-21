@@ -30,7 +30,7 @@ pub trait RecipeProvider {
 }
 
 /// Script lookup port. Same shape as [`RecipeProvider`] but for
-/// `.ampelos/commands/<name>` script entries.
+/// `.croft/commands/<name>` script entries.
 pub trait ScriptProvider {
     fn get_script(&self, name: &str) -> Option<&ScriptCommand>;
 

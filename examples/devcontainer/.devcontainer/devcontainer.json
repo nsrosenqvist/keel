@@ -1,7 +1,7 @@
 {
-    // Minimal image-only devcontainer. ampelos supports this form
+    // Minimal image-only devcontainer. croft supports this form
     // plus `build: { dockerfile, ... }`; see docs/Devcontainer.md.
-    "name": "ampelos-devcontainer-example",
+    "name": "croft-devcontainer-example",
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
     "workspaceFolder": "/workspaces/devcontainer-example",
     "remoteEnv": {

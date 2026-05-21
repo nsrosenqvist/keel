@@ -5,9 +5,9 @@ set -euo pipefail
 
 mkdir -p state
 
-# `ampelos lib ask` honours --default in non-tty contexts so this
+# `croft lib ask` honours --default in non-tty contexts so this
 # step works under CI as well as a developer's terminal.
-EMAIL=$(ampelos lib ask "Admin email" --default "admin@example.com")
+EMAIL=$(croft lib ask "Admin email" --default "admin@example.com")
 
 # Append to .env without duplicating the key on re-runs.
 if grep -q '^ADMIN_EMAIL=' .env 2>/dev/null; then

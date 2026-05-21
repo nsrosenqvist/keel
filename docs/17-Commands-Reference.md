@@ -1,7 +1,7 @@
 # Commands Reference
 
-Every `ampelos <subcommand>` and its flags. Source of truth:
-[`src/cli/app.rs`](https://github.com/nsrosenqvist/ampelos/blob/main/src/cli/app.rs).
+Every `croft <subcommand>` and its flags. Source of truth:
+[`src/cli/app.rs`](https://github.com/nsrosenqvist/croft/blob/main/src/cli/app.rs).
 Anything not matched by an explicit subcommand falls through to
 recipe / script resolution, then to compose passthrough — see
 [Recipes and Scripts](03-Recipes-and-Scripts).
@@ -14,23 +14,23 @@ recipe / script resolution, then to compose passthrough — see
 | `--explain` | Print the resolution path without executing. |
 | `--profile <NAME>` | Activate a recipe profile (`[command.*.profile.<name>]`). |
 
-## `ampelos` (no subcommand)
+## `croft` (no subcommand)
 
 Bare invocation opens the [TUI dashboard](12-TUI). With a name and
 args, resolves the name as: built-in → recipe → script → compose
 passthrough → service exec → unknown.
 
-## `ampelos list` / `ampelos ls`
+## `croft list` / `croft ls`
 
 Print every recipe and script as a table (name, kind, container,
 description).
 
-## `ampelos which <name>`
+## `croft which <name>`
 
 Show how `<name>` would resolve (recipe / script / compose / service /
 unknown). Same logic as `--explain`, no execution.
 
-## `ampelos env [--write PATH]`
+## `croft env [--write PATH]`
 
 Print the resolved project environment (`[env]` + dotenv layering +
 worktree-derived values). With `--write PATH`, writes the same
@@ -38,15 +38,15 @@ content into `PATH` as a marker-delimited managed block — used by
 the auto-write hook in `[worktrees].dotenv` and by post-checkout /
 post-merge git hooks.
 
-## `ampelos doctor`
+## `croft doctor`
 
 Validate config + backend availability + env files + non-container
 service status. Exits non-zero on any failure. See
 [Troubleshooting](19-Troubleshooting).
 
-## `ampelos init [--template <NAME>]`
+## `croft init [--template <NAME>]`
 
-Generate a starter `ampelos.toml` at the project root. Refuses to
+Generate a starter `croft.toml` at the project root. Refuses to
 overwrite an existing file.
 
 Without `--template`, runs a registry of ecosystem detectors against
@@ -58,16 +58,16 @@ detectors own `[runtime]` and `[devcontainer]`, language detectors
 contribute commented `[command.*]` suggestions. When two ecosystems
 suggest the same command name, both are emitted under a "Multiple
 ecosystems suggest …" header. See
-[Getting Started](Getting-Started#2-generate-a-starter-ampelostoml) for
+[Getting Started](Getting-Started#2-generate-a-starter-crofttoml) for
 the full detection table.
 
 With `--template <NAME>`, bypass auto-detection and start from a
 hand-curated scaffold. Valid names: `laravel`, `rails`, `node`,
 `rust`.
 
-## `ampelos install [<step>] [flags]`
+## `croft install [<step>] [flags]`
 
-Run the install plan (`.ampelos/install/*` + `[install].steps`). See
+Run the install plan (`.croft/install/*` + `[install].steps`). See
 [Install Flow](11-Install-Flow). With a positional `<step>`, runs
 that step alone.
 
@@ -79,12 +79,12 @@ that step alone.
 | `--list` | Plan + last-known status per step. |
 | `--update-hooks` | Force-refresh the external hook cache. |
 
-## `ampelos ui`
+## `croft ui`
 
-Open the [TUI dashboard](12-TUI) explicitly (same as bare `ampelos`
+Open the [TUI dashboard](12-TUI) explicitly (same as bare `croft`
 with no args).
 
-## `ampelos shell [--service <name>]`
+## `croft shell [--service <name>]`
 
 Drop into an interactive shell.
 
@@ -95,17 +95,17 @@ Drop into an interactive shell.
 
 See [Devcontainer](06-Devcontainer).
 
-## `ampelos hooks <action>`
+## `croft hooks <action>`
 
 | Action | Notes |
 |---|---|
 | `install [--stages s1,s2]` | Write `.git/hooks/<stage>` shims. Default: `pre-commit`. |
-| `uninstall [--stages s1,s2]` | Remove ampelos-managed shims; default: every known stage. |
+| `uninstall [--stages s1,s2]` | Remove croft-managed shims; default: every known stage. |
 | `run <stage>` | Run hooks for `<stage>`. Used by the installed shims. |
 
 See [Hooks](09-Hooks).
 
-## `ampelos agents <action>`
+## `croft agents <action>`
 
 | Action | Notes |
 |---|---|
@@ -116,7 +116,7 @@ See [Hooks](09-Hooks).
 
 See [Agents](10-Agents).
 
-## `ampelos watch <recipe> [args...] [flags]`
+## `croft watch <recipe> [args...] [flags]`
 
 Re-run `<recipe>` whenever watched files change.
 
@@ -127,17 +127,17 @@ Re-run `<recipe>` whenever watched files change.
 
 See [Watch](14-Watch).
 
-## `ampelos worktree <action>`
+## `croft worktree <action>`
 
 | Action | Notes |
 |---|---|
 | `status` | Current worktree's slug, offset, derived env. |
 | `list` | Every git worktree + computed offset, with collision warnings. |
-| `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.ampelos/local.toml`. |
+| `assign <slug> <n> [--local]` | Pin a slug to an offset. `--local` writes to `.croft/local.toml`. |
 
 See [Worktrees](08-Worktrees).
 
-## `ampelos lib <action>`
+## `croft lib <action>`
 
 Interactive prompt helpers callable from any shell script. Prompt to
 stderr, answer to stdout. Non-tty invocations honour `--default`.
@@ -151,7 +151,7 @@ See [Shell Library](15-Shell-Library).
 | `select <prompt> <choices...> [--multi] [--default <IDX>] [--from <FILE>]` | Pick one or many. |
 | `filter <prompt> <choices...> [--from <FILE>]` | Fuzzy picker. |
 
-## `ampelos completions <shell>`
+## `croft completions <shell>`
 
 Emit a shell-completion script. `<shell>` is one of `bash`, `zsh`,
 `fish`, `elvish`, `powershell`. Pipe to your shell's completion
