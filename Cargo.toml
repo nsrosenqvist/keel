@@ -1,6 +1,6 @@
 [package]
 name = "croft"
-description = "The dev workspace you tend: one config for Docker Compose, scripts, hooks, and agents"
+description = "Per-project dev-loop tool: Docker Compose, scripts, hooks, and agents in one config"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"

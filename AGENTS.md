@@ -4,24 +4,23 @@ Instructions for AI agents (and humans) working on this repository.
 
 ## North Star
 
-**croft is the dev workspace you tend — it learns the shape of
-your project, instead of demanding your project match it.**
+**croft is a per-project dev-loop tool that adapts to your project,
+instead of forcing your project to adapt to it.**
 
 Every developer ends up writing a `dev` shell script per project: it
 preflights containers, routes commands between host and container,
-holds recurring tasks (`up`, `shell`, `test`, `migrate`, `check`),
+wraps recurring tasks (`up`, `shell`, `test`, `migrate`, `check`),
 and forwards args to in-container tooling. The script grows,
 refactors, and never quite leaves the repo it was born in. Tools like
 DDEV solve this by enforcing a rigid format. Tools like `just` or
-`mprocs` tend a slice and stop.
+`mprocs` solve a slice and stop.
 
-croft is the small plot where all of that lives together: a single
-binary that defines commands two ways (declarative TOML *or* plain
-scripts), knows where they should run (host vs service via a Backend
-abstraction), doubles as a TUI dashboard, and keeps dev setup, git
-hooks, and agent instructions on the same ground — with
-`.pre-commit-config.yaml` compatibility so you don't have to abandon
-the tools you already use.
+croft brings those scripts into a single binary: commands defined
+two ways (declarative TOML *or* plain scripts), routed to the right
+place to run (host vs service via a Backend abstraction), with a TUI
+dashboard and bundled hook + agent management.
+`.pre-commit-config.yaml` compatibility means existing hook
+infrastructure keeps working.
 
 ## Required verification step
 

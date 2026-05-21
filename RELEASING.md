@@ -85,7 +85,7 @@ and pushes a single commit per release.
 
   ```ruby
   class Croft < Formula
-    desc "The dev workspace you tend"
+    desc "Per-project dev-loop tool that adapts to your project"
     homepage "https://github.com/nsrosenqvist/croft"
     version "0.0.0"
     license any_of: ["MIT", "Apache-2.0"]

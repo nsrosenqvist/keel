@@ -11,7 +11,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug, Parser)]
-#[command(name = "croft", version, about = "The dev workspace you tend")]
+#[command(
+    name = "croft",
+    version,
+    about = "Per-project dev-loop tool that adapts to your project"
+)]
 pub struct Cli {
     /// Path to the project root (default: search upward from cwd).
     #[arg(long, global = true)]

@@ -1,4 +1,4 @@
-//! croft — the dev workspace you tend, shaped to fit your project.
+//! croft — a per-project dev-loop tool that adapts to your project.
 //!
 //! Each top-level module is a bounded context. Concrete responsibilities:
 //!

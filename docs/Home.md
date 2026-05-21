@@ -2,11 +2,11 @@
 
 > *Tend your croft.*
 
-Croft is the dev workspace you tend. One `croft.toml` keeps
-Docker Compose, scripts, hooks, and agent instructions on a
-small plot of ground you know well. Your stack runs the way
-your project runs it — the tool fits the ground, not the other
-way around.
+Croft is a per-project dev-loop tool. One `croft.toml` declares
+Docker Compose services, scripts, git hooks, and agent
+instructions for a single project. Your stack runs the way your
+project runs it — the tool fits the project, not the other way
+around.
 
 - **Site:** [croft.sh](https://croft.sh)
 - **Status:** alpha. End-to-end usable on Linux and macOS

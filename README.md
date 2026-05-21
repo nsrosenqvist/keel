@@ -2,16 +2,16 @@
 
 > *Tend your croft.*
 
-Croft is the dev workspace you tend. One `croft.toml` keeps
-Docker Compose, scripts, hooks, and agent instructions together
-on a small plot of ground you know well — your project, the way
-*your project* runs, not the way a tool demands.
+Croft is a per-project dev-loop tool. One `croft.toml` declares
+Docker Compose services, scripts, git hooks, and agent
+instructions for a single project, so your stack runs the way
+*your project* runs it — not the way a tool demands.
 
 Declare commands in `croft.toml` or drop shell scripts under
-`.croft/commands/`. Hold Docker Compose, host tooling, git hooks
-that natively read a `.pre-commit-config.yaml` subset, and
-upstream agent instructions on the same ground, and mind the
-whole stack from a built-in TUI.
+`.croft/commands/`. Croft wraps Docker Compose, runs host tooling,
+installs git hooks that natively read a `.pre-commit-config.yaml`
+subset, syncs agent instructions from upstream repos, and
+supervises the whole stack from a built-in TUI.
 
 - **Site:** [croft.sh](https://croft.sh)
 - **Status:** alpha. End-to-end usable on Linux and macOS

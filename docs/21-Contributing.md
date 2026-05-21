@@ -1,8 +1,8 @@
 # Contributing
 
-croft is an open-source dev workspace you tend on a per-project
-basis. Contributions — features, fixes, docs, examples — are
-welcome. This page captures the non-negotiables.
+croft is an open-source per-project dev-loop tool. Contributions
+— features, fixes, docs, examples — are welcome. This page
+captures the non-negotiables.
 
 ## Required verification step
 
