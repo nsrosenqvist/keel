@@ -1,4 +1,4 @@
-//! `ampelos worktree <action>` — inspect and pin worktree offsets.
+//! `croft worktree <action>` — inspect and pin worktree offsets.
 //!
 //! Three subcommands:
 //!
@@ -8,7 +8,7 @@
 //!   computing each one's offset against the current config. Useful for
 //!   spotting hash collisions before they bite.
 //! - `assign <name> <offset>` — write a `[worktrees.assign]` entry into
-//!   `ampelos.toml` (or `.ampelos/local.toml` with `--local`). Uses
+//!   `croft.toml` (or `.croft/local.toml` with `--local`). Uses
 //!   `toml_edit` to preserve formatting and comments.
 
 use crate::config::{Config, EnvSpec};
@@ -54,7 +54,7 @@ pub async fn status(config: &Config, identity: &Identity) -> Result<()> {
         },
     );
     if config.worktrees.isolate_compose && identity.is_isolated() {
-        let project = config.project.name.as_deref().unwrap_or("ampelos");
+        let project = config.project.name.as_deref().unwrap_or("croft");
         println!("                  → {project}-{}", identity.slug);
     }
 
@@ -127,25 +127,25 @@ pub async fn list(config: &Config, project_root: &Path) -> Result<()> {
             collisions.len(),
             collisions,
         );
-        eprintln!("         pin a slug with `ampelos worktree assign <name> <offset>` to dodge.");
+        eprintln!("         pin a slug with `croft worktree assign <name> <offset>` to dodge.");
     }
     Ok(())
 }
 
 pub fn assign(name: &str, offset: u32, local: bool, project_root: &Path) -> Result<()> {
     // Identity lookups always use the slugified form, so we slugify here
-    // too — that way `ampelos worktree assign feature/x 5` produces a
+    // too — that way `croft worktree assign feature/x 5` produces a
     // `feature-x` entry that the runtime can match.
     let slug = crate::runtime::worktree::slugify(name);
     if slug.is_empty() {
         anyhow::bail!("`{name}` slugifies to an empty string; nothing to pin");
     }
     let target = if local {
-        let dir = project_root.join(".ampelos");
+        let dir = project_root.join(".croft");
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         dir.join("local.toml")
     } else {
-        project_root.join("ampelos.toml")
+        project_root.join("croft.toml")
     };
 
     let raw = if target.exists() {
@@ -207,7 +207,7 @@ fn derive_slug(entry: &WorktreeListEntry) -> String {
 mod tests {
     use super::*;
 
-    // Porcelain-parsing tests live in ampelos-runtime now (single
+    // Porcelain-parsing tests live in croft-runtime now (single
     // owner of the parser); only the assign / list-rendering paths
     // are tested from this crate.
 
@@ -215,7 +215,7 @@ mod tests {
     fn assign_writes_new_entry() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
-            dir.path().join("ampelos.toml"),
+            dir.path().join("croft.toml"),
             r#"
 [project]
 name = "x"
@@ -224,7 +224,7 @@ name = "x"
         .unwrap();
 
         assign("feature/x", 7, false, dir.path()).unwrap();
-        let after = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
+        let after = std::fs::read_to_string(dir.path().join("croft.toml")).unwrap();
         assert!(after.contains("[worktrees]"));
         assert!(after.contains("[worktrees.assign]"));
         // Slugified key — runtime lookup uses the slug form too.
@@ -236,10 +236,9 @@ name = "x"
     #[test]
     fn assign_local_writes_to_local_toml() {
         let dir = tempfile::TempDir::new().unwrap();
-        // No ampelos.toml; just write to local.
+        // No croft.toml; just write to local.
         assign("main", 0, true, dir.path()).unwrap();
-        let local =
-            std::fs::read_to_string(dir.path().join(".ampelos").join("local.toml")).unwrap();
+        let local = std::fs::read_to_string(dir.path().join(".croft").join("local.toml")).unwrap();
         assert!(local.contains("main = 0"));
     }
 
@@ -247,7 +246,7 @@ name = "x"
     fn assign_updates_existing_entry() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
-            dir.path().join("ampelos.toml"),
+            dir.path().join("croft.toml"),
             r#"
 [worktrees.assign]
 main = 0
@@ -256,7 +255,7 @@ feature-x = 5
         )
         .unwrap();
         assign("feature/x", 9, false, dir.path()).unwrap();
-        let after = std::fs::read_to_string(dir.path().join("ampelos.toml")).unwrap();
+        let after = std::fs::read_to_string(dir.path().join("croft.toml")).unwrap();
         assert!(after.contains("feature-x = 9"));
         assert!(after.contains("main = 0"));
     }

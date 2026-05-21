@@ -2,7 +2,7 @@
 //!
 //! These are hand-curated rich starter configs — independent of the
 //! auto-detection registry. Each function returns a ready-to-edit
-//! `ampelos.toml` body for a specific stack. New stacks are added by
+//! `croft.toml` body for a specific stack. New stacks are added by
 //! extending [`Template`] and adding a matching function.
 
 use clap::ValueEnum;
@@ -26,7 +26,7 @@ pub fn render(project_name: &str, template: Template) -> String {
 
 fn laravel_template(name: &str) -> String {
     format!(
-        r#"# ampelos: Laravel + Docker Compose dev loop
+        r#"# croft: Laravel + Docker Compose dev loop
 
 [project]
 name = "{name}"
@@ -106,7 +106,7 @@ pre-commit = ["test"]
 
 fn rails_template(name: &str) -> String {
     format!(
-        r#"# ampelos: Rails + Docker Compose dev loop
+        r#"# croft: Rails + Docker Compose dev loop
 
 [project]
 name = "{name}"
@@ -165,7 +165,7 @@ forward_args = true
 
 fn node_template(name: &str) -> String {
     format!(
-        r#"# ampelos: Node.js host-based dev loop
+        r#"# croft: Node.js host-based dev loop
 
 [project]
 name = "{name}"
@@ -205,7 +205,7 @@ pre-commit = ["lint"]
 
 fn rust_template(name: &str) -> String {
     format!(
-        r#"# ampelos: Rust workspace dev loop
+        r#"# croft: Rust workspace dev loop
 
 [project]
 name = "{name}"

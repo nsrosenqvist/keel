@@ -33,11 +33,11 @@ pub enum HookError {
     GitFailed(String),
 
     #[error(
-        "{0} is not a git repository (run `git init` or `ampelos hooks install` from inside one)"
+        "{0} is not a git repository (run `git init` or `croft hooks install` from inside one)"
     )]
     NotARepo(PathBuf),
 
-    #[error("refusing to overwrite non-ampelos hook at {path}")]
+    #[error("refusing to overwrite non-croft hook at {path}")]
     HookExists { path: PathBuf },
 
     #[error("hook `{hook}` references entry that could not be parsed: {message}")]
@@ -48,7 +48,7 @@ pub enum HookError {
 
     #[error(
         "`repo: meta` references pre-commit's built-in hooks (check-hooks-apply, identity, …) \
-         which ampelos does not implement. Remove the entry or replace it with an equivalent \
+         which croft does not implement. Remove the entry or replace it with an equivalent \
          `repo: local` hook."
     )]
     MetaRepoNotSupported,

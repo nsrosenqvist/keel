@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! ┌─ top status bar ───────────────────────────────────────────────┐
-//! │ ampelos · <project> · worktree:<slug> · offset:<n>              │
+//! │ croft · <project> · worktree:<slug> · offset:<n>              │
 //! ├─ services ──────────────┬─ <selected item details / output> ────┤
 //! │ ● app    ●              │                                       │
 //! │ ● worker ●              │                                       │
@@ -149,15 +149,15 @@ fn render_top_bar(app: &App, frame: &mut Frame, area: Rect) {
         .project
         .name
         .clone()
-        .unwrap_or_else(|| "ampelos".into());
+        .unwrap_or_else(|| "croft".into());
 
-    // Top bar's "ampelos" wordmark stays bold white regardless of
+    // Top bar's "croft" wordmark stays bold white regardless of
     // view — pinning it to the active accent made it visually
     // collide with the first sidebar group's accent-colored title
     // immediately below. The view accent already has plenty of
     // representation (panel titles, status-bar tag, group headers).
     let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("ampelos ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("croft ", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("│ ", Style::default().fg(Color::DarkGray)),
         Span::styled(project, Style::default().add_modifier(Modifier::BOLD)),
     ];
@@ -589,7 +589,7 @@ fn script_kv_lines(script: &crate::config::ScriptCommand) -> Vec<Line<'static>> 
     let path_display = script
         .path
         .file_name()
-        .map(|f| format!(".ampelos/commands/{}", f.to_string_lossy()))
+        .map(|f| format!(".croft/commands/{}", f.to_string_lossy()))
         .unwrap_or_else(|| script.path.display().to_string());
     out.push(kv("path", &path_display));
     if script.tty {
@@ -807,7 +807,7 @@ pub(crate) fn render_service_logs(
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "set runtime.backend = \"compose\" in ampelos.toml",
+                "set runtime.backend = \"compose\" in croft.toml",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::styled(

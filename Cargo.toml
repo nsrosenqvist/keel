@@ -1,19 +1,19 @@
 [package]
-name = "ampelos"
-description = "Dev-loop trellis: one config for Docker Compose, scripts, hooks, and agents"
+name = "croft"
+description = "The dev workspace you tend: one config for Docker Compose, scripts, hooks, and agents"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Niklas Rosenqvist"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/nsrosenqvist/ampelos"
-homepage = "https://ampelos.dev"
+repository = "https://github.com/nsrosenqvist/croft"
+homepage = "https://croft.sh"
 readme = "README.md"
 keywords = ["dev-loop", "docker-compose", "tui", "cli", "wrapper"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "ampelos"
+name = "croft"
 path = "src/main.rs"
 
 [dependencies]

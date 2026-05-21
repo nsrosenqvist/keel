@@ -11,11 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "ampelos",
-    version,
-    about = "Dev-loop wrapper that adapts to your project"
-)]
+#[command(name = "croft", version, about = "The dev workspace you tend")]
 pub struct Cli {
     /// Path to the project root (default: search upward from cwd).
     #[arg(long, global = true)]
@@ -26,7 +22,7 @@ pub struct Cli {
     pub explain: bool,
 
     /// Activate a named profile for recipe execution. Profiles are
-    /// declared as `[command.<name>.profile.<profile>]` in ampelos.toml.
+    /// declared as `[command.<name>.profile.<profile>]` in croft.toml.
     #[arg(long, global = true)]
     pub profile: Option<String>,
 
@@ -47,7 +43,7 @@ pub enum Command {
     Which { name: String },
     /// Print the resolved project environment (process + .env + [env]).
     Env {
-        /// Write the result to a dotenv file using a ampelos-managed
+        /// Write the result to a dotenv file using a croft-managed
         /// block, instead of printing to stdout. Existing user content
         /// outside the block is preserved. Hook this up from
         /// post-checkout / post-merge so worktree-derived values land
@@ -58,7 +54,7 @@ pub enum Command {
     },
     /// Validate the configuration and report on backend / deps / env files.
     Doctor,
-    /// Scaffold a starter ampelos.toml in the project root.
+    /// Scaffold a starter croft.toml in the project root.
     Init {
         /// Use a specific stack template instead of auto-detection.
         #[arg(long)]
@@ -101,7 +97,7 @@ pub enum Command {
     /// Emit a shell completion script (bash / zsh / fish / elvish / powershell).
     Completions { shell: clap_complete::Shell },
     /// Interactive prompt helpers usable from any shell script
-    /// (`ampelos lib ask`, `confirm`, `password`, `select`, `filter`).
+    /// (`croft lib ask`, `confirm`, `password`, `select`, `filter`).
     Lib {
         #[command(subcommand)]
         action: LibAction,
@@ -126,7 +122,7 @@ pub enum Command {
         #[arg(long)]
         debounce_ms: Option<u64>,
     },
-    /// Self-update the ampelos binary from the latest GitHub release.
+    /// Self-update the croft binary from the latest GitHub release.
     Update {
         /// Re-download and replace even if already on the latest version.
         #[arg(long)]
@@ -140,7 +136,7 @@ pub enum Command {
     /// a compose service instead.
     Shell {
         /// Open a shell inside the named compose service (e.g.
-        /// `ampelos shell --service app`) instead of the devcontainer.
+        /// `croft shell --service app`) instead of the devcontainer.
         /// Works even when `[devcontainer] enabled = false`.
         #[arg(long, value_name = "NAME")]
         service: Option<String>,
@@ -149,13 +145,13 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum HooksAction {
-    /// Install ampelos-managed git hook shims.
+    /// Install croft-managed git hook shims.
     Install {
         /// Stages to install (default: pre-commit).
         #[arg(long, value_delimiter = ',')]
         stages: Vec<String>,
     },
-    /// Remove ampelos-managed git hook shims.
+    /// Remove croft-managed git hook shims.
     Uninstall {
         /// Stages to remove (default: all known stages).
         #[arg(long, value_delimiter = ',')]
@@ -176,7 +172,7 @@ pub enum AgentsAction {
         /// Plan but don't write files or save state.
         #[arg(long)]
         dry_run: bool,
-        /// Overwrite ampelos-owned files that have been hand-edited
+        /// Overwrite croft-owned files that have been hand-edited
         /// since the last apply.
         #[arg(long)]
         force_overwrite_drift: bool,
@@ -193,7 +189,7 @@ pub enum AgentsAction {
         /// Plan but don't write files or save state.
         #[arg(long)]
         dry_run: bool,
-        /// Overwrite ampelos-owned files that have been hand-edited
+        /// Overwrite croft-owned files that have been hand-edited
         /// since the last apply.
         #[arg(long)]
         force_overwrite_drift: bool,
@@ -274,7 +270,7 @@ pub enum WorktreeAction {
         name: String,
         /// Integer offset to assign.
         offset: u32,
-        /// Write to .ampelos/local.toml (per-developer) instead of ampelos.toml.
+        /// Write to .croft/local.toml (per-developer) instead of croft.toml.
         #[arg(long)]
         local: bool,
     },
@@ -285,7 +281,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     // `init` and `completions` run before config load — `init` writes
     // the config that doesn't exist yet; `completions` should never fail
-    // on a broken ampelos.toml because users may regenerate completions
+    // on a broken croft.toml because users may regenerate completions
     // *while fixing* such a file.
     if let Some(Command::Init { template }) = cli.command {
         let project_root = locate_project_root(cli.project.as_deref())?;
@@ -298,7 +294,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         let code = run_lib_action(action)?;
         std::process::exit(code);
     }
-    // `update` runs without project context: a freshly-installed ampelos
+    // `update` runs without project context: a freshly-installed croft
     // anywhere on $PATH must be able to upgrade itself.
     if let Some(Command::Update { force, prerelease }) = cli.command {
         return commands::update::run(force, prerelease).await;
@@ -306,11 +302,11 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     let project_root = locate_project_root(cli.project.as_deref())?;
 
-    // Bootstrap pass: load ampelos.toml + local.toml so we can detect
+    // Bootstrap pass: load croft.toml + local.toml so we can detect
     // the worktree identity using the user's `[worktrees]` settings
     // (modulus / seed / pinned assignments). Then load again with the
     // slug applied, so per-worktree overlays at
-    // `.ampelos/worktrees/<slug>.toml` take effect.
+    // `.croft/worktrees/<slug>.toml` take effect.
     let bootstrap_cfg = crate::config::load_project_with_slug(&project_root, None)
         .with_context(|| format!("load project at {}", project_root.display()))?;
     let identity = crate::runtime::Identity::detect(&project_root, &bootstrap_cfg).await;
@@ -510,7 +506,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// Dispatch a `ampelos lib <verb>` subcommand. Pure CLI — never touches
+/// Dispatch a `croft lib <verb>` subcommand. Pure CLI — never touches
 /// the project config; that's the whole point.
 fn run_lib_action(action: LibAction) -> Result<i32> {
     match action {
@@ -532,7 +528,7 @@ fn run_lib_action(action: LibAction) -> Result<i32> {
     }
 }
 
-/// Build the install plan, write the auto-managed `.ampelos/.gitignore`,
+/// Build the install plan, write the auto-managed `.croft/.gitignore`,
 /// handle the resume prompt when state is mid-flight, then hand off to
 /// the install runner.
 async fn dispatch_install(
@@ -543,7 +539,7 @@ async fn dispatch_install(
     let plan = commands::install::plan::resolve(&config, &project_root)?;
 
     // Refresh the gitignore on every invocation. Idempotent; cheap.
-    ensure_ampelos_gitignore(&config, &project_root).context("update .ampelos/.gitignore")?;
+    ensure_croft_gitignore(&config, &project_root).context("update .croft/.gitignore")?;
 
     let bypass_prompt =
         args.resume || args.restart || args.dry_run || args.list || args.step.is_some();
@@ -579,9 +575,9 @@ async fn dispatch_install(
     commands::install::run(config, project_root, backend, plan, args).await
 }
 
-/// Write the project-managed `.ampelos/.gitignore` block. Path is
-/// configurable via `[install].gitignore` (default `.ampelos/.gitignore`).
-fn ensure_ampelos_gitignore(config: &Config, project_root: &Path) -> Result<()> {
+/// Write the project-managed `.croft/.gitignore` block. Path is
+/// configurable via `[install].gitignore` (default `.croft/.gitignore`).
+fn ensure_croft_gitignore(config: &Config, project_root: &Path) -> Result<()> {
     let rel = &config.install.gitignore;
     let p = Path::new(rel);
     let path = if p.is_absolute() {
@@ -589,7 +585,7 @@ fn ensure_ampelos_gitignore(config: &Config, project_root: &Path) -> Result<()> 
     } else {
         project_root.join(p)
     };
-    // The block lives inside `.ampelos/` by default, so the ignore
+    // The block lives inside `.croft/` by default, so the ignore
     // patterns are relative to that directory. Users moving the file
     // elsewhere are responsible for prefixing the patterns themselves.
     let body = "local.toml\nworktrees/\ncache/\ninstall.state.json\nagents.state.json\n";
@@ -699,8 +695,8 @@ fn cmd_which(config: &Config, name: &str) -> Result<()> {
 fn print_explain(name: &str, resolution: &Resolution<'_>) -> Result<()> {
     match resolution {
         Resolution::Builtin(b) => println!("{name} → built-in `{b}`"),
-        Resolution::Recipe(_) => println!("{name} → recipe in ampelos.toml"),
-        Resolution::Script(_) => println!("{name} → script in .ampelos/commands/"),
+        Resolution::Recipe(_) => println!("{name} → recipe in croft.toml"),
+        Resolution::Script(_) => println!("{name} → script in .croft/commands/"),
         Resolution::ComposePassthrough(_) => println!("{name} → docker compose passthrough"),
         Resolution::ServiceExec(_) => println!("{name} → exec into compose service"),
         Resolution::Unknown {
@@ -741,7 +737,7 @@ async fn build_backend(config: &Config) -> Result<Arc<dyn Backend>> {
     };
 
     // Custom slot (services.custom + services.systemd, translated into
-    // CustomEntry values by ampelos-runtime).
+    // CustomEntry values by croft-runtime).
     let mut entries: Vec<crate::container::custom::CustomEntry> =
         Vec::with_capacity(config.services.custom.len() + config.services.systemd.len());
     for svc in &config.services.custom {
@@ -865,7 +861,7 @@ fn locate_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
     }
     let mut cur = std::env::current_dir()?;
     loop {
-        if cur.join("ampelos.toml").exists() || cur.join(".ampelos").is_dir() {
+        if cur.join("croft.toml").exists() || cur.join(".croft").is_dir() {
             return Ok(cur);
         }
         if !cur.pop() {

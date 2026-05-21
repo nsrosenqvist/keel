@@ -1,7 +1,7 @@
 # AGENTS.md (seed)
 
 This file ships once via `mode = "once"`. After first install the
-project owns it — edit freely; ampelos will never overwrite or
+project owns it — edit freely; croft will never overwrite or
 re-touch it.
 
 Use this file for project-specific agent guidance that doesn't fit

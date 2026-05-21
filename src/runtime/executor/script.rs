@@ -1,6 +1,6 @@
 //! Script-run orchestration.
 //!
-//! Mirrors [`super::recipe`] but for `.ampelos/commands/<name>`
+//! Mirrors [`super::recipe`] but for `.croft/commands/<name>`
 //! scripts: the script body is piped over stdin to `<interpreter>
 //! -s -- <args>` (interpreter derived from the shebang), with the
 //! same in-service / in-devcontainer / on-host fan-out the recipe
@@ -19,8 +19,8 @@ impl Executor {
         args: &[String],
     ) -> Result<i32, RuntimeError> {
         // Scripts get two extra env vars on top of the base resolution
-        // chain: AMPELOS_PROJECT_DIR (worktree project root) and
-        // AMPELOS_SCRIPT_DIR (the script file's parent directory).
+        // chain: CROFT_PROJECT_DIR (worktree project root) and
+        // CROFT_SCRIPT_DIR (the script file's parent directory).
         // They land *between* the base env and the script's own
         // `env = {...}`, so user overrides still win — but the
         // common case of "I just want to know where my script
@@ -38,8 +38,8 @@ impl Executor {
             .await?
             .clone()
             .with_overrides([
-                ("AMPELOS_PROJECT_DIR", project_dir.as_str()),
-                ("AMPELOS_SCRIPT_DIR", script_dir.as_str()),
+                ("CROFT_PROJECT_DIR", project_dir.as_str()),
+                ("CROFT_SCRIPT_DIR", script_dir.as_str()),
             ])
             .with_overrides(script.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
 

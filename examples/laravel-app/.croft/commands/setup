@@ -2,9 +2,9 @@
 # @desc: Bootstrap the local dev environment (containers + DB + frontend)
 set -euo pipefail
 
-ampelos up
-ampelos migrate --force
-ampelos artisan db:seed --force
+croft up
+croft migrate --force
+croft artisan db:seed --force
 npm run build
 
 cat <<'NOTE'

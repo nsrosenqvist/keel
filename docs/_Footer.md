@@ -1,1 +1,1 @@
-ampelos is dual-licensed under [MIT](https://github.com/nsrosenqvist/ampelos/blob/main/LICENSE-MIT) or [Apache 2.0](https://github.com/nsrosenqvist/ampelos/blob/main/LICENSE-APACHE). Source: [github.com/nsrosenqvist/ampelos](https://github.com/nsrosenqvist/ampelos). [Back to Home](Home).
+croft is dual-licensed under [MIT](https://github.com/nsrosenqvist/croft/blob/main/LICENSE-MIT) or [Apache 2.0](https://github.com/nsrosenqvist/croft/blob/main/LICENSE-APACHE). Source: [github.com/nsrosenqvist/croft](https://github.com/nsrosenqvist/croft). [Back to Home](Home).

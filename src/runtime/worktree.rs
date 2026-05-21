@@ -1,16 +1,16 @@
 //! Worktree identity and offset computation.
 //!
-//! ampelos gives each git checkout (main or `git worktree add` linked)
+//! croft gives each git checkout (main or `git worktree add` linked)
 //! a deterministic identity:
 //!
 //! - **slug**: a normalised string derived from the branch name (or
 //!   worktree dir, or short SHA — see [`BaseRef`]).
 //! - **offset**: an integer in `0..modulus`, either pinned via
-//!   `[worktrees.assign]` in ampelos.toml or computed by hashing
+//!   `[worktrees.assign]` in croft.toml or computed by hashing
 //!   `<seed>|<slug>` with FNV-1a.
 //!
 //! Recipes reference these via the env vars [`Env::resolve`] injects:
-//! `AMPELOS_WORKTREE_SLUG`, `AMPELOS_WORKTREE_OFFSET`, and (when
+//! `CROFT_WORKTREE_SLUG`, `CROFT_WORKTREE_OFFSET`, and (when
 //! isolation is on) `COMPOSE_PROJECT_NAME`. Pure functions
 //! ([`slugify`], [`fnv1a_32`], [`offset_for`]) are exposed so they're
 //! unit-testable without git.
@@ -143,7 +143,7 @@ async fn detect_base_ref(project_root: &Path) -> BaseRef {
 ///
 /// Order:
 /// 1. Caller-supplied `override_branch` (from `[diff] base = ...`
-///    in `ampelos.toml`).
+///    in `croft.toml`).
 /// 2. `git symbolic-ref refs/remotes/origin/HEAD` — the canonical
 ///    "remote default branch" answer when a remote is configured.
 /// 3. Local-branch fallback: `main`, `master`, `develop`, `trunk`,
@@ -185,7 +185,7 @@ pub async fn merge_base(project_root: &Path, trunk: &str) -> Option<String> {
 /// Resolve the top of the current git working tree —
 /// `git rev-parse --show-toplevel`. This is the right anchor for
 /// "where should a new worktree go?" because it normalises away
-/// the user's invocation cwd: ampelos run from a subdir, a linked
+/// the user's invocation cwd: croft run from a subdir, a linked
 /// worktree, or the main checkout all collapse to the same answer
 /// (the worktree's root), and its parent is the natural sibling
 /// directory for `git worktree add <path>`.
@@ -484,7 +484,7 @@ detached
         // Override-set short-circuits before any git invocation, so
         // a nonsense path still yields the override. Confirms the
         // priority order documented on `detect_trunk`.
-        let path = std::path::Path::new("/nonexistent-ampelos-test-path");
+        let path = std::path::Path::new("/nonexistent-croft-test-path");
         let result = detect_trunk(path, Some("release/stable")).await;
         assert_eq!(result.as_deref(), Some("release/stable"));
     }
@@ -494,7 +494,7 @@ detached
         // Empty string override is treated as "unset" — not a valid
         // branch name, and forcing `Some("")` would short-circuit
         // detection where users probably meant None.
-        let path = std::path::Path::new("/nonexistent-ampelos-test-path");
+        let path = std::path::Path::new("/nonexistent-croft-test-path");
         let result = detect_trunk(path, Some("")).await;
         // Falls through to git lookups, which fail on nonexistent
         // path → None.
@@ -522,8 +522,8 @@ detached
 
     #[test]
     fn fnv1a_is_deterministic() {
-        assert_eq!(fnv1a_32("ampelos|feature-x"), fnv1a_32("ampelos|feature-x"));
-        assert_ne!(fnv1a_32("ampelos|feature-x"), fnv1a_32("ampelos|feature-y"));
+        assert_eq!(fnv1a_32("croft|feature-x"), fnv1a_32("croft|feature-x"));
+        assert_ne!(fnv1a_32("croft|feature-x"), fnv1a_32("croft|feature-y"));
     }
 
     #[test]

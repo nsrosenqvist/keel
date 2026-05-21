@@ -3,11 +3,11 @@
 //! plus per-source overrides applied on top of the upstream manifest.
 //!
 //! This module owns only the wire format and structural validation.
-//! The actual cache + apply pipeline lives in `ampelos-agents`.
+//! The actual cache + apply pipeline lives in `croft-agents`.
 
 use serde::Deserialize;
 
-const DEFAULT_MANIFEST_PATH: &str = "ampelos-agents.toml";
+const DEFAULT_MANIFEST_PATH: &str = "croft-agents.toml";
 
 fn default_manifest_path() -> String {
     DEFAULT_MANIFEST_PATH.to_string()
@@ -21,7 +21,7 @@ const fn true_default() -> bool {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
-    /// When true (default), `ampelos install` runs `ampelos agents
+    /// When true (default), `croft install` runs `croft agents
     /// install` as a synthetic step before the git-hook step. Mirrors
     /// the `[install].install_git_hooks` flag.
     #[serde(default = "true_default")]

@@ -259,7 +259,7 @@ mod tests {
         handle
             .cmd_tx
             .send(WorkerCommand::SetTmuxSession(Some(
-                "ampelos-bell-test-nonexistent".into(),
+                "croft-bell-test-nonexistent".into(),
             )))
             .unwrap();
         handle.cmd_tx.send(WorkerCommand::PokeTmuxWindows).unwrap();

@@ -1,7 +1,7 @@
-//! Content-addressed git cache for ampelos.
+//! Content-addressed git cache for croft.
 //!
-//! ampelos owns the cache — it never delegates to a third-party tool.
-//! Every cache lives at `<project>/.ampelos/cache/<kind>/<key>/`, one
+//! croft owns the cache — it never delegates to a third-party tool.
+//! Every cache lives at `<project>/.croft/cache/<kind>/<key>/`, one
 //! directory per (url, rev) pair, where `<kind>` is selected by the
 //! caller (hooks, agents, …). Cache contents survive across runs;
 //! callers pass `force = true` to wipe and re-clone.
@@ -9,7 +9,7 @@
 //! Layout per cached repo:
 //!
 //! ```text
-//! .ampelos/cache/<kind>/<key>/
+//! .croft/cache/<kind>/<key>/
 //!   ├── clone/            // git worktree (depth-1 when possible)
 //!   └── meta.json         // resolved SHA + clone metadata
 //! ```
@@ -26,7 +26,7 @@ const CLONE_SUBDIR: &str = "clone";
 const META_FILE: &str = "meta.json";
 
 /// Logical cache namespace. Selects the on-disk directory under
-/// `.ampelos/cache/`. New variants only need to map to a path segment.
+/// `.croft/cache/`. New variants only need to map to a path segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
     Hooks,
@@ -43,7 +43,7 @@ impl CacheKind {
 }
 
 /// Minimal input for a cache lookup. Callers translate their own
-/// repo/source types into this on the way in so `ampelos-cache` does
+/// repo/source types into this on the way in so `croft-cache` does
 /// not depend on any of them.
 #[derive(Debug, Clone)]
 pub struct RepoRef {
@@ -75,7 +75,7 @@ pub struct CacheMeta {
 /// by [`clone_or_reuse`]; callers don't need to pre-create it.
 pub fn cache_root(project_root: &Path, kind: CacheKind) -> PathBuf {
     project_root
-        .join(".ampelos")
+        .join(".croft")
         .join("cache")
         .join(kind.as_segment())
 }

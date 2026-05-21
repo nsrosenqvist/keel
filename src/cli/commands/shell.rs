@@ -1,4 +1,4 @@
-//! `ampelos shell` — drop into an interactive shell.
+//! `croft shell` — drop into an interactive shell.
 //!
 //! Two flavours:
 //!
@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 
-/// Entry point for `ampelos shell` and `ampelos shell --service <name>`.
+/// Entry point for `croft shell` and `croft shell --service <name>`.
 pub async fn run(
     config: &Config,
     project_root: &Path,
@@ -39,7 +39,7 @@ async fn shell_into_devcontainer(
 ) -> Result<i32> {
     if !config.devcontainer.enabled {
         anyhow::bail!(
-            "no shell target. Either enable `[devcontainer] enabled = true` in ampelos.toml, \
+            "no shell target. Either enable `[devcontainer] enabled = true` in croft.toml, \
              or pass `--service <name>` to enter a compose service."
         );
     }

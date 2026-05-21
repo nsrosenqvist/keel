@@ -4,23 +4,24 @@ Instructions for AI agents (and humans) working on this repository.
 
 ## North Star
 
-**ampelos is the dev-loop wrapper that adapts to your project, instead
-of forcing your project to adapt to it.**
+**croft is the dev workspace you tend — it learns the shape of
+your project, instead of demanding your project match it.**
 
 Every developer ends up writing a `dev` shell script per project: it
 preflights containers, routes commands between host and container,
-wraps recurring tasks (`up`, `shell`, `test`, `migrate`, `check`),
+holds recurring tasks (`up`, `shell`, `test`, `migrate`, `check`),
 and forwards args to in-container tooling. The script grows,
 refactors, and never quite leaves the repo it was born in. Tools like
 DDEV solve this by enforcing a rigid format. Tools like `just` or
-`mprocs` solve a slice and stop.
+`mprocs` tend a slice and stop.
 
-ampelos is the union: a single binary that defines commands two ways
-(declarative TOML *or* plain scripts), knows where they should run
-(host vs service via a Backend abstraction), doubles as a TUI
-dashboard, and handles dev setup + git hooks + agent instructions
-with `.pre-commit-config.yaml` compatibility for adoption without
-abandoning existing ecosystems.
+croft is the small plot where all of that lives together: a single
+binary that defines commands two ways (declarative TOML *or* plain
+scripts), knows where they should run (host vs service via a Backend
+abstraction), doubles as a TUI dashboard, and keeps dev setup, git
+hooks, and agent instructions on the same ground — with
+`.pre-commit-config.yaml` compatibility so you don't have to abandon
+the tools you already use.
 
 ## Required verification step
 
@@ -85,37 +86,37 @@ and add `!` after type/scope:
   allow. No runtime reflection — TOML schemas are serde-derived at
   compile time.
 - **One source of truth per concern.** A recipe is defined once. The
-  CLI runs it. The TUI runs it. Both go through `ampelos::runtime`.
-- **No dead config.** Every option in `ampelos.toml` must change
+  CLI runs it. The TUI runs it. Both go through `croft::runtime`.
+- **No dead config.** Every option in `croft.toml` must change
   observable behaviour, or it doesn't ship.
 
 ## Deep-dive docs live in the wiki
 
 End-user documentation, configuration / commands reference, and
 per-subsystem deep-dives live in the
-[**ampelos wiki**](https://github.com/nsrosenqvist/ampelos/wiki),
+[**croft wiki**](https://github.com/nsrosenqvist/croft/wiki),
 auto-synced from [`docs/`](./docs/) on every push to `main`. The
 on-disk `docs/` tree is the source of truth — edit there, the wiki
 updates.
 
 Most relevant for an agent making code changes:
 
-- [Architecture](https://github.com/nsrosenqvist/ampelos/wiki/Architecture)
+- [Architecture](https://github.com/nsrosenqvist/croft/wiki/Architecture)
   — operating principles in full, crate layout, dependency graph,
   cross-context patterns (value objects, the `Backend` trait,
   managed blocks).
-- [Contributing](https://github.com/nsrosenqvist/ampelos/wiki/Contributing)
+- [Contributing](https://github.com/nsrosenqvist/croft/wiki/Contributing)
   — verification ladder, commit conventions, how to add a new
   example, PR conventions.
-- [Configuration Reference](https://github.com/nsrosenqvist/ampelos/wiki/Configuration-Reference)
-  and [Commands Reference](https://github.com/nsrosenqvist/ampelos/wiki/Commands-Reference)
-  — every `ampelos.toml` key and every CLI subcommand.
-- Subsystem pages: [Hooks](https://github.com/nsrosenqvist/ampelos/wiki/Hooks),
-  [Agents](https://github.com/nsrosenqvist/ampelos/wiki/Agents),
-  [Install Flow](https://github.com/nsrosenqvist/ampelos/wiki/Install-Flow),
-  [Worktrees](https://github.com/nsrosenqvist/ampelos/wiki/Worktrees),
-  [TUI](https://github.com/nsrosenqvist/ampelos/wiki/TUI),
-  [Diff View](https://github.com/nsrosenqvist/ampelos/wiki/Diff-View).
+- [Configuration Reference](https://github.com/nsrosenqvist/croft/wiki/Configuration-Reference)
+  and [Commands Reference](https://github.com/nsrosenqvist/croft/wiki/Commands-Reference)
+  — every `croft.toml` key and every CLI subcommand.
+- Subsystem pages: [Hooks](https://github.com/nsrosenqvist/croft/wiki/Hooks),
+  [Agents](https://github.com/nsrosenqvist/croft/wiki/Agents),
+  [Install Flow](https://github.com/nsrosenqvist/croft/wiki/Install-Flow),
+  [Worktrees](https://github.com/nsrosenqvist/croft/wiki/Worktrees),
+  [TUI](https://github.com/nsrosenqvist/croft/wiki/TUI),
+  [Diff View](https://github.com/nsrosenqvist/croft/wiki/Diff-View).
 
 When you change a feature, update the relevant wiki page in the same
 PR. Each page cites the source file(s) it describes.
@@ -125,7 +126,7 @@ PR. Each page cites the source file(s) it describes.
 - Default to fewer features, smaller surface area, sharper traits.
 - A single integration test that runs against a real fixture beats
   five mocked unit tests.
-- If a change makes `ampelos` slower for the common case, it does not
+- If a change makes `croft` slower for the common case, it does not
   ship without a measurement.
-- Read `ampelos.toml` semantics conservatively: silent inference is a
+- Read `croft.toml` semantics conservatively: silent inference is a
   bug.

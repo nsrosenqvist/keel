@@ -1,8 +1,8 @@
-//! Domain model for `ampelos.toml`.
+//! Domain model for `croft.toml`.
 //!
 //! Types here are value objects: they are constructed from the TOML source,
 //! validated, and then handed (immutable) to the runtime. They expose no
-//! behaviour beyond accessors. Behaviour lives in `ampelos-runtime`.
+//! behaviour beyond accessors. Behaviour lives in `croft-runtime`.
 
 use crate::config::agents::AgentsConfig;
 use crate::config::install::InstallConfig;
@@ -10,7 +10,7 @@ use crate::config::scripts::ScriptCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// Top-level configuration loaded from a project's `ampelos.toml`.
+/// Top-level configuration loaded from a project's `croft.toml`.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -41,13 +41,13 @@ pub struct Config {
     #[serde(default)]
     pub ui: UiConfig,
 
-    /// Project-defined hooks. `[hooks]` in `ampelos.toml` is a table whose
+    /// Project-defined hooks. `[hooks]` in `croft.toml` is a table whose
     /// keys are stage names (`pre-commit`, `pre-push`, ...) and whose
     /// values are lists of recipe / script names to run for that stage.
     #[serde(default)]
     pub hooks: HooksConfig,
 
-    /// Per-worktree isolation settings. Drives `AMPELOS_WORKTREE_*` env
+    /// Per-worktree isolation settings. Drives `CROFT_WORKTREE_*` env
     /// var injection and the `COMPOSE_PROJECT_NAME` prefix.
     #[serde(default)]
     pub worktrees: WorktreesConfig,
@@ -58,27 +58,27 @@ pub struct Config {
     #[serde(default)]
     pub diff: DiffConfig,
 
-    /// Non-container services ampelos tracks alongside whatever the
+    /// Non-container services croft tracks alongside whatever the
     /// container backend manages (compose, podman, etc.). Lets the
     /// TUI and the lifecycle keymap operate on a system Postgres,
     /// a `tunnel` daemon, etc. as if they were compose services.
     #[serde(default)]
     pub services: ServicesConfig,
 
-    /// Scripts discovered under `.ampelos/commands/`. Populated by
+    /// Scripts discovered under `.croft/commands/`. Populated by
     /// [`crate::config::loader::load_project`]; never serialized.
     #[serde(skip)]
     pub scripts: BTreeMap<String, ScriptCommand>,
 
     /// Install-time configuration: ordered step plan plus the steps
-    /// discovered under `.ampelos/install/`. Authors who don't ship an
+    /// discovered under `.croft/install/`. Authors who don't ship an
     /// install flow can ignore this entirely — `[install]` defaults to
     /// "no steps, hooks still installed automatically".
     #[serde(default)]
     pub install: InstallConfig,
 
     /// Agent-instruction sources: `[[agents.sources]]` entries plus the
-    /// `[agents]` knobs that control them. Drives `ampelos agents
+    /// `[agents]` knobs that control them. Drives `croft agents
     /// install/update` and the synthetic install step.
     #[serde(default)]
     pub agents: AgentsConfig,
@@ -113,7 +113,7 @@ pub struct EditorConfig {
     pub command: Option<String>,
 
     /// Force terminal (true) or GUI (false) launch mode, overriding
-    /// the built-in registry. Useful for editors ampelos doesn't know.
+    /// the built-in registry. Useful for editors croft doesn't know.
     #[serde(default)]
     pub terminal: Option<bool>,
 
@@ -134,13 +134,13 @@ pub struct EditorConfig {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DevcontainerConfig {
-    /// Master switch. When false, ampelos behaves exactly as before
+    /// Master switch. When false, croft behaves exactly as before
     /// even if a `devcontainer.json` exists on disk.
     #[serde(default)]
     pub enabled: bool,
 
     /// Override the auto-detected `devcontainer.json` path
-    /// (project-root-relative or absolute). When unset, ampelos looks
+    /// (project-root-relative or absolute). When unset, croft looks
     /// for `.devcontainer/devcontainer.json` then `.devcontainer.json`.
     #[serde(default)]
     pub path: Option<String>,
@@ -148,9 +148,9 @@ pub struct DevcontainerConfig {
 
 /// Worktree isolation configuration.
 ///
-/// ampelos gives each git worktree a deterministic identity (slug +
+/// croft gives each git worktree a deterministic identity (slug +
 /// integer offset). Recipes reference these via the
-/// `AMPELOS_WORKTREE_OFFSET` env var (typically through the
+/// `CROFT_WORKTREE_OFFSET` env var (typically through the
 /// [`EnvSpec::base`] / [`EnvSpec::offset`] arithmetic shorthand) so two
 /// worktrees of the same project can run side-by-side without port
 /// collisions.
@@ -171,7 +171,7 @@ pub struct WorktreesConfig {
     #[serde(default)]
     pub seed: String,
 
-    /// When true (default) and a worktree slug is non-empty, ampelos
+    /// When true (default) and a worktree slug is non-empty, croft
     /// sets `COMPOSE_PROJECT_NAME = <project>-<slug>` so each
     /// worktree's docker compose stack is independent. Skipped when the
     /// user already declared `COMPOSE_PROJECT_NAME` themselves.
@@ -184,15 +184,15 @@ pub struct WorktreesConfig {
     #[serde(default)]
     pub assign: BTreeMap<String, u32>,
 
-    /// When set, ampelos materialises the resolved `[env]` (plus the
+    /// When set, croft materialises the resolved `[env]` (plus the
     /// three worktree-derived built-ins) into this dotenv file as a
-    /// marker-delimited block on every CLI invocation, and `ampelos
+    /// marker-delimited block on every CLI invocation, and `croft
     /// hooks install` (without explicit `--stages`) auto-includes
     /// `post-checkout` / `post-merge` so the file stays fresh even
     /// when the user runs `docker compose` directly. Path is
     /// project-root-relative unless absolute. Omitting the field
     /// preserves the original opt-in behaviour: nothing is written
-    /// until the user runs `ampelos env --write` themselves.
+    /// until the user runs `croft env --write` themselves.
     #[serde(default)]
     pub dotenv: Option<String>,
 }
@@ -285,7 +285,7 @@ pub struct ServicesConfig {
     pub systemd: Vec<SystemdService>,
 }
 
-/// Generic service: the user supplies the shell commands ampelos runs
+/// Generic service: the user supplies the shell commands croft runs
 /// for each lifecycle action. `status` is required because the TUI
 /// needs to render running/stopped state; `start` and `stop` are
 /// required because every keymap action needs a target. The rest are
@@ -338,7 +338,7 @@ pub enum SystemdScope {
     System,
 }
 
-/// Native ampelos hook configuration. Keyed by stage name.
+/// Native croft hook configuration. Keyed by stage name.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct HooksConfig {
@@ -372,7 +372,7 @@ pub struct ProjectConfig {
 /// The diff view scopes its file list and per-file diffs against a
 /// merge-base with the project's trunk branch — i.e. "everything
 /// I've changed since I diverged from main." When `base` is unset,
-/// ampelos picks a trunk via:
+/// croft picks a trunk via:
 ///   1. `git symbolic-ref refs/remotes/origin/HEAD` (the remote
 ///      default branch — the canonical answer).
 ///   2. Local fallback: `main`, `master`, `develop`, `trunk` (in
@@ -450,7 +450,7 @@ const fn true_default() -> bool {
 /// 2. `base` + `offset`: integer-typed shorthand for
 ///    `value = base.parse::<i64>() + existing[offset].parse::<i64>()`.
 ///    The `offset` lookup is on the env-so-far, so referencing
-///    `AMPELOS_WORKTREE_OFFSET` makes ports automatically vary per
+///    `CROFT_WORKTREE_OFFSET` makes ports automatically vary per
 ///    worktree. Missing offset var → falls back to `base`.
 /// 3. Pre-existing process / dotenv value for the same name.
 /// 4. `from_command` stdout (trimmed).
@@ -477,7 +477,7 @@ pub struct EnvSpec {
     pub base: Option<String>,
 
     /// Name of the env var whose value is parsed as an integer offset
-    /// added to `base`. Typically `"AMPELOS_WORKTREE_OFFSET"`.
+    /// added to `base`. Typically `"CROFT_WORKTREE_OFFSET"`.
     #[serde(default)]
     pub offset: Option<String>,
 }
@@ -497,7 +497,7 @@ pub struct Recipe {
     pub desc: Option<String>,
 
     /// What to run. Either a single shell-parsed string or a list of steps.
-    /// Multi-step logic beyond a flat list belongs in `.ampelos/commands/`.
+    /// Multi-step logic beyond a flat list belongs in `.croft/commands/`.
     pub run: Run,
 
     /// Service to exec inside (via the configured backend). Absent → host.
@@ -748,13 +748,13 @@ mod tests {
         let cfg: Config = toml::from_str(
             r#"
             [env]
-            APP_PORT = { base = "8080", offset = "AMPELOS_WORKTREE_OFFSET" }
+            APP_PORT = { base = "8080", offset = "CROFT_WORKTREE_OFFSET" }
         "#,
         )
         .unwrap();
         let spec = &cfg.env["APP_PORT"];
         assert_eq!(spec.base.as_deref(), Some("8080"));
-        assert_eq!(spec.offset.as_deref(), Some("AMPELOS_WORKTREE_OFFSET"));
+        assert_eq!(spec.offset.as_deref(), Some("CROFT_WORKTREE_OFFSET"));
     }
 
     #[test]

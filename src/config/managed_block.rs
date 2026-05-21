@@ -1,8 +1,8 @@
-//! Marker-delimited "ampelos-managed" block writer.
+//! Marker-delimited "croft-managed" block writer.
 //!
-//! Several ampelos features write structured content into files the user
+//! Several croft features write structured content into files the user
 //! also edits — the worktree-derived dotenv block, the auto-generated
-//! `.ampelos/.gitignore`, and (eventually) anything else that needs to
+//! `.croft/.gitignore`, and (eventually) anything else that needs to
 //! coexist with hand-edited lines. This module centralises the markers,
 //! the strip/replace algorithm, and the idempotent write logic so each
 //! feature stops reinventing them.
@@ -21,15 +21,15 @@ use std::path::Path;
 /// Opening marker line. Match-prefix tolerant so old files with slightly
 /// different suffixes (`(auto)`, `(auto-generated)`, …) still strip
 /// cleanly during the migration window.
-pub const BEGIN_MARKER: &str = "# >>> ampelos-managed (auto-generated; do not edit by hand) >>>";
+pub const BEGIN_MARKER: &str = "# >>> croft-managed (auto-generated; do not edit by hand) >>>";
 
 /// Closing marker line.
-pub const END_MARKER: &str = "# <<< ampelos-managed <<<";
+pub const END_MARKER: &str = "# <<< croft-managed <<<";
 
-const BEGIN_PREFIX: &str = "# >>> ampelos-managed";
-const END_PREFIX: &str = "# <<< ampelos-managed";
+const BEGIN_PREFIX: &str = "# >>> croft-managed";
+const END_PREFIX: &str = "# <<< croft-managed";
 
-/// Idempotent write: replace (or insert) the ampelos-managed block in
+/// Idempotent write: replace (or insert) the croft-managed block in
 /// `path` with `body`. Returns `true` when the file was modified,
 /// `false` when the on-disk contents already matched.
 ///
@@ -67,7 +67,7 @@ pub fn write(path: &Path, body: &str) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Drop the ampelos-managed block (markers and every line between) from
+/// Drop the croft-managed block (markers and every line between) from
 /// `content`, preserving everything else. Tolerates absent block and
 /// minor variations in the marker suffix.
 pub fn strip(content: &str) -> String {
@@ -109,7 +109,8 @@ mod tests {
 
     #[test]
     fn strip_removes_block_and_keeps_surroundings() {
-        let content = "A=1\n# >>> ampelos-managed (auto) >>>\nFOO=bar\nBAZ=qux\n# <<< ampelos-managed <<<\nB=2\n";
+        let content =
+            "A=1\n# >>> croft-managed (auto) >>>\nFOO=bar\nBAZ=qux\n# <<< croft-managed <<<\nB=2\n";
         assert_eq!(strip(content), "A=1\nB=2\n");
     }
 
@@ -156,7 +157,7 @@ mod tests {
         let path = dir.path().join("file.txt");
         std::fs::write(
             &path,
-            "A=1\n# >>> ampelos-managed (auto) >>>\nOLD=1\n# <<< ampelos-managed <<<\nB=2\n",
+            "A=1\n# >>> croft-managed (auto) >>>\nOLD=1\n# <<< croft-managed <<<\nB=2\n",
         )
         .unwrap();
         write(&path, "NEW=1\n").unwrap();

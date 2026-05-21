@@ -2,12 +2,12 @@
 # @desc: Ask whether to seed demo data
 # @interactive: yes
 # @optional: yes
-# Demonstrates `ampelos lib confirm` as a prompt that gates the next
+# Demonstrates `croft lib confirm` as a prompt that gates the next
 # step. Marked optional so picking "no" doesn't fail the install —
 # the user simply opts out of the demo data step.
 set -eu
-if ampelos lib confirm "Seed the database with demo data?" --default no; then
-  echo "User opted in. Run ampelos fresh whenever the DB is ready."
+if croft lib confirm "Seed the database with demo data?" --default no; then
+  echo "User opted in. Run croft fresh whenever the DB is ready."
 else
   # Non-zero exit + optional = step recorded as Skipped.
   exit 1

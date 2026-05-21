@@ -1,4 +1,4 @@
-# Smallest useful ampelos config. No backend, just host commands.
+# Smallest useful croft config. No backend, just host commands.
 
 [project]
 name = "minimal"
@@ -8,7 +8,7 @@ backend = "none"
 
 [command.greet]
 desc = "Say hello"
-run  = "echo hello from ampelos"
+run  = "echo hello from croft"
 
 [command.check]
 desc = "Format + lint + test, in that order"

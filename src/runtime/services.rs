@@ -1,4 +1,4 @@
-//! Translators from `ampelos-config` service declarations into the
+//! Translators from `croft-config` service declarations into the
 //! `CustomEntry` shape that `crate::container::custom::CustomBackend`
 //! consumes. Pure functions — no I/O, no async, no systemd
 //! interrogation. Keeps the container crate config-free and the

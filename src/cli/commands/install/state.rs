@@ -1,4 +1,4 @@
-//! `.ampelos/install.state.json` — what's been run, what's still pending.
+//! `.croft/install.state.json` — what's been run, what's still pending.
 //!
 //! The state file is a thin record of per-step outcome plus an overall
 //! `started_at`. The runner reads it to decide what `--resume` should
@@ -101,7 +101,7 @@ impl InstallState {
             serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
         if parsed.version != SCHEMA_VERSION {
             anyhow::bail!(
-                "{} has version {}, expected {}. Remove the file or run `ampelos install --restart`.",
+                "{} has version {}, expected {}. Remove the file or run `croft install --restart`.",
                 path.display(),
                 parsed.version,
                 SCHEMA_VERSION,
@@ -142,7 +142,7 @@ impl InstallState {
         self.steps.iter().position(|s| !s.status.is_resolved())
     }
 
-    /// Locate a record by name. Used by single-step mode (`ampelos
+    /// Locate a record by name. Used by single-step mode (`croft
     /// install <name>`) to update just one entry.
     pub fn find_mut(&mut self, name: &str) -> Option<&mut StepRecord> {
         self.steps.iter_mut().find(|s| s.name == name)
@@ -150,7 +150,7 @@ impl InstallState {
 }
 
 fn state_path(project_root: &Path) -> PathBuf {
-    project_root.join(".ampelos").join("install.state.json")
+    project_root.join(".croft").join("install.state.json")
 }
 
 fn now_ms() -> u64 {
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn version_mismatch_errors() {
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join(".ampelos")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".croft")).unwrap();
         std::fs::write(
             state_path(dir.path()),
             r#"{"version":999,"started_at_ms":0,"steps":[]}"#,

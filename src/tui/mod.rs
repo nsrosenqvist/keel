@@ -1,4 +1,4 @@
-//! ampelos TUI — embedded dashboard.
+//! croft TUI — embedded dashboard.
 //!
 //! First slice (this commit): a navigable browser. Sidebar lists every
 //! recipe and script declared in the project; the right-hand detail pane

@@ -1,18 +1,18 @@
-//! `[install]` configuration and `.ampelos/install/` step discovery.
+//! `[install]` configuration and `.croft/install/` step discovery.
 //!
 //! The install flow has two surfaces:
 //!
 //! - **Declarative** — a top-level `[install]` table that names an
 //!   ordered sequence of steps. Each entry is either the name of a
 //!   recipe / discovered step or an inline `{ run = "…", … }` table.
-//! - **Discovered** — shell files under `.ampelos/install/` are picked up
+//! - **Discovered** — shell files under `.croft/install/` are picked up
 //!   automatically, sorted by file name. When `[install].steps` is
 //!   unset, the discovered list *is* the install plan, which is enough
 //!   for projects that prefer to author every step as a script.
 //!
 //! Install steps are deliberately kept **out** of [`crate::config::Config::commands`]
 //! and [`crate::config::Config::scripts`]: they should not surface in
-//! `ampelos list` or the TUI sidebar. The author can still reference a
+//! `croft list` or the TUI sidebar. The author can still reference a
 //! regular recipe from `[install].steps` if they want a step to also be
 //! runnable interactively — that's an explicit opt-in.
 
@@ -27,25 +27,25 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct InstallConfig {
     /// Ordered list of step references. When empty, the install plan
-    /// is the alphabetical listing of `.ampelos/install/*` instead.
+    /// is the alphabetical listing of `.croft/install/*` instead.
     #[serde(default)]
     pub steps: Vec<InstallStepRef>,
 
     /// When true (default), an "install-hooks" pseudo-step runs after
     /// the user-defined steps to install git-hook shims and prefetch
     /// any external hook repos referenced by `.pre-commit-config.yaml`.
-    /// Set `false` if the project doesn't want hooks managed by ampelos.
+    /// Set `false` if the project doesn't want hooks managed by croft.
     #[serde(default = "true_default")]
     pub install_git_hooks: bool,
 
     /// Path of the auto-managed `.gitignore`. Relative paths resolve
     /// against the project root. The default value is intentionally
-    /// inside `.ampelos/` so it only governs ampelos-owned files and
+    /// inside `.croft/` so it only governs croft-owned files and
     /// can't accidentally shadow the project's own root `.gitignore`.
     #[serde(default = "default_gitignore")]
     pub gitignore: String,
 
-    /// Steps discovered under `.ampelos/install/`. Populated by the
+    /// Steps discovered under `.croft/install/`. Populated by the
     /// loader after the TOML deserialisation pass; never serialised.
     #[serde(skip)]
     pub discovered: BTreeMap<String, InstallStepScript>,
@@ -78,7 +78,7 @@ const fn true_default() -> bool {
 }
 
 fn default_gitignore() -> String {
-    ".ampelos/.gitignore".to_string()
+    ".croft/.gitignore".to_string()
 }
 
 /// One entry in `[install].steps`.
@@ -103,12 +103,12 @@ pub enum InstallStepRef {
 #[serde(deny_unknown_fields)]
 pub struct InlineStep {
     /// Display name used in the renderer row and the state file.
-    /// Required so a failed step can be referenced by `ampelos install
+    /// Required so a failed step can be referenced by `croft install
     /// <name>` on retry.
     pub name: String,
 
     /// Shell command to run. Single string form only; multi-step
-    /// inline blocks belong in a `.ampelos/install/<name>` file or a
+    /// inline blocks belong in a `.croft/install/<name>` file or a
     /// regular recipe.
     pub run: String,
 
@@ -139,12 +139,12 @@ pub struct InlineStep {
     /// When true, the renderer hands the terminal directly to the
     /// step (inherited stdio) for the duration of its run, then
     /// resumes drawing afterwards. Set for steps that prompt via
-    /// `ampelos lib ask | confirm | password | select | filter`.
+    /// `croft lib ask | confirm | password | select | filter`.
     #[serde(default)]
     pub interactive: bool,
 }
 
-/// A step discovered under `.ampelos/install/`. Same frontmatter parser
+/// A step discovered under `.croft/install/`. Same frontmatter parser
 /// as [`ScriptCommand`] — install-specific keys (`cwd`, `optional`,
 /// `interactive`) are accepted on either kind so authors don't have to
 /// memorise which keys live where.
@@ -177,8 +177,8 @@ impl From<ScriptCommand> for InstallStepScript {
     }
 }
 
-/// Scan `.ampelos/install/` for step files. Same skip rules as the
-/// `.ampelos/commands/` scan (hidden / underscore-prefixed files are
+/// Scan `.croft/install/` for step files. Same skip rules as the
+/// `.croft/commands/` scan (hidden / underscore-prefixed files are
 /// ignored, non-regular files skipped). Returns the steps keyed by
 /// name plus the alphabetical filename order so the runner can iterate
 /// without re-sorting.
@@ -237,7 +237,7 @@ mod tests {
         let cfg: Config = toml::from_str("").unwrap();
         assert!(cfg.install.steps.is_empty());
         assert!(cfg.install.install_git_hooks);
-        assert_eq!(cfg.install.gitignore, ".ampelos/.gitignore");
+        assert_eq!(cfg.install.gitignore, ".croft/.gitignore");
         assert!(cfg.install.discovered.is_empty());
     }
 

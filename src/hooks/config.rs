@@ -1,14 +1,14 @@
 //! `.pre-commit-config.yaml` schema.
 //!
-//! The schema ampelos reads is a strict subset of pre-commit's. Unknown keys
+//! The schema croft reads is a strict subset of pre-commit's. Unknown keys
 //! are tolerated (forward compat with the upstream format). The
-//! [`HookLanguage`] tag is **advisory metadata** — ampelos does not gate
+//! [`HookLanguage`] tag is **advisory metadata** — croft does not gate
 //! execution on it: every hook's `entry` is parsed with `shell_words` and
 //! spawned directly, with the runtime (python, node, …) expected to be on
-//! `PATH` after `ampelos install`. The one shape that can't be exec'd
+//! `PATH` after `croft install`. The one shape that can't be exec'd
 //! verbatim is `repo: meta`; the runner rejects it at run-time.
 //!
-//! ampelos-specific extension keys (parsed but ignored by pre-commit):
+//! croft-specific extension keys (parsed but ignored by pre-commit):
 //!
 //! - `in: "<service>"` on a [`HookSpec`] routes the hook through the
 //!   configured container [`Backend`](crate::container::Backend), the
@@ -41,7 +41,7 @@ impl Repo {
     /// True when the repo's hooks are defined inline in the user's
     /// `.pre-commit-config.yaml` (no clone needed). `repo: meta` was
     /// historically treated as local; it isn't — meta references
-    /// pre-commit's built-in lint hooks, which ampelos does not
+    /// pre-commit's built-in lint hooks, which croft does not
     /// implement. The runner errors when it encounters one.
     pub fn is_local(&self) -> bool {
         self.repo == "local"
@@ -84,7 +84,7 @@ pub struct UpstreamHook {
     pub stages: Vec<String>,
     #[serde(default)]
     pub always_run: Option<bool>,
-    /// ampelos extension: target service. Upstream repos rarely set this;
+    /// croft extension: target service. Upstream repos rarely set this;
     /// it exists so a vendored `.pre-commit-hooks.yaml` can declare a
     /// sensible default that users can still override.
     #[serde(default, rename = "in")]
@@ -182,7 +182,7 @@ pub struct HookSpec {
     pub stages: Vec<String>,
     #[serde(default)]
     pub always_run: bool,
-    /// ampelos extension: when set, the hook execs inside this container
+    /// croft extension: when set, the hook execs inside this container
     /// service (via the configured [`Backend`](crate::container::Backend))
     /// instead of running on the host or in the devcontainer. Matches
     /// recipe `in = "<service>"` semantics. Plain pre-commit ignores
@@ -193,11 +193,11 @@ pub struct HookSpec {
 
 /// Hook language tag from `.pre-commit-config.yaml` / `.pre-commit-hooks.yaml`.
 ///
-/// ampelos keeps this enum for parse fidelity and so future tooling
-/// (`ampelos hooks list`, doctor) can reason about declared runtimes — but
+/// croft keeps this enum for parse fidelity and so future tooling
+/// (`croft hooks list`, doctor) can reason about declared runtimes — but
 /// it is **not** consulted by the runner. Every hook's `entry` is exec'd
 /// verbatim regardless of language; the user is responsible for putting
-/// the required runtime on `PATH` (typically through `ampelos install`).
+/// the required runtime on `PATH` (typically through `croft install`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HookLanguage {
@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_ampelos_service_extension() {
+    fn parses_croft_service_extension() {
         let cfg = parse(
             r#"
             repos:

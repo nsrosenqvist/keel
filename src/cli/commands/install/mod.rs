@@ -1,10 +1,10 @@
-//! `ampelos install` — first-time project setup, idempotent on re-run.
+//! `croft install` — first-time project setup, idempotent on re-run.
 //!
 //! Submodules:
 //!
-//! - [`plan`] resolves the `[install]` config and `.ampelos/install/*`
+//! - [`plan`] resolves the `[install]` config and `.croft/install/*`
 //!   discovery into an ordered, executable list of steps.
-//! - [`state`] reads and atomically writes `.ampelos/install.state.json`.
+//! - [`state`] reads and atomically writes `.croft/install.state.json`.
 //! - [`renderer`] is a crossterm line-redraw printer that updates the
 //!   step list in place and hands the terminal to interactive steps.
 //! - [`runner`] drives the plan: spawns each step, streams output into

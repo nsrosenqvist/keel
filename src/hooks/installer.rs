@@ -1,7 +1,7 @@
 //! Git hook installer.
 //!
 //! Writes shim scripts under `.git/hooks/<stage>` that delegate to
-//! `ampelos hooks run <stage> "$@"`. Each shim contains a marker comment so
+//! `croft hooks run <stage> "$@"`. Each shim contains a marker comment so
 //! we can tell ours apart from a hand-written one and refuse to overwrite
 //! anything we didn't author.
 
@@ -9,7 +9,7 @@ use crate::hooks::error::HookError;
 use crate::hooks::git;
 use std::path::{Path, PathBuf};
 
-pub const AMPELOS_HOOK_MARKER: &str = "# managed by ampelos";
+pub const CROFT_HOOK_MARKER: &str = "# managed by croft";
 
 /// Stages we know how to install. Other stages can be supported by
 /// passing them explicitly to `install` — this list only governs which
@@ -44,7 +44,7 @@ pub fn install(project_root: &Path, stages: &[&str]) -> Result<Vec<PathBuf>, Hoo
     Ok(written)
 }
 
-/// Write a shim for a single stage. Refuses to overwrite a non-ampelos
+/// Write a shim for a single stage. Refuses to overwrite a non-croft
 /// hook.
 pub fn install_one(hooks_dir: &Path, stage: &str) -> Result<PathBuf, HookError> {
     let path = hooks_dir.join(stage);
@@ -53,7 +53,7 @@ pub fn install_one(hooks_dir: &Path, stage: &str) -> Result<PathBuf, HookError> 
             path: path.clone(),
             source,
         })?;
-        if !existing.contains(AMPELOS_HOOK_MARKER) {
+        if !existing.contains(CROFT_HOOK_MARKER) {
             return Err(HookError::HookExists { path });
         }
     }
@@ -65,7 +65,7 @@ pub fn install_one(hooks_dir: &Path, stage: &str) -> Result<PathBuf, HookError> 
     Ok(path)
 }
 
-/// Remove ampelos-managed shims from `stages`. Untouched: hooks we didn't
+/// Remove croft-managed shims from `stages`. Untouched: hooks we didn't
 /// author (the marker check) and stages that don't have a hook installed.
 pub fn uninstall(project_root: &Path, stages: &[&str]) -> Result<Vec<PathBuf>, HookError> {
     let repo_root = git::discover_repo(project_root)?;
@@ -80,7 +80,7 @@ pub fn uninstall(project_root: &Path, stages: &[&str]) -> Result<Vec<PathBuf>, H
             path: path.clone(),
             source,
         })?;
-        if !body.contains(AMPELOS_HOOK_MARKER) {
+        if !body.contains(CROFT_HOOK_MARKER) {
             continue;
         }
         std::fs::remove_file(&path).map_err(|source| HookError::Io {
@@ -95,8 +95,8 @@ pub fn uninstall(project_root: &Path, stages: &[&str]) -> Result<Vec<PathBuf>, H
 fn render_shim(stage: &str) -> String {
     format!(
         "#!/bin/sh\n\
-         {AMPELOS_HOOK_MARKER}\n\
-         exec ampelos hooks run {stage} \"$@\"\n"
+         {CROFT_HOOK_MARKER}\n\
+         exec croft hooks run {stage} \"$@\"\n"
     )
 }
 
@@ -140,8 +140,8 @@ mod tests {
         let written = install(dir.path(), &["pre-commit"]).unwrap();
         assert_eq!(written.len(), 1);
         let body = std::fs::read_to_string(&written[0]).unwrap();
-        assert!(body.contains(AMPELOS_HOOK_MARKER));
-        assert!(body.contains("ampelos hooks run pre-commit"));
+        assert!(body.contains(CROFT_HOOK_MARKER));
+        assert!(body.contains("croft hooks run pre-commit"));
     }
 
     #[test]

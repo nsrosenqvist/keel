@@ -1,4 +1,4 @@
-//! ampelos runtime — recipe resolution and execution.
+//! croft runtime — recipe resolution and execution.
 //!
 //! Bounded context: turning a parsed [`crate::config::Config`] plus a CLI
 //! invocation into actual process work, while talking to a

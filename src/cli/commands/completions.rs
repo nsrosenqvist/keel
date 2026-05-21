@@ -1,13 +1,13 @@
-//! `ampelos completions <shell>` — emit shell completion scripts to stdout.
+//! `croft completions <shell>` — emit shell completion scripts to stdout.
 //!
 //! Standard install pattern, per shell:
 //!
 //! ```sh
-//! ampelos completions bash       > /etc/bash_completion.d/ampelos
-//! ampelos completions zsh        > ~/.zsh/completions/_ampelos
-//! ampelos completions fish       > ~/.config/fish/completions/ampelos.fish
-//! ampelos completions elvish     > ~/.config/elvish/lib/ampelos.elv
-//! ampelos completions powershell > $PROFILE.ampelos.ps1
+//! croft completions bash       > /etc/bash_completion.d/croft
+//! croft completions zsh        > ~/.zsh/completions/_croft
+//! croft completions fish       > ~/.config/fish/completions/croft.fish
+//! croft completions elvish     > ~/.config/elvish/lib/croft.elv
+//! croft completions powershell > $PROFILE.croft.ps1
 //! ```
 
 use crate::cli::app::Cli;
@@ -17,6 +17,6 @@ use clap_complete::Shell;
 
 pub fn run(shell: Shell) -> Result<()> {
     let mut cmd = Cli::command();
-    clap_complete::generate(shell, &mut cmd, "ampelos", &mut std::io::stdout());
+    clap_complete::generate(shell, &mut cmd, "croft", &mut std::io::stdout());
     Ok(())
 }

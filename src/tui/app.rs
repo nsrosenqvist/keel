@@ -131,7 +131,7 @@ fn shell_escape(s: String) -> String {
 #[derive(Debug, Clone)]
 pub struct AttachRequest {
     pub session: String,
-    /// Either a window name (existing) or a marker like `ampelos-new`
+    /// Either a window name (existing) or a marker like `croft-new`
     /// telling the attach handler to spawn a fresh window with
     /// `create_with`.
     pub window: String,
@@ -151,7 +151,7 @@ pub struct AttachRequest {
     /// `None` keeps the historical behaviour (let tmux pick).
     pub window_name: Option<String>,
     /// User-defined tmux window options to set after the window is
-    /// created — surfaces as `#{@key}` in tmux formats. ampelos uses
+    /// created — surfaces as `#{@key}` in tmux formats. croft uses
     /// this to tag devcontainer windows with their workspace folder
     /// so the terminals sidebar can show the in-container path.
     pub window_options: Vec<(String, String)>,
@@ -321,7 +321,7 @@ pub struct App {
     /// through [`App::flash`] / [`App::clear_flash`]; read through
     /// [`App::flash_message`]. The direct field is `pub(crate)` so
     /// callers in the TUI crate can still pattern-match in tests but
-    /// the ampelos library doesn't expose it externally.
+    /// the croft library doesn't expose it externally.
     pub(crate) flash_message: Option<String>,
     /// Active modal, if any. Replaces the four parallel
     /// `Option<...>` fields (palette / confirm / args_prompt /
@@ -895,8 +895,8 @@ impl App {
     /// default (Some = use this, None = fall back to the parent of
     /// the App's project root). The terminal layer typically passes
     /// `Some(git_toplevel.parent())` so a new worktree lands next
-    /// to the repo regardless of where ampelos was invoked from —
-    /// running ampelos in `<repo>/tmp/test` shouldn't make new
+    /// to the repo regardless of where croft was invoked from —
+    /// running croft in `<repo>/tmp/test` shouldn't make new
     /// worktrees land under `tmp/`.
     pub fn open_create_form(
         &mut self,
@@ -1131,7 +1131,7 @@ impl App {
                         backend: Arc::clone(dc),
                     }),
                     Some("dc".to_string()),
-                    vec![("@ampelos_workspace".to_string(), workspace)],
+                    vec![("@croft_workspace".to_string(), workspace)],
                 )
             } else {
                 let cmd = format!(
@@ -1140,7 +1140,7 @@ impl App {
                 );
                 (Some(cmd), None, None, Vec::new())
             };
-        // `ampelos-new` is the sentinel marker — the attach handler
+        // `croft-new` is the sentinel marker — the attach handler
         // unconditionally calls `tmux new-window` for it, so each
         // press creates a distinct window. tmux's automatic-rename
         // overwrites the placeholder name once `$SHELL` starts —
@@ -1148,7 +1148,7 @@ impl App {
         // path's defence against everything becoming "docker".
         self.queue(Command::AttachTmux(AttachRequest {
             session,
-            window: "ampelos-new".to_string(),
+            window: "croft-new".to_string(),
             create_with,
             ensure,
             window_name,
@@ -1576,7 +1576,7 @@ fn runtime_row_label(config: &Config) -> Option<&'static str> {
 
 /// Reconstruct the sidebar item list from live state. The order is
 /// stable: runtime (when configured), services (declared first in
-/// ampelos.toml order, then any auto-discovered ones), watchers,
+/// croft.toml order, then any auto-discovered ones), watchers,
 /// recipes, scripts.
 fn build_items_from(
     config: &Config,
@@ -1597,7 +1597,7 @@ fn build_items_from(
 
     let mut emitted_services: std::collections::BTreeSet<&str> = Default::default();
 
-    // Declared services first, in ampelos.toml [[ui.pane]] order.
+    // Declared services first, in croft.toml [[ui.pane]] order.
     for pane in &config.ui.panes {
         if let UiPane::Service { service, .. } = pane
             && services.contains_key(service)
@@ -2177,7 +2177,7 @@ mod tests {
         // Single row (sentinel). selected = 0.
         app.terminals_confirm();
         let req = drained_attach(&mut app).unwrap();
-        assert_eq!(req.window, "ampelos-new");
+        assert_eq!(req.window, "croft-new");
         assert!(req.create_with.as_deref().unwrap().contains("SHELL"));
     }
 
@@ -2216,7 +2216,7 @@ mod tests {
         assert_eq!(req_shortcut.session, req_sentinel.session);
         assert_eq!(req_shortcut.window, req_sentinel.window);
         assert_eq!(req_shortcut.create_with, req_sentinel.create_with);
-        assert_eq!(req_shortcut.window, "ampelos-new");
+        assert_eq!(req_shortcut.window, "croft-new");
     }
 
     #[test]

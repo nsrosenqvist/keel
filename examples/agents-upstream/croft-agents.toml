@@ -1,15 +1,15 @@
-# Upstream manifest for `ampelos agents`.
+# Upstream manifest for `croft agents`.
 #
 # A downstream project consumes this repo by adding a
 # [[agents.sources]] entry pointing at it (URL + pinned rev).
 # Each [[file]] / [[dir]] entry below is whole-file owned by
-# ampelos: the destination file is overwritten byte-for-byte from
+# croft: the destination file is overwritten byte-for-byte from
 # upstream on every apply, with drift detection from the on-disk
-# state in .ampelos/agents.state.json.
+# state in .croft/agents.state.json.
 #
 # The `mode = "once"` carve-out (used here for AGENTS.md) writes
 # the file only on first apply; the project owns it afterwards
-# and ampelos never re-touches it.
+# and croft never re-touches it.
 
 [[file]]
 src  = "agents/CLAUDE.md"

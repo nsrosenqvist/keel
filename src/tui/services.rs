@@ -1,6 +1,6 @@
 //! Per-service log panes for the TUI.
 //!
-//! When a project's `[[ui.pane]]` declares a service, ampelos spawns a
+//! When a project's `[[ui.pane]]` declares a service, croft spawns a
 //! `compose logs -f` tail at startup and pipes its output into a
 //! [`ServicePane`] buffer. The pane is identical in structure to a
 //! [`crate::tui::runner::RunState`]'s buffer so the renderer can treat them

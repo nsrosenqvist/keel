@@ -1,8 +1,8 @@
-//! ampelos binary entry. Thin wrapper around [`ampelos::cli::run`].
+//! croft binary entry. Thin wrapper around [`croft::cli::run`].
 
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    ampelos::cli::run().await
+    croft::cli::run().await
 }
